@@ -1,0 +1,22 @@
+{
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestEnabled": false,
+  "python.analysis.exclude": [
+    "dataset/**",
+    "ultralytics/**",
+    "yolox/**",
+    "rfdetr/**",
+    "evaluation/**",
+    "detection_common/**"
+  ],
+  "files.exclude": {
+    "dataset": true,
+    "ultralytics": true,
+    "yolox": true,
+    "rfdetr": true,
+    "evaluation": true,
+    "detection_common": true,
+    "notebook-tools": true,
+    "documents": true
+  }
+}

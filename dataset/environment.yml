@@ -1,0 +1,16 @@
+name: dataset-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytest
+  - pandas
+  - jinja2
+  - pillow
+  - scikit-learn
+  - ipykernel
+  - ipywidgets
+  - pip:
+      - datumaro
+      - roboflow

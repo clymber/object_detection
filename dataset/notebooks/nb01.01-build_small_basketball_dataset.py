@@ -1,60 +1,52 @@
 # ---
 # jupyter:
 #   jupytext:
+#     cell_metadata_filter: tags
 #     formats: ipynb,py:percent
+#     notebook_metadata_filter: kernelspec,jupytext,title,authors,-jupytext.text_representation.jupytext_version
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.5
 #   kernelspec:
-#     display_name: Python 3 (ipykernel)
+#     display_name: Python (Object Detection Dataset)
 #     language: python
-#     name: python3
+#     name: object-detection-dataset
 # ---
 
 # %%
-import sys
-from pathlib import Path
+"""
+Builds separate datasets for object detection tasks in COCO and YOLO formats.
+"""
 
-from google.colab import drive  # pyright: ignore[reportMissingImports]
+# Reloads all modules every time before executing code, except explicitly excluded using
+# # %aimport -<package>, like %aimport -numpy.
+# %load_ext autoreload
+# %autoreload 2
+# %aimport -csv -textwrap -functools -IPython -ultralytics -pandas -datumaro -random
 
-drive_dir = Path("/content/drive")
-if not (drive_dir / "MyDrive").is_dir():
-    drive.mount(str(drive_dir))
-
-project_dir = drive_dir / "MyDrive" / "object_ctrl"
-if str(project_dir) not in sys.path:
-    sys.path.insert(0, str(project_dir))
-
-# %%
-from colabs.colab_setup import setup_project  # noqa: E402
-
-resolved_project_dir = setup_project(project_dir)
-
-from object_ctrl import configure_stdio_relative_path  # noqa: E402
+from dataset_builder.config import DATA_ROOT, WORKSPACE_ROOT
+from detection_common import configure_stdio_relative_path
 
 # Display project paths relatively for consistent output across environments.
-configure_stdio_relative_path()
+configure_stdio_relative_path(WORKSPACE_ROOT)
 
 # %%
 import random
 
 import datumaro as dm
 import pandas as pd
-from IPython.display import display
-
-from object_ctrl import PROJECT_ROOT
-from object_ctrl.dataset import (
+from dataset_builder import (
     prefer_hardlinked_datumaro_media,
     summarize_coco_dataset,
     summarize_datumaro_label_counts,
 )
-from object_ctrl.dataset.datumaro import ExportFormat as DatumaroExpFmt
-from object_ctrl.dataset.datumaro import ImportFormat as DatumaroImpFmt
-from object_ctrl.platforms import roboflow as roboflow_platform
-from object_ctrl.platforms.roboflow import RoboflowFormat
-from object_ctrl.utils.filepath import dir_tree, ensure_dir
+from dataset_builder import roboflow as roboflow_platform
+from dataset_builder.datumaro import ExportFormat as DatumaroExpFmt
+from dataset_builder.datumaro import ImportFormat as DatumaroImpFmt
+from dataset_builder.roboflow import RoboflowFormat
+from detection_common.utils.filepath import dir_tree, ensure_dir
+from IPython.display import display
 
 # %% [markdown]
 # ## 1. Object detection targets
@@ -63,8 +55,8 @@ from object_ctrl.utils.filepath import dir_tree, ensure_dir
 # file contains a list of objects to be detected. The code below reads and displays the
 # targets from the CSV file.
 # %%
-OBJ_CTL_LIST_CSV = PROJECT_ROOT / "documents" / "Object_Control_List.csv"
-DATASET_ROOT = PROJECT_ROOT / "datasets"
+OBJ_CTL_LIST_CSV = WORKSPACE_ROOT / "documents" / "Object_Control_List.csv"
+DATASET_ROOT = DATA_ROOT
 
 oc_df = pd.read_csv(OBJ_CTL_LIST_CSV)
 display(oc_df.fillna("/").style.hide(axis="index"))

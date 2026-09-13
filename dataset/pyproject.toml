@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dataset-builder"
+version = "0.1.0"
+description = "Dataset preparation for object-detection experiments"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "detection-common==0.1.0",
+    "pandas",
+    "pillow",
+]
+
+[project.optional-dependencies]
+full = [
+    "datumaro",
+    "roboflow",
+    "scikit-learn",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]

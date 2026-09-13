@@ -1,0 +1,16 @@
+{
+  "folders": [
+    { "name": "Workspace", "path": "." },
+    { "name": "Dataset", "path": "dataset" },
+    { "name": "Ultralytics", "path": "ultralytics" },
+    { "name": "YOLOX", "path": "yolox" },
+    { "name": "RF-DETR", "path": "rfdetr" },
+    { "name": "Evaluation", "path": "evaluation" },
+    { "name": "Detection Common", "path": "detection_common" },
+    { "name": "Notebook Tools", "path": "notebook-tools" },
+    { "name": "Documents", "path": "documents" }
+  ],
+  "settings": {
+    "git.openRepositoryInParentFolders": "always"
+  }
+}

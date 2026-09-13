@@ -1,0 +1,20 @@
+name: rfdetr-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytest
+  - pytorch=2.10
+  - torchvision=0.25
+  - pycocotools
+  - numpy>=2.2,<2.4
+  - pandas>=2.3,<3
+  - pyyaml
+  - pillow
+  - matplotlib
+  - ipykernel
+  - ipywidgets
+  - pip:
+      - opencv-python-headless
+      - rfdetr[onnx,train]==1.10.1

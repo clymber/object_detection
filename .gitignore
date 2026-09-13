@@ -6,10 +6,12 @@
 .DS_Store
 ~$*
 
-# vscode
-.vscode
+# Share portable folder settings, but not machine-specific VS Code state.
+**/.vscode/*
+!**/.vscode/settings.json
 
 datasets/
+data/
 
 # YOLO / ML artifacts
 runs/
@@ -166,4 +168,5 @@ cython_debug/
 .pypirc
 
 # Temporary project plans
-/plans/
+/plans/*
+!/plans/monorepo_plan.md

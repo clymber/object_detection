@@ -1,0 +1,27 @@
+name: yolox-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytest
+  - pytorch=2.10
+  - torchvision=0.25
+  - numpy
+  - pandas
+  - pillow
+  - matplotlib
+  - pycocotools
+  - pyyaml
+  - tqdm
+  - ipykernel
+  - ipywidgets
+  - loguru
+  - tabulate
+  - tensorboard
+  - pip:
+      - opencv-python
+      - thop
+      - ninja
+      - onnx
+      - onnxsim

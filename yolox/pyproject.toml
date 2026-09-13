@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yolox-pipeline"
+version = "0.1.0"
+description = "YOLOX training, inference, and artifact exports"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "detection-common==0.1.0",
+    "detection-evaluation==0.1.0",
+    "numpy",
+    "pandas",
+    "pycocotools",
+    "torch>=2.0",
+    "opencv-python",
+    "pyyaml",
+    "yolox>=0.3,<0.4",
+]
+
+[project.scripts]
+export-yolox-baseline = "yolox_pipeline.export_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]

@@ -1,5 +1,13 @@
 {
-  "include": ["src", "colabs"],
+  "include": ["src"],
+  "exclude": [
+    "dataset",
+    "detection_common",
+    "evaluation",
+    "rfdetr",
+    "ultralytics",
+    "yolox"
+  ],
   "extraPaths": [".", "src", "../YOLOX"],
   "pythonVersion": "3.11"
 }

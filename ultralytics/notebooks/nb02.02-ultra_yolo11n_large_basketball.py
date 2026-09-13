@@ -1,98 +1,81 @@
 # ---
 # jupyter:
 #   jupytext:
+#     cell_metadata_filter: tags
 #     formats: ipynb,py:percent
+#     notebook_metadata_filter: kernelspec,jupytext,title,authors,-jupytext.text_representation.jupytext_version
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.5
 #   kernelspec:
-#     display_name: Python 3 (ipykernel)
+#     display_name: Python (Object Detection Ultralytics)
 #     language: python
-#     name: python3
+#     name: object-detection-ultralytics
 # ---
 
 # %%
 """
 Performance evaluation of pretrained YOLO11 on customized basketball dataset.
 """
+# %load_ext autoreload
+# %autoreload 2
+# %aimport -ultralytics
 
-
-# %%
-import sys
-from pathlib import Path
-
-from google.colab import drive  # pyright: ignore[reportMissingImports]
-
-drive_dir = Path("/content/drive")
-if not (drive_dir / "MyDrive").is_dir():
-    drive.mount(str(drive_dir))
-
-project_dir = drive_dir / "MyDrive" / "object_ctrl"
-if str(project_dir) not in sys.path:
-    sys.path.insert(0, str(project_dir))
-
-# %%
-from colabs.colab_setup import setup_project  # noqa: E402
-
-resolved_project_dir = setup_project(project_dir)
-
-from object_ctrl import PROJECT_ROOT, configure_stdio_relative_path  # noqa: E402
-
-# Display project paths relatively for consistent output across environments.
-configure_stdio_relative_path()
-
-# %%
+import os
 from pathlib import Path
 from typing import cast
 
+# This must run before any library imports PyTorch, including Ultralytics.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+from detection_common import configure_stdio_relative_path
+from ultralytics_pipeline.config import (
+    DATA_ROOT,
+    OUTPUT_ROOT,
+    WORKSPACE_ROOT,
+)
+
+# Display project paths relative to project root directory for consistency.
+configure_stdio_relative_path(WORKSPACE_ROOT)
+
 # %%
-from object_ctrl import (
+from detection_common import (
     Device,
     aligned_print,
     ensure_dir,
 )
-from object_ctrl.platforms import ultralytics as ultralitics_platform
-from object_ctrl.utils.image import display as display_img
+from detection_common.utils.image import display as display_img
+from ultralytics_pipeline import ultralytics as ultralitics_platform
 
 # Must be called before importing ultralytics.
 ultralitics_platform.configure_privacy()
 from ultralytics import YOLO  # noqa: E402
 
 # %%
-PRETRAINED_DIR = ensure_dir(PROJECT_ROOT / "models" / "pretrained" / "ultralytics")
-SRC_DATASET_DIR = ensure_dir(PROJECT_ROOT / "datasets/")
-DATASET_DIR = ensure_dir(Path("/content") / "datasets/")
+PRETRAINED_DIR = ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "ultralytics")
+DATASET_DIR = ensure_dir(DATA_ROOT)
 DATA_YAML = DATASET_DIR / "composed" / "yolo_basketball_11501_1156_1395" / "data.yaml"
-
-if not DATA_YAML.exists():
-    SRC_DATASET = SRC_DATASET_DIR / "composed" / "yolo_basketball_11501_1156_1395"
-    if not SRC_DATASET.exists():
-        raise FileNotFoundError(f"Source dataset not found: {SRC_DATASET}.")
-
-    # Copy the dataset to the Colab environment.
-    import shutil
-
-    shutil.copytree(SRC_DATASET, DATA_YAML.parent, dirs_exist_ok=True)
 
 # %% [markdown]
 # ## Fine-tune Ultrlytics YOLO11 on a custom dataset.
 
 # %%
-project_space = PROJECT_ROOT / "outputs" / "runs" / "basketball"
+project_space = OUTPUT_ROOT / "runs" / "basketball"
 project_name_base = "yolo11n_basketball_large_dataset"
-# resume_checkpoint: Path | None = None
-resume_checkpoint: Path | None = (
-    project_space
-    / "yolo11n_basketball_large_dataset-4"
-    / "weights"
-    / "last.pt"
-)
+# Avoid container shared-memory exhaustion by default. Hosts with a larger /dev/shm
+# allocation can set ULTRALYTICS_WORKERS to a positive integer.
+DATALOADER_WORKERS = int(os.environ.get("ULTRALYTICS_WORKERS", "0"))
+if DATALOADER_WORKERS < 0:
+    raise ValueError("ULTRALYTICS_WORKERS must be zero or greater")
 
-BATCH_SIZE = 32
-N_WORKERS = 8
-CACHE_DATA = False
+resume_checkpoint: Path | None = None
+# resume_checkpoint: Path | None = (
+#     project_space
+#     / "yolo11n_basketball_large_dataset-2"
+#     / "weights"
+#     / "last.pt"
+# )
 
 if resume_checkpoint is None:
     basketball_model = YOLO(PRETRAINED_DIR / "yolo11n.pt")
@@ -104,9 +87,9 @@ if resume_checkpoint is None:
         project=str(project_space),
         name=project_name_base,
         patience=25,
-        batch=BATCH_SIZE,
-        workers=N_WORKERS,
-        cache=CACHE_DATA,
+        batch=16,
+        workers=DATALOADER_WORKERS,
+        cache=False,
     )
 else:
     if not resume_checkpoint.is_file():
@@ -116,9 +99,9 @@ else:
     results = basketball_model.train(
         resume=True,
         device=Device.auto_choose(),
-        batch=BATCH_SIZE,
-        workers=N_WORKERS,
-        cache=CACHE_DATA,
+        batch=16,
+        workers=DATALOADER_WORKERS,
+        cache=False,
     )
 results = cast(ultralitics_platform.TrainingResult, results)
 run_dir = Path(results.save_dir)
@@ -237,13 +220,32 @@ aligned_print({
 # below.
 
 
-# %% [markdown]
-# ## Validation and Test Metrics
-
 # %%
 BEST_MODEL_PATH = run_dir / "weights" / "best.pt"
 eval_model = YOLO(BEST_MODEL_PATH)
 
+# %% [markdown]
+# ## Export Best Checkpoint to ONNX
+
+# %%
+onnx_model_path = Path(
+    eval_model.export(
+        format="onnx",
+        imgsz=640,
+        batch=1,
+        device="cpu",
+        dynamic=False,
+        simplify=False,
+    )
+)
+if not onnx_model_path.is_file():
+    raise FileNotFoundError(f"ONNX export not found: {onnx_model_path}")
+print(f"Exported ONNX model: {onnx_model_path}")
+
+# %% [markdown]
+# ## Validation and Test Metrics
+
+# %%
 validation_metrics = eval_model.val(
     data=DATA_YAML,
     imgsz=640,
@@ -302,31 +304,3 @@ print("Test ground truth sample images:")
 display_img(test_output_dir / "val_batch0_labels.jpg", width=640)
 print("Test predicted sample images:")
 display_img(test_output_dir / "val_batch0_pred.jpg", width=640)
-
-# %%
-import importlib.metadata as metadata
-import sys
-
-print("Python:", sys.version)
-
-for package in (
-    "ultralytics",
-    "torch",
-    "torchvision",
-    "torchaudio",
-    "numpy",
-    "opencv-python",
-    "opencv-python-headless",
-):
-    try:
-        print(f"{package}: {metadata.version(package)}")
-    except metadata.PackageNotFoundError:
-        print(f"{package}: not installed")
-
-try:
-    from ultralytics import YOLO
-except Exception as error:
-    print(f"\nFINAL ERROR: {type(error).__name__}: {error!r}")
-
-# %%
-# %pip check

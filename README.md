@@ -1,179 +1,102 @@
-# Object Control in Computer Vision
+# Object Detection Workspace
 
-## Development and Runtime Environment
+This Git repository contains separate Python projects for dataset building,
+Ultralytics, YOLOX, RF-DETR, evaluation, and shared utilities. Open
+[`object-detection.code-workspace`](object-detection.code-workspace) in VS Code
+to give each project its own interpreter, tests, and notebook kernel.
 
-### Renku Linux/CUDA experiments
+The current migration stage is **local Conda development**. The existing root
+`object_ctrl` package, root notebooks, and Renku setup scripts remain as a
+temporary compatibility path. Do not use their single-environment instructions
+for new local subproject work. Renku migration begins only after the local
+workflow is reviewed.
 
-The large-dataset experiments target a Renku session with an NVIDIA GPU.
-Ultralytics and YOLOX share `.venv-renku`; RF-DETR Small uses the separate
-`.venv-renku-rfdetr` environment. See the
-[Renku operator guide](scripts/renku/README.md) for setup, kernel selection,
-detached execution, resume, and baseline exports.
+## Projects
 
-### Conda (Anaconda, Miniconda or Miniforge)
+| Project | Purpose | Local environment |
+| --- | --- | --- |
+| [Detection Common](detection_common/README.md) | Shared helpers and paths | `detection-common-dev` |
+| [Evaluation](evaluation/README.md) | Neutral artifacts and metrics | `evaluation-dev` |
+| [Dataset](dataset/README.md) | COCO/Datumaro preparation | `dataset-dev` |
+| [RF-DETR](rfdetr/README.md) | RF-DETR experiments | `rfdetr-dev` |
+| [Ultralytics](ultralytics/README.md) | Ultralytics experiments | `ultralytics-dev` |
+| [YOLOX](yolox/README.md) | YOLOX experiments | `yolox-dev` |
+| [Notebook Tools](notebook-tools/README.md) | Jupytext/Jupyter tooling | `notebook-tools` |
 
-The optional local development workflow uses Conda for Apple Silicon MPS
-checks and Jupytext notebook editing. The Conda environment is defined in
-`environment.yml`.
+Workspace-wide material remains in [`documents/`](documents/). The former
+Colab tree is archived as `documents/notebooks-colabs.tgz` and is unsupported
+in this migration. The [monorepo plan](plans/monorepo_plan.md) records the
+local completion gate and deferred Renku work. The
+[local migration status](documents/local_migration_status.md) records checks
+and remaining review items.
 
-Command to create the Conda environment:
+## Local Setup and Tests
 
-```bash
-conda env create -f environment.yml
-```
-
-When `environment.yml` is edited, update the Conda environment using command:
-
-```bash
-conda env update -f environment.yml --prune
-```
-
-### Python package configuration
-
-Python package metadata, editable-install configuration, optional dependency
-groups, and developer tool settings are defined in `pyproject.toml`.
-
-Install this project as an editable local package:
-
-```bash
-python -m pip install --no-deps -e .
-```
-
-The `--no-deps` flag is intentional for the Conda workflow. `environment.yml`
-already installs the main runtime packages, including PyTorch, torchvision,
-torchaudio, Jupyter, Ultralytics, and common scientific Python tools. Installing
-the local package in editable mode makes imports such as this work from
-notebooks and scripts:
-
-```python
-from object_ctrl import PROJECT_ROOT
-```
-
-Optional dependency groups are also declared in `pyproject.toml`:
+Install Conda first. From this repository root, set
+up only the projects you need:
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m pip install -e ".[notebook]"
-python -m pip install -e ".[data,vision]"
-python -m pip install -e ".[yolo]"
+bash scripts/setup_conda_envs.sh detection_common evaluation dataset
+bash scripts/setup_conda_envs.sh rfdetr
+bash scripts/setup_conda_envs.sh ultralytics yolox
+bash scripts/setup_conda_envs.sh notebook-tools
 ```
 
-After editing package metadata or dependencies in `pyproject.toml`, refresh the
-editable install:
+With no arguments, the script sets up all projects. It creates or updates each
+named Conda environment from its own `environment.yml`, installs internal
+packages editable in dependency order, and registers notebook kernels. YOLOX
+also needs an upstream source checkout beside this repository at `../YOLOX`,
+or an absolute `YOLOX_SOURCE` pointing to one. Its version is recorded in
+[`yolox/README.md`](yolox/README.md).
+
+Run tests independently with the owning interpreter, for example:
 
 ```bash
-python -m pip install --no-deps -e .
+conda run -n detection-common-dev python -m pytest detection_common/tests
+conda run -n evaluation-dev python -m pytest evaluation/tests
+conda run -n dataset-dev python -m pytest dataset/tests
+conda run -n rfdetr-dev python -m pytest rfdetr/tests
+conda run -n ultralytics-dev python -m pytest ultralytics/tests
+conda run -n yolox-dev python -m pytest yolox/tests
 ```
 
-For the recommended Conda workflow, prefer `environment.yml` for heavy packages
-such as PyTorch and OpenCV. The extras are most useful for pip-only environments
-or quick tool installation.
+GPU-only and full-training checks are deferred to Renku. Package-local unit
+tests and lightweight notebook smoke tests are the local acceptance checks.
 
-### YOLOX local checkout
+## Paths and Artifacts
 
-YOLOX is best kept as a standalone sibling checkout rather than committed inside
-this repository. The `environment.yml` file includes YOLOX's lightweight
-training and evaluation dependencies, but it does not install the YOLOX package
-itself because the editable install depends on a local path and needs special
-pip flags.
+Every installed source project detects `SUBPROJECT_ROOT` from its own module
+when its notebook imports `<package>.config`. `WORKSPACE_ROOT` defaults to the
+parent repository; `DATA_ROOT` defaults to `WORKSPACE_ROOT/data`, and
+`OUTPUT_ROOT` to `WORKSPACE_ROOT/outputs`. Set absolute
+`OBJECT_DETECTION_WORKSPACE_ROOT`, `OBJECT_DETECTION_DATA_ROOT`, or
+`OBJECT_DETECTION_OUTPUT_ROOT` to override these paths. Notebook working
+directory does not determine project ownership.
 
-Recommended layout:
+The old ignored `datasets/` directory is not moved automatically. If your
+local data is still there, set `OBJECT_DETECTION_DATA_ROOT` to its absolute
+path before running the new notebooks. Keep downloaded data and checkpoints
+out of source-project roots. Model producers write versioned prediction
+artifacts; `evaluation` reads them without importing model frameworks.
 
-```text
-~/studio/
-  object_ctrl/
-  YOLOX/
-```
+## Notebooks
 
-Clone YOLOX next to this repository:
-
-```bash
-cd ~/studio
-git clone https://github.com/Megvii-BaseDetection/YOLOX.git YOLOX
-```
-
-Then install the local checkout into the `objctrl` environment:
-
-```bash
-cd ~/studio/object_ctrl
-conda run -n objctrl pip install --no-build-isolation --no-deps -v -e ../YOLOX
-```
-
-The `--no-build-isolation` flag lets YOLOX's setup script import the PyTorch
-already installed in the Conda environment. The `--no-deps` flag avoids YOLOX's
-old ONNX simplifier pin, which is not needed for training or evaluation.
-
-Verify the install:
-
-```bash
-conda run -n objctrl python -c "import yolox; print(yolox.__version__)"
-```
-
-For ONNX export later, install modern ONNX packages separately:
-
-```bash
-conda run -n objctrl pip install onnx onnxsim
-```
-
-### Shell environment setup
-
-There's also a local environment activation script,
-`scripts/activate_local_env.sh`, available for the convenience of application
-runtime. Source it to activate Conda and load the project runtime environment
-variables:
-
-```bash
-source scripts/activate_local_env.sh
-```
-
-Google Colab is not a convenient target at this stage. The repo keeps notebooks
-as Jupytext `.py` files, ignores generated `.ipynb` files, and relies on the
-project Conda environment. Colab support would need a separate setup path.
-
-### Jupytext over Jupyter notebooks
-
-This repo stores notebooks as Jupytext `.py` files using the percent format This
-keeps notebooks easier to review in Git while still allowing them to be opened
-and run in Jupyter.
-
-After creating and activating the Conda environment, register the Jupyter kernel
-once:
-
-```bash
-python -m ipykernel install --user --name objctrl --display-name "Python (objctrl)"
-```
-
-Sync the Jupytext notebooks to Jupyter `.ipynb` notebooks with Make:
+Project-owned notebooks are stored as Jupytext `py:percent` sources under each
+project's `notebooks/` directory. Generated `.ipynb` files are ignored by Git.
+Synchronize the pairs and run an explicit notebook through its project kernel:
 
 ```bash
 make sync-notebooks
+make run-notebook NOTEBOOK=dataset/notebooks/smoke.ipynb
 ```
 
-The Makefile runs Jupytext in the `objctrl` Conda environment and uses
-`jupytext.toml`, which pairs each notebook as `ipynb,py:percent`. After syncing,
-each notebook has both a Git-friendly `.py` file and a Jupyter `.ipynb` file.
-The generated `.ipynb` files are ignored by Git, so commit changes to the `.py`
-notebook files.
+The runner intentionally does not execute every training notebook by default.
+Select the corresponding `object-detection-<project>` kernel in VS Code.
 
-Start JupyterLab from the activated environment:
+## Renku Compatibility During Local Migration
 
-```bash
-jupyter lab
-```
-
-Open the `.ipynb` files from the `notebooks/` directory and select the `Python
-(objctrl)` kernel if Jupyter does not select it automatically. When you save a
-paired notebook in Jupyter, Jupytext updates the `.py` file too.
-
-If you edit the `.py` notebook directly, run the sync command again before
-opening it in Jupyter:
-
-```bash
-make sync-notebooks
-```
-
-To execute all synced notebooks from the command line:
-
-```bash
-make run-notebooks
-```
+The root `scripts/setup_renku.sh`, `scripts/setup_renku_rfdetr.sh`, and
+`scripts/tmux_notebook.sh` still support the legacy root notebooks. See the
+[existing Renku operator guide](scripts/renku/README.md). Do not infer that
+new project-local `.venv` environments or CUDA paths are validated yet; those
+are Stage B of the plan.

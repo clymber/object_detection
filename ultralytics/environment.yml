@@ -1,0 +1,21 @@
+name: ultralytics-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytest
+  - pytorch=2.10
+  - torchvision=0.25
+  - "onnx>=1.12,<2"
+  - numpy
+  - pandas
+  - pillow
+  - pycocotools
+  - pyyaml
+  - ipykernel
+  - ipywidgets
+  - pip:
+      - ultralytics
+variables:
+  PYTORCH_ENABLE_MPS_FALLBACK: "1"

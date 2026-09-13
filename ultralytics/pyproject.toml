@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ultralytics-pipeline"
+version = "0.1.0"
+description = "Ultralytics experiments and dataset setup"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "detection-common==0.1.0",
+    "detection-evaluation==0.1.0",
+    "pyyaml",
+    "ultralytics",
+]
+
+[project.scripts]
+export-ultralytics-baseline = "ultralytics_pipeline.export_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]

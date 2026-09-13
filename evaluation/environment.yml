@@ -1,0 +1,14 @@
+name: evaluation-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytest
+  - numpy
+  - pandas
+  - pillow
+  - matplotlib
+  - pycocotools
+  - pyyaml
+  - ipykernel

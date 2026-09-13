@@ -1,47 +1,22 @@
-## Jupytext/Jupyter notebook workflow for this project.
-
+# Local project-owned Jupytext notebooks. Legacy Renku scripts remain separate.
 SHELL := /bin/bash
 
-NOTEBOOK_DIR := notebooks
-NOTEBOOK_STAMP_DIR := .notebook-stamps
-THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
+NOTEBOOK_SOURCES := $(wildcard dataset/notebooks/*.py) \
+    $(wildcard ultralytics/notebooks/*.py) \
+    $(wildcard yolox/notebooks/*.py) \
+    $(wildcard rfdetr/notebooks/*.py) \
+    $(wildcard evaluation/notebooks/*.py)
 
-PY_NOTEBOOKS := $(wildcard $(NOTEBOOK_DIR)/*.py)
-PY_STEMS := $(basename $(notdir $(PY_NOTEBOOKS)))
+.PHONY: sync-notebooks check-notebooks run-notebook
 
-GENERATED_NOTEBOOKS := $(addprefix $(NOTEBOOK_DIR)/,$(addsuffix .ipynb,$(PY_STEMS)))
-NOTEBOOK_RUN_STAMPS := \
-	$(addprefix $(NOTEBOOK_STAMP_DIR)/,$(addsuffix .executed,$(PY_STEMS)))
+sync-notebooks:
+	conda run -n notebook-tools jupytext --sync $(NOTEBOOK_SOURCES)
 
-NOTEBOOK_EXECUTE_FLAGS ?= --ExecutePreprocessor.timeout=-1
-NOTEBOOK_STREAM_FLAGS ?= --CoalesceStreamsPreprocessor.enabled=True
+check-notebooks:
+	conda run -n notebook-tools jupytext --test-strict --to ipynb \
+	    $(NOTEBOOK_SOURCES)
 
-.PHONY: sync-notebooks run-notebooks clean distclean
-
-sync-notebooks: $(GENERATED_NOTEBOOKS)
-
-run-notebooks: $(NOTEBOOK_RUN_STAMPS)
-
-$(NOTEBOOK_STAMP_DIR):
-	mkdir -p $@
-
-$(NOTEBOOK_DIR)/%.ipynb: $(NOTEBOOK_DIR)/%.py jupytext.toml
-	source ./scripts/activate_local_env.sh && jupytext --sync $<
-
-$(NOTEBOOK_STAMP_DIR)/%.executed: $(NOTEBOOK_DIR)/%.ipynb \
-  $(THIS_MAKEFILE) | $(NOTEBOOK_STAMP_DIR)
-	source ./scripts/activate_local_env.sh && jupyter nbconvert $< \
-		--to notebook \
-		--execute \
-		--inplace \
-		--ExecutePreprocessor.kernel_name="$${NOTEBOOK_KERNEL}" \
-		$(NOTEBOOK_EXECUTE_FLAGS) \
-		$(NOTEBOOK_STREAM_FLAGS)
-	touch $@
-
-clean:
-	rm -rf $(NOTEBOOK_STAMP_DIR)
-	rm -rf $(NOTEBOOK_DIR)/.ipynb_checkpoints
-
-distclean: clean
-	rm -f $(GENERATED_NOTEBOOKS)
+run-notebook:
+	@test -n "$(NOTEBOOK)" || \
+	    (echo 'Set NOTEBOOK=<project>/notebooks/<name>.ipynb' >&2; exit 2)
+	bash scripts/run_local_notebook.sh "$(NOTEBOOK)"

@@ -1,0 +1,5 @@
+{
+  "include": ["src", "tests", "notebooks"],
+  "extraPaths": ["src", "../detection_common/src"],
+  "pythonVersion": "3.11"
+}

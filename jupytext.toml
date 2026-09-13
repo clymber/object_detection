@@ -1,5 +1,8 @@
-# Pair ipynb notebooks to py:percent text notebooks
-formats = [
-    "notebooks///ipynb,notebooks///py:percent",
-    "colabs///ipynb,colabs///py:percent",
-]
+# Pair both the legacy root notebooks and project-local notebooks.
+formats = "ipynb,py:percent"
+
+notebook_metadata_filter = """
+kernelspec,jupytext,title,authors,\
+-jupytext.text_representation.jupytext_version\
+"""
+cell_metadata_filter = "tags"
