@@ -25,22 +25,21 @@
 # best validation checkpoint, export ONNX, evaluate the held-out test set, and
 # review images.
 #
-# **Local migration setup:**
+# **Setup:**
 #
 # 1. Run `bash scripts/setup_conda_envs.sh rfdetr` from the workspace root.
 # 2. Select **Python (Object Detection RF-DETR)** as this notebook's kernel.
 # 3. Put the frozen dataset under `DATA_ROOT/composed/` or set an absolute
 #    `OBJECT_DETECTION_DATA_ROOT` to an existing dataset directory.
-# 4. Use `rfdetr/notebooks/smoke.py` for the local import/kernel check. Full
-#    training and CUDA benchmarking remain Stage B Renku validation work.
-# 5. When running the full experiment later, choose a mode in **Experiment
-#    settings** and keep the benchmark policy consistent across models.
+# 4. Use `rfdetr/notebooks/smoke.py` for an import/kernel check. Run a
+#    short GPU smoke check before starting a full training run.
+# 5. Choose a mode in **Experiment settings** and keep the benchmark policy
+#    consistent across models.
 #
 # The experiment uses 640 x 640 input, overriding Small's 512-pixel default,
 # and up to 100 epochs. The final comparison recomputes metrics from saved
 # YOLO predictions; exporting those predictions does not require retraining.
 # You can complete this notebook before the YOLO exports are available.
-# The local small-dataset experiment remains deferred.
 
 # %%
 from __future__ import annotations
@@ -80,7 +79,7 @@ aligned_print(runtime)
 # | Purpose | `RUN_OVERRIDES` |
 # | --- | --- |
 # | Full training (default) | `{}` |
-# | Short GPU smoke check (Stage B) | `{"smoke_run": True}` |
+# | Short GPU smoke check | `{"smoke_run": True}` |
 # | Continue an interrupted run | `{"mode": "resume", "run_dir": "outputs/..."}` |
 # | Rebuild evaluation and reports | `{"mode": "evaluate", "run_dir": "outputs/..."}` |
 #
@@ -129,7 +128,8 @@ if settings.smoke_run:
     dataset_name += "_smoke"
 DERIVED_DATASET = DATA_ROOT / "processed" / "rfdetr" / dataset_name
 
-# Set to an export directory produced by scripts/export_basketball_predictions.py.
+# Set to a shared output directory used by the Ultralytics and YOLOX
+# `export-*-baseline` commands (see their project READMEs).
 # If omitted, YOLO rows are explicitly unavailable while RF-DETR still runs.
 BASELINE_EXPORT_DIR = os.environ.get("RFDETR_BASELINE_EXPORT_DIR") or None
 benchmark_setting = os.environ.get("RFDETR_BENCHMARK", "1")
@@ -322,8 +322,9 @@ for split in ("val", "test"):
 # %% [markdown]
 # ## Compare with YOLO11n and YOLOX-Tiny
 #
-# Export explicitly chosen YOLO best checkpoints using the existing
-# `.venv-renku` environment, as documented in `scripts/renku/README.md`.
+# Export explicitly chosen YOLO best checkpoints with the Ultralytics and
+# YOLOX project environments (see their project READMEs). Use the same
+# `--output-dir` for all three exports.
 # Set `RFDETR_BASELINE_EXPORT_DIR` to the resulting directory. No YOLO imports
 # or retraining are needed here. Missing exports appear as unavailable;
 # artifacts with a different annotation hash or smoke identity are rejected.

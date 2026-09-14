@@ -21,7 +21,7 @@ conda_cmd() {
 }
 
 usage() {
-    printf 'Usage: %s [all|legacy-root|detection_common|evaluation|dataset|rfdetr|ultralytics|yolox|notebook-tools]...\n' "$0"
+    printf 'Usage: %s [all|detection_common|evaluation|dataset|rfdetr|ultralytics|yolox|notebook-tools]...\n' "$0"
 }
 
 environment_name() {
@@ -33,7 +33,6 @@ environment_name() {
         ultralytics) printf 'ultralytics-dev' ;;
         yolox) printf 'yolox-dev' ;;
         notebook-tools) printf 'notebook-tools' ;;
-        legacy-root) printf 'objctrl' ;;
         *) return 2 ;;
     esac
 }
@@ -123,7 +122,7 @@ assert gui == ["NONE"], gui
 print(torch.__version__, torchvision.__version__, torch.version.cuda, torch.cuda.get_device_name(0))
 '
     case "$project" in
-        ultralytics|legacy-root)
+        ultralytics)
             conda_cmd run -n "$env_name" python -c 'import ultralytics'
             ;;
         yolox)
@@ -140,9 +139,6 @@ setup_one() {
     local env_name
     env_name="$(environment_name "$project")" || { usage >&2; return 2; }
     local definition="$workspace_root/$project/environment-$profile.yml"
-    if [[ "$project" == legacy-root ]]; then
-        definition="$workspace_root/environment-$profile.yml"
-    fi
     [[ -f "$definition" ]] || { printf 'Missing manifest: %s\n' "$definition" >&2; return 1; }
 
     local manifest_hash
@@ -181,8 +177,6 @@ setup_one() {
                     --no-build-isolation --no-deps -e "$source_dir"
             fi
         fi
-    elif [[ "$project" == legacy-root && "$profile" == linux-cuda ]]; then
-        install_yolox_linux "$env_name"
     fi
 
     local installs=("$workspace_root/detection_common")
@@ -193,7 +187,6 @@ setup_one() {
         rfdetr) installs+=("$workspace_root/evaluation" "$workspace_root/dataset" "$workspace_root/rfdetr") ;;
         ultralytics) installs+=("$workspace_root/evaluation" "$workspace_root/ultralytics") ;;
         yolox) installs+=("$workspace_root/evaluation" "$workspace_root/yolox") ;;
-        legacy-root) installs=("$workspace_root") ;;
     esac
     local paths=()
     local path
@@ -202,7 +195,7 @@ setup_one() {
 
     if [[ "$profile" == linux-cuda ]]; then
         if [[ "$project" == rfdetr || "$project" == ultralytics ||
-              "$project" == yolox || "$project" == legacy-root ]]; then
+              "$project" == yolox ]]; then
             validate_linux_gpu "$env_name" "$project"
             if [[ "$project" == rfdetr ]]; then
                 conda_cmd run -n "$env_name" python \
@@ -217,10 +210,6 @@ setup_one() {
     if [[ "$project" != detection_common ]]; then
         local kernel="object-detection-$project"
         local display="Object Detection $project ($profile)"
-        if [[ "$project" == legacy-root ]]; then
-            kernel="object-ctrl-renku-conda"
-            display="Python (object_ctrl Renku Conda)"
-        fi
         conda_cmd run -n "$env_name" python -m ipykernel install \
             --user --name "$kernel" --display-name "$display" \
             --env PYTHONPATH "" --env PYTHONNOUSERSITE "1"

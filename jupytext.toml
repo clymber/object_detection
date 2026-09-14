@@ -1,4 +1,4 @@
-# Pair both the legacy root notebooks and project-local notebooks.
+# Pair project-owned notebooks.
 formats = "ipynb,py:percent"
 
 notebook_metadata_filter = """

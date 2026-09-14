@@ -1,259 +1,85 @@
 #!/usr/bin/env bash
-
+# Run a project-owned notebook through its Conda kernel in a detached session.
 set -euo pipefail
 
+workspace_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
-    printf 'Usage:\n'
-    printf '  %s run -f|--file <notebook> ' "$0"
-    printf '[-s|--session <session_name>]\n'
-    printf '  %s check -s|--session <session_name>\n' "$0"
-    printf '\nCommands:\n'
-    printf '  run      Start the notebook in a detached tmux session\n'
-    printf '  check    Report whether the notebook session is still running\n'
-    printf '\nOptions:\n'
-    printf '  -f, --file <notebook>          Notebook to run\n'
-    printf '  -s, --session <session_name>   tmux session to run or check\n'
-    printf '  -h, --help                     Show this help message\n'
+    printf 'Usage: %s run --file <project>/notebooks/<file>.ipynb [--session NAME]\n' "$0"
+    printf '       %s check --session NAME\n' "$0"
 }
+[[ $# -gt 0 ]] || { usage >&2; exit 2; }
+action="$1"
+shift
+[[ "$action" == -h || "$action" == --help ]] && { usage; exit 0; }
+notebook=""
+session=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--file) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; notebook="$2"; shift 2 ;;
+        -s|--session) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; session="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
+command -v tmux >/dev/null || { printf 'tmux is required.\n' >&2; exit 1; }
 
-parse_arguments() {
-    if [[ $# -eq 0 ]]; then
-        usage >&2
-        exit 2
-    fi
+case "$action" in
+    run)
+        case "$notebook" in
+            dataset/notebooks/*.ipynb|evaluation/notebooks/*.ipynb|rfdetr/notebooks/*.ipynb|ultralytics/notebooks/*.ipynb|yolox/notebooks/*.ipynb) ;;
+            *) printf 'Use a project-owned .ipynb path relative to the workspace root.\n' >&2; exit 2 ;;
+        esac
+        [[ -f "$workspace_root/$notebook" ]] || { printf 'Notebook not found: %s\n' "$notebook" >&2; exit 1; }
+        if [[ -z "$session" ]]; then
+            session="$(basename "$notebook" .ipynb)"
+            session="${session//[^[:alnum:]_-]/-}"
+        fi
+        ;;
+    check) [[ -n "$session" ]] || { usage >&2; exit 2; } ;;
+    *) usage >&2; exit 2 ;;
+esac
+[[ "$session" =~ ^[[:alnum:]_-]+$ ]] || { printf 'Invalid session name.\n' >&2; exit 2; }
+log="$workspace_root/outputs/notebook_logs/$session.log"
 
-    if [[ $1 == "-h" || $1 == "--help" ]]; then
-        usage
+if [[ "$action" == check ]]; then
+    tmux has-session -t "=$session" 2>/dev/null || { printf 'Session not found: %s\n' "$session" >&2; exit 1; }
+    pane="$(tmux display-message -p -t "=$session:" '#{pane_dead} #{pane_dead_status}')"
+    read -r dead status <<< "$pane"
+    if [[ "$dead" == 0 ]]; then
+        printf 'Session %s is running. Log: %s\n' "$session" "$log"
         exit 0
     fi
-
-    command_name=$1
-    shift
-
-    case "$command_name" in
-        run|check)
-            ;;
-        *)
-            printf 'Error: unknown command: %s\n' "$command_name" >&2
-            usage >&2
-            exit 2
-            ;;
-    esac
-
-    notebook=""
-    session_name=""
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -f|--file)
-                if [[ "$command_name" != "run" ]]; then
-                    printf 'Error: %s is only valid with the run command.\n' \
-                        "$1" >&2
-                    exit 2
-                fi
-                if [[ $# -lt 2 ]]; then
-                    printf 'Error: %s requires a notebook path.\n' "$1" >&2
-                    exit 2
-                fi
-                notebook=$2
-                shift 2
-                ;;
-            -s|--session)
-                if [[ $# -lt 2 ]]; then
-                    printf 'Error: %s requires a session name.\n' "$1" >&2
-                    exit 2
-                fi
-                session_name=$2
-                shift 2
-                ;;
-            -h|--help)
-                usage
-                exit 0
-                ;;
-            *)
-                printf 'Error: unknown option: %s\n' "$1" >&2
-                usage >&2
-                exit 2
-                ;;
-        esac
-    done
-
-    case "$command_name" in
-        run)
-            if [[ -z "$notebook" ]]; then
-                printf 'Error: run requires -f or --file.\n' >&2
-                usage >&2
-                exit 2
-            fi
-            ;;
-        check)
-            if [[ -z "$session_name" ]]; then
-                printf 'Error: check requires -s or --session.\n' >&2
-                usage >&2
-                exit 2
-            fi
-            ;;
-    esac
-}
-
-resolve_notebook() {
-    if [[ ! -f "$notebook" ]]; then
-        printf 'Error: notebook not found: %s\n' "$notebook" >&2
-        exit 1
-    fi
-
-    if [[ "$notebook" != *.ipynb ]]; then
-        printf 'Error: notebook must have an .ipynb extension: %s\n' \
-            "$notebook" >&2
-        exit 1
-    fi
-
-    notebook_dir=$(CDPATH= cd -- "$(dirname -- "$notebook")" && pwd -P)
-    notebook="$notebook_dir/$(basename -- "$notebook")"
-
-    if [[ -z "$session_name" ]]; then
-        session_name=$(basename -- "$notebook" .ipynb)
-        session_name=${session_name//[^[:alnum:]_-]/-}
-    fi
-}
-
-resolve_session() {
-    if [[ ! "$session_name" =~ ^[[:alnum:]_-]+$ ]]; then
-        printf 'Error: session name may contain only letters, numbers, _ and -.\n' \
-            >&2
-        exit 2
-    fi
-
-    log_file=$repo_dir/outputs/notebook_logs/$session_name.log
-}
-
-capture_notebook_environment() {
-    # A pre-existing tmux server does not inherit the invoking shell's settings.
-    # Clear old experiment controls inside this pane, then replay caller values.
-    notebook_environment='unset PYTHONHOME PYTHONPATH; '
-    notebook_environment+='for key in ${!RFDETR_@} ${!YOLOX_NANO_@} '
-    notebook_environment+='${!YOLOX_TINY_@} '
-    notebook_environment+='${!ULTRALYTICS_@}; do unset "$key"; done; '
-
-    local key assignment
-    local settings=(
-        PATH VIRTUAL_ENV PYTHONNOUSERSITE PYTHONUNBUFFERED
-        OBJCTRL_PROJECT_ROOT OBJCTRL_RENKU_VENV OBJCTRL_RENKU_KERNEL_NAME
-        NOTEBOOK_KERNEL CUDA_VISIBLE_DEVICES NVIDIA_VISIBLE_DEVICES
-        CUDA_DEVICE_ORDER PYTORCH_CUDA_ALLOC_CONF
-        RF_HOME HF_HOME TORCH_HOME XDG_CACHE_HOME MPLCONFIGDIR MPLBACKEND
-        HF_HUB_DISABLE_TELEMETRY HF_HUB_OFFLINE TRANSFORMERS_OFFLINE
-        JUPYTER_RUNTIME_DIR IPYTHONDIR
-    )
-    for key in "${settings[@]}" ${!RFDETR_@} ${!YOLOX_NANO_@} \
-        ${!YOLOX_TINY_@} ${!ULTRALYTICS_@}; do
-        if [[ ${!key+x} ]]; then
-            printf -v assignment 'export %s=%q; ' "$key" "${!key}"
+    if [[ ! "$status" =~ ^[0-9]+$ ]]; then
+        last_line="$(tail -n 1 "$log" 2>/dev/null || true)"
+        if [[ "$last_line" == __OBJECT_DETECTION_EXIT_STATUS__=* ]]; then
+            status="${last_line#*=}"
         else
-            printf -v assignment 'unset %s; ' "$key"
+            status=1
         fi
-        notebook_environment+="$assignment"
-    done
-}
-
-run_notebook() {
-    source "$repo_dir/scripts/activate_renku_env.sh"
-
-    nbconvert_command=$OBJCTRL_RENKU_VENV/bin/jupyter-nbconvert
-
-    if [[ ! -x "$nbconvert_command" ]]; then
-        printf 'Error: jupyter-nbconvert not found: %s\n' \
-            "$nbconvert_command" >&2
-        printf 'Run bash scripts/setup_renku.sh to install the Renku runtime.\n' \
-            >&2
-        exit 1
     fi
-
-    if tmux has-session -t "=$session_name" 2>/dev/null; then
-        printf 'Error: tmux session already exists: %s\n' "$session_name" >&2
-        exit 1
-    fi
-
-    mkdir -p "$(dirname -- "$log_file")"
-    capture_notebook_environment
-
-    printf -v notebook_command \
-        '%s%q %q --to notebook --execute --inplace %q %s 2>&1 | tee %q' \
-        "$notebook_environment" \
-        "$nbconvert_command" \
-        "$notebook" \
-        "--ExecutePreprocessor.kernel_name=$NOTEBOOK_KERNEL" \
-        '--ExecutePreprocessor.timeout=-1 --CoalesceStreamsPreprocessor.enabled=True' \
-        "$log_file"
-    printf -v tmux_command 'bash -o pipefail -c %q' "$notebook_command"
-
-    tmux new-session -d -s "$session_name" -c "$repo_dir" "$tmux_command" \; \
-        set-option -t "=$session_name:" remain-on-exit on
-
-    printf 'Started notebook in tmux session %q.\n' "$session_name"
-    printf 'Attach with: tmux attach-session -t %q\n' "$session_name"
-    printf 'Follow log with: tail -f %q\n' "$log_file"
-    printf 'Check with: %q check --session %q\n' "$0" "$session_name"
-}
-
-check_notebook() {
-    if ! tmux has-session -t "=$session_name" 2>/dev/null; then
-        printf 'Error: tmux session not found: %s\n' "$session_name" >&2
-        exit 1
-    fi
-
-    pane_status=$(tmux display-message -p -t "=$session_name:" \
-        '#{pane_dead} #{pane_dead_status}')
-    read -r pane_dead pane_exit_status <<<"$pane_status"
-    check_status=0
-
-    case "$pane_dead" in
-        0)
-            printf 'Session %q is running.\n' "$session_name"
-            ;;
-        1)
-            if [[ ! "$pane_exit_status" =~ ^[0-9]+$ ]]; then
-                printf 'Error: tmux returned an invalid pane exit status: %s\n' \
-                    "$pane_exit_status" >&2
-                exit 1
-            fi
-            if [[ "$pane_exit_status" -eq 0 ]]; then
-                printf 'Session %q finished successfully.\n' "$session_name"
-            else
-                printf 'Session %q failed with exit status %s.\n' \
-                    "$session_name" "$pane_exit_status"
-                check_status=$pane_exit_status
-            fi
-            ;;
-        *)
-            printf 'Error: tmux returned an invalid pane state: %s\n' \
-                "$pane_dead" >&2
-            exit 1
-            ;;
-    esac
-
-    printf 'Log: %s\n' "$log_file"
-    return "$check_status"
-}
-
-parse_arguments "$@"
-
-repo_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-if [[ "$command_name" == "run" ]]; then
-    resolve_notebook
+    printf 'Session %s exited with status %s. Log: %s\n' "$session" "$status" "$log"
+    exit "$status"
 fi
-resolve_session
 
-if ! command -v tmux >/dev/null 2>&1; then
-    printf 'Error: tmux is not installed or is not on PATH.\n' >&2
+tmux has-session -t "=$session" 2>/dev/null && {
+    printf 'Session already exists: %s\n' "$session" >&2
     exit 1
-fi
-
-case "$command_name" in
-    run)
-        run_notebook
-        ;;
-    check)
-        check_notebook
-        ;;
-esac
+}
+mkdir -p "$(dirname "$log")"
+environment='unset VIRTUAL_ENV PYTHONPATH PYTHONHOME PIP_PREFIX PIP_TARGET PIP_USER; export PYTHONNOUSERSITE=1; '
+for key in OBJECT_DETECTION_WORKSPACE_ROOT OBJECT_DETECTION_DATA_ROOT \
+    OBJECT_DETECTION_OUTPUT_ROOT CUDA_VISIBLE_DEVICES NOTEBOOK_TIMEOUT \
+    RF_HOME HF_HOME TORCH_HOME XDG_CACHE_HOME MPLCONFIGDIR MPLBACKEND \
+    ${!RFDETR_@} ${!YOLOX_NANO_@} ${!YOLOX_TINY_@} ${!ULTRALYTICS_@}; do
+    if [[ ${!key+x} ]]; then
+        printf -v assignment 'export %s=%q; ' "$key" "${!key}"
+        environment+="$assignment"
+    fi
+done
+printf -v runner 'bash %q %q' "$workspace_root/scripts/run_local_notebook.sh" "$notebook"
+printf -v notebook_command '%s%s 2>&1 | tee %q; status=$?; echo __OBJECT_DETECTION_EXIT_STATUS__=$status >> %q; exit $status' "$environment" "$runner" "$log" "$log"
+printf -v tmux_command 'bash -o pipefail -c %q' "$notebook_command"
+tmux new-session -d -s "$session" -c "$workspace_root" "$tmux_command" \; \
+    set-option -t "=$session:" remain-on-exit on
+printf 'Started %s. Log: %s\n' "$session" "$log"
+printf 'Check with: %s check --session %s\n' "$0" "$session"

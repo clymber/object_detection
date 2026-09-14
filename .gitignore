@@ -170,4 +170,3 @@ cython_debug/
 
 # Temporary project plans
 /plans/*
-!/plans/monorepo_plan.md

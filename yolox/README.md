@@ -27,11 +27,10 @@ Without `--run-dir`, the newest complete matching run below
 `OUTPUT_ROOT/runs/basketball` is selected. Full export needs a real
 checkpoint and dataset; the local smoke check only covers the CLI boundary.
 
-The upstream package metadata requires
-`onnx-simplifier==0.4.10`. The local environment deliberately uses a newer
-`onnxsim` instead, as the legacy workspace did; `pip check` therefore reports
-that one upstream metadata mismatch. Training and unit tests do not depend on
-that pinned simplifier. Keep ONNX export validation as a separate local check.
+Upstream YOLOX metadata requires `onnx-simplifier==0.4.10`, while the
+macOS environment uses a newer `onnxsim`. `pip check` reports that metadata
+mismatch. Training and unit tests do not depend on the pinned simplifier;
+validate ONNX export separately before relying on it.
 
 The setup command selects environment-macos-mps.yml on Apple Silicon and
 environment-linux-cuda.yml on Renku Linux. Both profiles keep the same

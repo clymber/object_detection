@@ -5,12 +5,6 @@ Ultralytics, YOLOX, RF-DETR, evaluation, and shared utilities. Open
 [`object-detection.code-workspace`](object-detection.code-workspace) in VS Code
 to give each project its own interpreter, tests, and notebook kernel.
 
-Stage B now adds Renku Conda environments alongside the locally tested macOS
-ones. The existing root `object_ctrl` package, notebooks, and virtual
-environments remain a compatibility path until the new project environments
-pass their Renku checks. Outstanding local VS Code and clean-creation review
-items remain open in the migration status.
-
 ## Projects
 
 | Project | Purpose | Conda environment |
@@ -23,12 +17,7 @@ items remain open in the migration status.
 | [YOLOX](yolox/README.md) | YOLOX experiments | `yolox-dev` |
 | [Notebook Tools](notebook-tools/README.md) | Jupytext/Jupyter tooling | `notebook-tools` |
 
-Workspace-wide material remains in [`documents/`](documents/). The former
-Colab tree is archived as `documents/notebooks-colabs.tgz` and is unsupported
-in this migration. The [monorepo plan](plans/monorepo_plan.md) records the
-local completion gate and deferred Renku work. The
-[local migration status](documents/local_migration_status.md) records checks
-and remaining review items.
+Supporting reports and archives are in [`documents/`](documents/).
 
 ## Conda Setup and Tests
 
@@ -83,11 +72,9 @@ parent repository; `DATA_ROOT` defaults to `WORKSPACE_ROOT/data`, and
 `OBJECT_DETECTION_OUTPUT_ROOT` to override these paths. Notebook working
 directory does not determine project ownership.
 
-The old ignored `datasets/` directory is not moved automatically. If your
-local data is still there, set `OBJECT_DETECTION_DATA_ROOT` to its absolute
-path before running the new notebooks. Keep downloaded data and checkpoints
-out of source-project roots. Model producers write versioned prediction
-artifacts; `evaluation` reads them without importing model frameworks.
+Keep downloaded data and checkpoints out of source-project roots.
+Model producers write versioned prediction artifacts; `evaluation` reads
+them without importing model frameworks.
 
 ## Notebooks
 
@@ -104,27 +91,12 @@ make run-notebook NOTEBOOK=dataset/notebooks/smoke.ipynb
 The runner intentionally does not execute every training notebook by default.
 Select the corresponding `object-detection-<project>` kernel in VS Code.
 
-## Renku Conda and Legacy Compatibility
+## Detached Notebook Runs
 
-Miniforge and the named environments live at
-`/home/renku/work/miniforge3`, outside the repository. Setup is selective;
-the temporary root `objctrl` profile is installed only with
-`bash scripts/setup_conda_envs.sh legacy-root`. Its new kernel is
-`object-ctrl-renku-conda` so it cannot replace the existing legacy kernel
-during validation. The separate root `environment-rfdetr.yml` remains
-unchanged while full RF-DETR parity checks stay open.
-
-The existing `scripts/setup_renku.sh`, `scripts/setup_renku_rfdetr.sh`,
-`scripts/tmux_notebook.sh`, and their [operator guide](scripts/renku/README.md)
-remain available for root notebooks until the Conda replacements pass. Use
-`scripts/tmux_conda_notebook.sh` for detached project-owned notebooks, for
-example:
+Use `scripts/tmux_notebook.sh` to run a project notebook in a
+detached tmux session:
 
 ```bash
-bash scripts/tmux_conda_notebook.sh run --file evaluation/notebooks/smoke.ipynb --session evaluation-smoke
-bash scripts/tmux_conda_notebook.sh check --session evaluation-smoke
+bash scripts/tmux_notebook.sh run --file evaluation/notebooks/smoke.ipynb --session evaluation-smoke
+bash scripts/tmux_notebook.sh check --session evaluation-smoke
 ```
-
-The [monorepo plan](plans/monorepo_plan.md) defines the cutover checks; the
-[migration status](documents/local_migration_status.md) records what has
-actually passed.

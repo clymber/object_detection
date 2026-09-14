@@ -1,5 +1,0 @@
-# Compatibility intersection for Datumaro, Roboflow, and the Renku toolchain.
-numpy>=2.2,<2.4
-pandas>=2.3,<2.4
-typing-extensions>=4.15,<5
-filelock>=3.24.2,<4
