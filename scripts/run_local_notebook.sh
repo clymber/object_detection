@@ -26,7 +26,18 @@ if [[ ! -f "$workspace_root/$notebook" ]]; then
     exit 2
 fi
 
-conda run -n notebook-tools jupyter nbconvert "$workspace_root/$notebook" \
+if [[ "$(uname -s)" == Linux ]]; then
+    conda_bin="/home/renku/work/miniforge3/bin/conda"
+else
+    conda_bin="${CONDA_EXE:-$(type -P conda || true)}"
+fi
+[[ -x "$conda_bin" ]] || {
+    printf 'Conda not found. Set up Miniforge and notebook-tools first.\n' >&2
+    exit 1
+}
+env -u VIRTUAL_ENV -u PYTHONPATH -u PYTHONHOME -u PIP_PREFIX \
+    -u PIP_TARGET -u PIP_USER "$conda_bin" run -n notebook-tools \
+    jupyter nbconvert "$workspace_root/$notebook" \
     --to notebook --execute --inplace \
     --ExecutePreprocessor.kernel_name="object-detection-$project" \
     --ExecutePreprocessor.timeout="${NOTEBOOK_TIMEOUT:--1}"

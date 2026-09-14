@@ -11,6 +11,17 @@
     { "name": "Documents", "path": "documents" }
   ],
   "settings": {
-    "git.openRepositoryInParentFolders": "always"
+    "files.exclude": {
+      "**/.pytest_cache": true
+    },
+    "git.openRepositoryInParentFolders": "always",
+    "makefile.configureOnOpen": false,
+    "jupytextSync.syncDocuments": {
+      "onNotebookDocumentSave": true,
+      "onTextDocumentSave": true
+    }
+  },
+  "extensions": {
+    "recommendations": ["caenrigen.jupytext-sync"]
   }
 }

@@ -152,8 +152,11 @@ aligned_print({
 # layout maps `val` to `valid` for RF-DETR, with links to the original images.
 #
 # Existing within-split duplicate images are retained and recorded, preserving
-# the YOLO experiment dataset. Cross-split duplicates stop preparation to
-# prevent evaluation leakage. The manifest records annotation and image hashes;
+# the YOLO experiment dataset. The frozen source also has one identical,
+# unannotated train/test pair (train 89c890b422c081f0.jpg, test
+# 629919dbb706e532.jpg). Acknowledge this known overlap while preserving split
+# membership and counts for comparison with YOLO. The test metric includes this
+# leaked negative image. The manifest records annotation and image hashes;
 # reusing the derived dataset rechecks them. This can take a few minutes.
 # Stale derived data raises an error: use a new derived directory after an
 # intentional source change and treat it as a different experiment.
@@ -165,10 +168,17 @@ manifest = prepare_coco_dataset(
     expected_counts={"train": 11501, "val": 1156, "test": 1395},
     category_id=None,
     smoke_limits={"train": 16, "val": 8, "test": 8} if settings.smoke_run else None,
+    allow_cross_split_duplicates=True,
 )
 display(pd.DataFrame(summarize_dataset(manifest)))
 print(f"Dataset fingerprint: {manifest['fingerprint']}")
 print(f"Duplicate-content groups preserved: {len(manifest['duplicate_image_groups'])}")
+cross_split_duplicates = [
+    group for group in manifest["duplicate_image_groups"] if group["cross_split"]
+]
+print(f"Cross-split duplicate groups: {len(cross_split_duplicates)}")
+for group in cross_split_duplicates:
+    print(group["images"])
 
 # %% [markdown]
 # ## Initialize and fine-tune RF-DETR Small

@@ -9,7 +9,7 @@
 #       format_name: percent
 #       format_version: '1.3'
 #   kernelspec:
-#     display_name: Python (Object Detection YOLOX)
+#     display_name: Object Detection yolox (linux-cuda)
 #     language: python
 #     name: object-detection-yolox
 # ---

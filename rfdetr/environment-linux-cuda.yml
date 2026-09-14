@@ -1,0 +1,24 @@
+name: rfdetr-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytest
+  - pycocotools
+  - numpy>=2.2,<2.4
+  - pandas>=2.3,<3
+  - pyyaml
+  - pillow
+  - matplotlib
+  - ipykernel
+  - ipywidgets
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu130
+      - torch==2.10.0+cu130
+      - torchvision==0.25.0+cu130
+      - opencv-python-headless>=4.10,<5
+      - rfdetr[onnx,train]==1.10.1
+      - supervision==0.30.2
+      - datumaro==1.13.11
+      - roboflow==1.4.2

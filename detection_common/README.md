@@ -8,3 +8,8 @@ Then use `conda run -n detection-common-dev python -m pytest
 detection_common/tests`. Data defaults to `WORKSPACE_ROOT/data` and generated
 artifacts to `WORKSPACE_ROOT/outputs`; set absolute
 `OBJECT_DETECTION_DATA_ROOT` or `OBJECT_DETECTION_OUTPUT_ROOT` to override them.
+
+The setup command selects environment-macos-mps.yml on Apple Silicon and
+environment-linux-cuda.yml on Renku Linux. Both profiles keep the same
+named Conda environment; on Renku, bootstrap Miniforge first from the
+workspace root with bash scripts/install_miniforge_renku.sh.

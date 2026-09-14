@@ -1,0 +1,21 @@
+name: ultralytics-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytest
+  - numpy>=2.2,<2.4
+  - pandas>=2.3,<3
+  - pillow
+  - pycocotools
+  - pyyaml
+  - ipykernel
+  - ipywidgets
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu130
+      - torch==2.10.0+cu130
+      - torchvision==0.25.0+cu130
+      - ultralytics-opencv-headless==8.4.138
+      - opencv-python-headless>=4.10,<5
+      - onnx>=1.12,<2

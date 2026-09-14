@@ -1,0 +1,30 @@
+name: yolox-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - setuptools>=69
+  - wheel
+  - pytest
+  - numpy>=2.2,<2.4
+  - pandas>=2.3,<3
+  - pillow
+  - matplotlib
+  - pycocotools
+  - pyyaml
+  - tqdm
+  - ipykernel
+  - ipywidgets
+  - loguru
+  - tabulate
+  - tensorboard
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu130
+      - torch==2.10.0+cu130
+      - torchvision==0.25.0+cu130
+      - opencv-python-headless>=4.10,<5
+      - thop
+      - ninja
+      - onnx
+      - onnx-simplifier==0.5.0

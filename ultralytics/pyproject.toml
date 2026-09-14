@@ -12,7 +12,8 @@ dependencies = [
     "detection-common==0.1.0",
     "detection-evaluation==0.1.0",
     "pyyaml",
-    "ultralytics",
+    "ultralytics; sys_platform == 'darwin'",
+    "ultralytics-opencv-headless; sys_platform == 'linux'",
 ]
 
 [project.scripts]

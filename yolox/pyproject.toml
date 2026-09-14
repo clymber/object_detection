@@ -15,7 +15,8 @@ dependencies = [
     "pandas",
     "pycocotools",
     "torch>=2.0",
-    "opencv-python",
+    "opencv-python; sys_platform == 'darwin'",
+    "opencv-python-headless; sys_platform == 'linux'",
     "pyyaml",
     "yolox>=0.3,<0.4",
 ]

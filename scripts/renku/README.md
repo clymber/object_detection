@@ -1,5 +1,10 @@
 # Object Control Notebooks on Renku
 
+This guide documents the existing legacy root virtual environments. The new
+project-owned Renku workflow uses Miniforge and platform-specific Conda
+manifests; see [the workspace README](../../README.md). Keep this path
+available until the new environments pass the Stage B checks.
+
 The DCU Renku platform is available at
 [soc-gpu.computing.dcu.ie](https://soc-gpu.computing.dcu.ie/).
 

@@ -13,3 +13,8 @@ Artifacts should be written below `OUTPUT_ROOT/evaluation`, which defaults to
 writes versioned split artifacts plus metrics. The model packages own their
 checkpoint loading and native prediction adapters. The evaluation environment
 does not import or install those frameworks.
+
+The setup command selects environment-macos-mps.yml on Apple Silicon and
+environment-linux-cuda.yml on Renku Linux. Both profiles keep the same
+named Conda environment; on Renku, bootstrap Miniforge first from the
+workspace root with bash scripts/install_miniforge_renku.sh.

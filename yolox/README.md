@@ -2,7 +2,7 @@
 
 YOLOX training and inference helpers. The upstream YOLOX source checkout is
 not vendored; set `YOLOX_SOURCE` to its absolute directory, or place it beside
-this workspace as `../YOLOX`. The local setup script installs that checkout
+this workspace as `../YOLOX`. The macOS setup script installs that checkout
 with the environment's PyTorch and without build isolation. The currently
 tested sibling checkout is commit `6ddff48` of upstream YOLOX.
 
@@ -32,3 +32,13 @@ The upstream package metadata requires
 `onnxsim` instead, as the legacy workspace did; `pip check` therefore reports
 that one upstream metadata mismatch. Training and unit tests do not depend on
 that pinned simplifier. Keep ONNX export validation as a separate local check.
+
+The setup command selects environment-macos-mps.yml on Apple Silicon and
+environment-linux-cuda.yml on Renku Linux. Both profiles keep the same
+named Conda environment; on Renku, bootstrap Miniforge first from the
+workspace root with bash scripts/install_miniforge_renku.sh.
+
+On Renku, setup fetches commit 6ddff48 and builds YOLOX with the
+C++17 and headless OpenCV adjustments. The Linux environment
+includes CUDA 13.0 PyTorch wheels and onnx-simplifier 0.5.0;
+the local macOS ONNX metadata caveat remains unchanged.
