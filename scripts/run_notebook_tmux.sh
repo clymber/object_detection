@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run a project-owned notebook through its Conda kernel in a detached session.
+# Run or inspect a project-owned notebook in a detached tmux session.
 set -euo pipefail
 
 workspace_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -76,7 +76,7 @@ for key in OBJECT_DETECTION_WORKSPACE_ROOT OBJECT_DETECTION_DATA_ROOT \
         environment+="$assignment"
     fi
 done
-printf -v runner 'bash %q %q' "$workspace_root/scripts/run_local_notebook.sh" "$notebook"
+printf -v runner 'bash %q %q' "$workspace_root/scripts/run_notebook.sh" "$notebook"
 printf -v notebook_command '%s%s 2>&1 | tee %q; status=$?; echo __OBJECT_DETECTION_EXIT_STATUS__=$status >> %q; exit $status' "$environment" "$runner" "$log" "$log"
 printf -v tmux_command 'bash -o pipefail -c %q' "$notebook_command"
 tmux new-session -d -s "$session" -c "$workspace_root" "$tmux_command" \; \

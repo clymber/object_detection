@@ -1,16 +1,17 @@
-name: dataset-dev
+name: object-detection-dataset
 channels:
   - conda-forge
 dependencies:
   - python=3.11
   - pip
   - pytest
-  - pandas
+  - numpy<2.4
+  - pandas>=2.3,<3
   - jinja2
   - pillow
   - scikit-learn
   - ipykernel
   - ipywidgets
   - pip:
-      - datumaro
-      - roboflow
+      - datumaro==1.13.11
+      - roboflow==1.4.2

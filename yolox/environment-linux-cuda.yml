@@ -1,4 +1,4 @@
-name: yolox-dev
+name: object-detection-yolox
 channels:
   - conda-forge
 dependencies:

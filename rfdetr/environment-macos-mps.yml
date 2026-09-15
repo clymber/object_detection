@@ -1,4 +1,4 @@
-name: rfdetr-dev
+name: object-detection-rfdetr
 channels:
   - conda-forge
 dependencies:

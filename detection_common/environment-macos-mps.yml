@@ -1,4 +1,4 @@
-name: detection-common-dev
+name: object-detection-common
 channels:
   - conda-forge
 dependencies:

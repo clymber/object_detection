@@ -1,4 +1,4 @@
-name: evaluation-dev
+name: object-detection-evaluation
 channels:
   - conda-forge
 dependencies:

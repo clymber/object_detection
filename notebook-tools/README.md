@@ -1,6 +1,7 @@
 # Notebook Tools
 
-The `notebook-tools` Conda environment owns JupyterLab, Jupytext, and
+The `.conda/envs/object-detection-notebooks` environment owns
+JupyterLab, Jupytext, and
 nbconvert. It edits and synchronizes notebooks but does not install model
 frameworks; each notebook executes in its own project kernel.
 

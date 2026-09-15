@@ -1,4 +1,4 @@
-name: notebook-tools
+name: object-detection-notebooks
 channels:
   - conda-forge
 dependencies:

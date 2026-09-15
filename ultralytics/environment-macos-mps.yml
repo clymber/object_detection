@@ -1,4 +1,4 @@
-name: ultralytics-dev
+name: object-detection-ultralytics
 channels:
   - conda-forge
 dependencies:

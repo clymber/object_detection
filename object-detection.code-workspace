@@ -8,9 +8,19 @@
     { "name": "Evaluation", "path": "evaluation" },
     { "name": "Detection Common", "path": "detection_common" },
     { "name": "Notebook Tools", "path": "notebook-tools" },
+    { "name": "Docker", "path": "docker" },
     { "name": "Documents", "path": "documents" }
   ],
   "settings": {
+    "python.useEnvironmentsExtension": true,
+    "python-envs.workspaceSearchPaths": [".conda/envs"],
+    "jupyter.kernels.excludePythonEnvironments": [
+      "~/.conda/envs/dataset-dev",
+      "~/.conda/envs/evaluation-dev",
+      "~/.conda/envs/rfdetr-dev",
+      "~/.conda/envs/ultralytics-dev",
+      "~/.conda/envs/yolox-dev"
+    ],
     "files.exclude": {
       "**/.pytest_cache": true
     },
@@ -19,7 +29,8 @@
     "jupytextSync.syncDocuments": {
       "onNotebookDocumentSave": true,
       "onTextDocumentSave": true
-    }
+    },
+    "editor.minimap.enabled": false
   },
   "extensions": {
     "recommendations": ["caenrigen.jupytext-sync"]

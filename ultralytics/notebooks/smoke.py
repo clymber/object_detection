@@ -3,15 +3,11 @@
 #   jupytext:
 #     cell_metadata_filter: tags
 #     formats: ipynb,py:percent
-#     notebook_metadata_filter: kernelspec,jupytext,title,authors,-jupytext.text_representation.jupytext_version
+#     notebook_metadata_filter: jupytext,title,authors,-kernelspec,-jupytext.text_representation.jupytext_version
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#   kernelspec:
-#     display_name: Python (Object Detection Ultralytics)
-#     language: python
-#     name: object-detection-ultralytics
 # ---
 
 # %%

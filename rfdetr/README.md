@@ -5,15 +5,16 @@ artifact production. Dataset preprocessing lives in `dataset-builder`;
 framework-neutral evaluation lives in `detection-evaluation`.
 
 From the workspace root, run `bash scripts/setup_conda_envs.sh rfdetr` and
-`conda run -n rfdetr-dev python -m pytest rfdetr/tests`. Notebooks under
+`conda run -p .conda/envs/object-detection-rfdetr python -m pytest
+rfdetr/tests`. Notebooks under
 `notebooks/` use the `object-detection-rfdetr` kernel. Inputs default to
 `WORKSPACE_ROOT/data`; runs default to `OUTPUT_ROOT/runs/basketball`.
 Override shared roots with absolute `OBJECT_DETECTION_DATA_ROOT` and
 `OBJECT_DETECTION_OUTPUT_ROOT` values when needed.
 
 The setup command selects environment-macos-mps.yml on Apple Silicon and
-environment-linux-cuda.yml on Renku Linux. Both profiles keep the same
-named Conda environment; on Renku, bootstrap Miniforge first from the
+environment-linux-cuda.yml on Renku Linux. Both profiles use the checkout-local
+`.conda/envs/object-detection-rfdetr` prefix; on Renku, bootstrap Miniforge first from the
 workspace root with bash scripts/install_miniforge_renku.sh.
 
 On Renku, the Linux profile uses CUDA 13.0 PyTorch wheels and
@@ -27,21 +28,23 @@ the RF-DETR Conda kernel:
 
 ```bash
 make sync-notebooks
-RFDETR_MODE=fresh RFDETR_SMOKE=1 bash scripts/tmux_notebook.sh run \
+RFDETR_MODE=fresh RFDETR_SMOKE=1 bash scripts/run_notebook_tmux.sh run \
   --file rfdetr/notebooks/nb04.02-rfdetr_small_large_basketball.ipynb \
   --session rfdetr-small-smoke
-bash scripts/tmux_notebook.sh check --session rfdetr-small-smoke
+bash scripts/run_notebook_tmux.sh check --session rfdetr-small-smoke
 ```
 
 For a full run, set `RFDETR_SMOKE=0` and use a new session name. To continue
 or reevaluate an existing run, set `RFDETR_MODE=resume` or `evaluate` and
 set `RFDETR_RUN_DIR` to the exact recorded run directory.
 
-For YOLO comparison, run `export-ultralytics-baseline` in
-`ultralytics-dev` and `export-yolox-baseline --model tiny` / `--model nano`
-in `yolox-dev`. Pass each command the same full `--dataset-dir` and
+For YOLO comparison, run `export-ultralytics-baseline` through
+`.conda/envs/object-detection-ultralytics` and
+`export-yolox-baseline --model tiny` / `--model nano` through
+`.conda/envs/object-detection-yolox`. Pass each command the same full `--dataset-dir` and
 `--output-dir`; the project READMEs show their arguments. Set
 `RFDETR_BASELINE_EXPORT_DIR` to that output directory when running this
 notebook. The exporters create the `<model>_<split>_predictions.json` files
 that its comparison cell reads. RF-DETR's ONNX worker is available as
-`conda run -n rfdetr-dev python -m rfdetr_pipeline.onnx_cli --run-dir <run>`.
+`conda run -p .conda/envs/object-detection-rfdetr python -m
+rfdetr_pipeline.onnx_cli --run-dir <run>`.

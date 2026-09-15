@@ -7,15 +7,15 @@ to give each project its own interpreter, tests, and notebook kernel.
 
 ## Projects
 
-| Project | Purpose | Conda environment |
+| Project | Purpose | Local Conda prefix |
 | --- | --- | --- |
-| [Detection Common](detection_common/README.md) | Shared helpers and paths | `detection-common-dev` |
-| [Evaluation](evaluation/README.md) | Neutral artifacts and metrics | `evaluation-dev` |
-| [Dataset](dataset/README.md) | COCO/Datumaro preparation | `dataset-dev` |
-| [RF-DETR](rfdetr/README.md) | RF-DETR experiments | `rfdetr-dev` |
-| [Ultralytics](ultralytics/README.md) | Ultralytics experiments | `ultralytics-dev` |
-| [YOLOX](yolox/README.md) | YOLOX experiments | `yolox-dev` |
-| [Notebook Tools](notebook-tools/README.md) | Jupytext/Jupyter tooling | `notebook-tools` |
+| [Detection Common](detection_common/README.md) | Shared helpers and paths | `object-detection-common` |
+| [Evaluation](evaluation/README.md) | Neutral artifacts and metrics | `object-detection-evaluation` |
+| [Dataset](dataset/README.md) | COCO/Datumaro preparation | `object-detection-dataset` |
+| [RF-DETR](rfdetr/README.md) | RF-DETR experiments | `object-detection-rfdetr` |
+| [Ultralytics](ultralytics/README.md) | Ultralytics experiments | `object-detection-ultralytics` |
+| [YOLOX](yolox/README.md) | YOLOX experiments | `object-detection-yolox` |
+| [Notebook Tools](notebook-tools/README.md) | Jupytext/Jupyter tooling | `object-detection-notebooks` |
 
 Supporting reports and archives are in [`documents/`](documents/).
 
@@ -39,9 +39,13 @@ bash scripts/setup_conda_envs.sh notebook-tools
 ```
 
 With no arguments, the script sets up all projects. It creates or updates each
-named Conda environment from `environment-macos-mps.yml` on macOS or
-`environment-linux-cuda.yml` on Renku, installs internal
-packages editable in dependency order, and registers notebook kernels.
+environment below `WORKSPACE_ROOT/.conda/envs/<object-detection-name>` from
+`environment-macos-mps.yml` on macOS or `environment-linux-cuda.yml` on Renku,
+installs internal packages editable in dependency order, and registers kernels
+inside the project environments. Descriptive prefix names stay legible in Conda
+and VS Code while remaining isolated from another workspace copy.
+Setup also registers the workspace-local `envs` directory in the user's Conda
+configuration so `conda env list` can show these prefix names from any shell.
 On macOS, YOLOX needs an upstream checkout at `../YOLOX` or an absolute
 `YOLOX_SOURCE`. On Renku, setup fetches and builds the pinned revision with
 headless OpenCV and C++17 adjustments.
@@ -49,12 +53,12 @@ headless OpenCV and C++17 adjustments.
 Run tests independently with the owning interpreter, for example:
 
 ```bash
-conda run -n detection-common-dev python -m pytest detection_common/tests
-conda run -n evaluation-dev python -m pytest evaluation/tests
-conda run -n dataset-dev python -m pytest dataset/tests
-conda run -n rfdetr-dev python -m pytest rfdetr/tests
-conda run -n ultralytics-dev python -m pytest ultralytics/tests
-conda run -n yolox-dev python -m pytest yolox/tests
+conda run -p .conda/envs/object-detection-common python -m pytest detection_common/tests
+conda run -p .conda/envs/object-detection-evaluation python -m pytest evaluation/tests
+conda run -p .conda/envs/object-detection-dataset python -m pytest dataset/tests
+conda run -p .conda/envs/object-detection-rfdetr python -m pytest rfdetr/tests
+conda run -p .conda/envs/object-detection-ultralytics python -m pytest ultralytics/tests
+conda run -p .conda/envs/object-detection-yolox python -m pytest yolox/tests
 ```
 
 The Linux model environments use official CUDA 13.0 PyTorch wheels inside
@@ -93,10 +97,10 @@ Select the corresponding `object-detection-<project>` kernel in VS Code.
 
 ## Detached Notebook Runs
 
-Use `scripts/tmux_notebook.sh` to run a project notebook in a
+Use `scripts/run_notebook_tmux.sh` to run a project notebook in a
 detached tmux session:
 
 ```bash
-bash scripts/tmux_notebook.sh run --file evaluation/notebooks/smoke.ipynb --session evaluation-smoke
-bash scripts/tmux_notebook.sh check --session evaluation-smoke
+bash scripts/run_notebook_tmux.sh run --file evaluation/notebooks/smoke.ipynb --session evaluation-smoke
+bash scripts/run_notebook_tmux.sh check --session evaluation-smoke
 ```

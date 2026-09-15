@@ -7,7 +7,8 @@ with the environment's PyTorch and without build isolation. The currently
 tested sibling checkout is commit `6ddff48` of upstream YOLOX.
 
 From the workspace root, run `bash scripts/setup_conda_envs.sh yolox` and
-`conda run -n yolox-dev python -m pytest yolox/tests`. Notebooks under
+`conda run -p .conda/envs/object-detection-yolox python -m pytest
+yolox/tests`. Notebooks under
 `notebooks/` use the `object-detection-yolox` kernel. Source data defaults to
 `WORKSPACE_ROOT/data`; generated runs belong below
 `OUTPUT_ROOT/runs/basketball`.
@@ -15,7 +16,7 @@ From the workspace root, run `bash scripts/setup_conda_envs.sh yolox` and
 Export a completed basketball checkpoint without retraining:
 
 ```bash
-conda run -n yolox-dev export-yolox-baseline \
+conda run -p .conda/envs/object-detection-yolox export-yolox-baseline \
   --model tiny \
   --dataset-dir /absolute/path/to/coco_basketball_large_dataset \
   --output-dir /absolute/path/to/new/artifact-directory \
@@ -33,8 +34,8 @@ mismatch. Training and unit tests do not depend on the pinned simplifier;
 validate ONNX export separately before relying on it.
 
 The setup command selects environment-macos-mps.yml on Apple Silicon and
-environment-linux-cuda.yml on Renku Linux. Both profiles keep the same
-named Conda environment; on Renku, bootstrap Miniforge first from the
+environment-linux-cuda.yml on Renku Linux. Both profiles use the checkout-local
+`.conda/envs/object-detection-yolox` prefix; on Renku, bootstrap Miniforge first from the
 workspace root with bash scripts/install_miniforge_renku.sh.
 
 On Renku, setup fetches commit 6ddff48 and builds YOLOX with the

@@ -16,12 +16,7 @@ data/
 # YOLO / ML artifacts
 runs/
 **/notebooks/weights/
-models/pretrained/**/*.pt
-models/pretrained/**/*.pth
-models/pretrained/**/*.onnx
-models/pretrained/**/*.tflite
-models/pretrained/rfdetr/
-models/cache/
+/models/
 
 # outputs
 outputs/*
@@ -131,6 +126,7 @@ celerybeat.pid
 .venv
 .venv-renku/
 .venv-renku-rfdetr/
+**/.conda/
 env/
 venv/
 ENV/
