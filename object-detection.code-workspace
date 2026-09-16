@@ -22,7 +22,9 @@
       "~/.conda/envs/yolox-dev"
     ],
     "files.exclude": {
-      "**/.pytest_cache": true
+      "**/.pytest_cache": true,
+      "**/*.egg-info": true,
+      "**/__pycache__": true
     },
     "git.openRepositoryInParentFolders": "always",
     "makefile.configureOnOpen": false,

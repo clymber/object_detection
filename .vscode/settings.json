@@ -1,20 +1,19 @@
 {
-  "python": {
-    "testing": {
-      "pytestEnabled": false,
-      "unittestEnabled": false
-    },
-    "analysis": {
-      "exclude": [
-        "dataset/**",
-        "ultralytics/**",
-        "yolox/**",
-        "rfdetr/**",
-        "evaluation/**",
-        "detection_common/**"
-      ]
-    }
-  },
+  "python.defaultInterpreterPath": "${workspaceFolder}/.conda/envs/object-detection-common/bin/python",
+  "python-envs.workspaceSearchPaths": [".conda/envs"],
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestEnabled": false,
+  "python.analysis.exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    "dataset/**",
+    "ultralytics/**",
+    "yolox/**",
+    "rfdetr/**",
+    "evaluation/**",
+    "detection_common/**"
+  ],
   "files.exclude": {
     "dataset": true,
     "ultralytics": true,

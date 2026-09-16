@@ -10,7 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .config import DATA_ROOT
+from .config import DATA_ROOT, WORKSPACE_ROOT
 
 if TYPE_CHECKING:
     from roboflow.core.dataset import Dataset
@@ -36,11 +36,21 @@ def dataset_path(project_id: str, version: int) -> Path:
 
 def roboflow_api_key() -> str:
     """
-    Read the Roboflow credential from the process environment.
+    Read the Roboflow credential from the workspace or process environment.
     """
-    api_key = os.getenv("ROBOFLOW_API_KEY")
+    kep_path = WORKSPACE_ROOT / ".roboflow_api_key"
+    try:
+        api_key = kep_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        api_key = ""
+
     if not api_key:
-        raise ValueError("ROBOFLOW_API_KEY must be set")
+        api_key = os.getenv("ROBOFLOW_API_KEY", "").strip()
+
+    if not api_key:
+        errmsg = f"Roboflow API key not found: {kep_path} or ROBOFLOW_API_KEY"
+        raise ValueError(errmsg)
+
     return api_key
 
 

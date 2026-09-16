@@ -7,6 +7,37 @@ import pytest
 from dataset_builder import roboflow as roboflow_platform
 
 
+def test_roboflow_api_key_prefers_workspace_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """
+    Prefer a trimmed API key stored in the workspace credential file.
+    """
+    monkeypatch.setattr(roboflow_platform, "WORKSPACE_ROOT", tmp_path)
+    monkeypatch.setenv("ROBOFLOW_API_KEY", "environment-api-key")
+    (tmp_path / ".roboflow_api_key").write_text(
+        "  file-api-key\n",
+        encoding="utf-8",
+    )
+
+    assert roboflow_platform.roboflow_api_key() == "file-api-key"
+
+
+def test_roboflow_api_key_falls_back_to_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """
+    Use the environment when the workspace credential file has no key.
+    """
+    monkeypatch.setattr(roboflow_platform, "WORKSPACE_ROOT", tmp_path)
+    monkeypatch.setenv("ROBOFLOW_API_KEY", "environment-api-key")
+    (tmp_path / ".roboflow_api_key").write_text(" \n", encoding="utf-8")
+
+    assert roboflow_platform.roboflow_api_key() == "environment-api-key"
+
+
 def test_roboflow_dataset_path_uses_project_and_version(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -103,6 +134,7 @@ def test_download_dataset_uses_api_metadata_and_default_location(
     monkeypatch.setitem(sys.modules, "roboflow", fake_module)
     monkeypatch.setenv("ROBOFLOW_API_KEY", "test-api-key")
     monkeypatch.setattr(roboflow_platform, "DATA_ROOT", tmp_path)
+    monkeypatch.setattr(roboflow_platform, "WORKSPACE_ROOT", tmp_path)
 
     dataset = roboflow_platform.download(
         "workspace",
@@ -201,6 +233,7 @@ def test_download_dataset_requires_api_key(
     """
     monkeypatch.delenv("ROBOFLOW_API_KEY", raising=False)
     monkeypatch.setattr(roboflow_platform, "DATA_ROOT", tmp_path)
+    monkeypatch.setattr(roboflow_platform, "WORKSPACE_ROOT", tmp_path)
 
     with pytest.raises(ValueError, match="ROBOFLOW_API_KEY"):
         roboflow_platform.download(

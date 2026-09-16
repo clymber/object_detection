@@ -123,6 +123,7 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+/.roboflow_api_key
 .venv
 .venv-renku/
 .venv-renku-rfdetr/
