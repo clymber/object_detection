@@ -768,8 +768,8 @@ print("Focused logic checks passed.")
 #
 # Build one Datumaro dataset so COCO and YOLO receive the same images, boxes, class,
 # and split assignments. The pixel digest is the item ID and therefore the image
-# filename in both formats. Output directories encode the final counts as
-# `<format>_football_<train>_<val>_<test>`.
+# filename in both formats. Output directories use the stable names
+# `coco_football` and `yolo_football`.
 #
 # Media export attempts a hardlink first to avoid duplicating image bytes and falls
 # back to a byte-identical copy when linking is unavailable. Existing destinations
@@ -780,14 +780,6 @@ print("Focused logic checks passed.")
 n_train = len(split_df[split_df["final_split"] == "train"])
 n_val = len(split_df[split_df["final_split"] == "val"])
 n_test = len(split_df[split_df["final_split"] == "test"])
-dataset_suffix = f"football_{n_train}_{n_val}_{n_test}"
-coco_dataset_dir = COMPOSED_ROOT / f"coco_{dataset_suffix}"
-yolo_dataset_dir = COMPOSED_ROOT / f"yolo_{dataset_suffix}"
-
-existing = [path for path in (coco_dataset_dir, yolo_dataset_dir) if path.exists()]
-if existing:
-    paths = ", ".join(str(path) for path in existing)
-    raise FileExistsError(f"Export destination already exists: {paths}")
 
 datumaro_items = []
 for image in retained_images:
@@ -812,6 +804,19 @@ football_dataset = dm.Dataset.from_iterable(
     datumaro_items,
     categories=["football"],
 )
+
+coco_dataset_dir = COMPOSED_ROOT / "coco_football"
+yolo_dataset_dir = COMPOSED_ROOT / "yolo_football"
+
+existing_destinations = [
+    destination
+    for destination in (coco_dataset_dir, yolo_dataset_dir)
+    if destination.exists()
+]
+if existing_destinations:
+    destinations = ", ".join(str(destination) for destination in existing_destinations)
+    raise FileExistsError(f"Refusing to overwrite existing dataset export(s): {destinations}")
+
 with prefer_hardlinked_datumaro_media():
     football_dataset.export(
         str(coco_dataset_dir),
@@ -819,14 +824,14 @@ with prefer_hardlinked_datumaro_media():
         save_media=True,
         reindex=True,
     )
+    print(f"COCO export: {coco_dataset_dir}")
     football_dataset.export(
         str(yolo_dataset_dir),
         format=DatumaroExpFmt.YOLO_ULTRALYTICS,
         save_media=True,
     )
+    print(f"YOLO export: {yolo_dataset_dir}")
 
-print(f"COCO export: {coco_dataset_dir}")
-print(f"YOLO export: {yolo_dataset_dir}")
 
 # %% [markdown]
 # ### 6.1 Save the source manifest
@@ -896,7 +901,7 @@ print(f"Manifest: {manifest_path}")
 # - unique retained pixel hashes and one final split per `dataset_id`;
 # - matching image and label filenames in both formats;
 # - valid COCO image/category references and normalized YOLO boxes;
-# - image counts that match the output directory name; and
+# - image counts that match the retained split totals; and
 # - hardlinked or byte-identical media files.
 #
 # The final table reconciles the source, exclusion, duplicate, and retained counts
@@ -911,7 +916,6 @@ assert {image["final_split"] for image in retained_images} == {
     "test",
 }
 assert n_train + n_val + n_test == total_retained
-assert dataset_suffix == f"football_{n_train}_{n_val}_{n_test}"
 
 expected_names = {
     split: {
