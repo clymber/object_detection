@@ -36,23 +36,27 @@ Build a deduplicated, grouped football detection dataset.
 # %aimport -csv, -textwrap, -functools, -IPython, -ultralytics, -pandas, -datumaro
 # %aimport -random
 
-from dataset_builder.config import DATA_ROOT, OUTPUT_ROOT, WORKSPACE_ROOT
 from detection_common import configure_stdio_relative_path
+
+from dataset_builder.config import DATA_ROOT, OUTPUT_ROOT, WORKSPACE_ROOT
 
 configure_stdio_relative_path(WORKSPACE_ROOT)
 
 # %%
-import hashlib
 import json
 import math
 import os
-import struct
 from collections import defaultdict
 from pathlib import Path
 from typing import NamedTuple
 
 import datumaro as dm
 import pandas as pd
+from detection_common.utils.image import image_content_digest
+from IPython.display import display
+from PIL import Image
+from sklearn.model_selection import GroupShuffleSplit
+
 from dataset_builder import (
     prefer_hardlinked_datumaro_media,
     summarize_coco_datasets,
@@ -60,9 +64,6 @@ from dataset_builder import (
 from dataset_builder import roboflow as rf_platform
 from dataset_builder.datumaro import ExportFormat as DatumaroExpFmt
 from dataset_builder.roboflow import RoboflowFormat as rf_format
-from IPython.display import display
-from PIL import Image
-from sklearn.model_selection import GroupShuffleSplit
 
 # %% [markdown]
 # ## 1. Download the source datasets
@@ -516,24 +517,6 @@ display(filter_summary.style.hide(axis="index"))
 
 
 # %%
-def decoded_pixel_sha256(image: Image.Image) -> str:
-    """
-    Hash image dimensions and decoded RGB pixels with SHA-256.
-    """
-    rgb = image.convert("RGB")
-    header = struct.pack(">II", rgb.width, rgb.height)
-    return hashlib.sha256(header + rgb.tobytes()).hexdigest()
-
-
-def hash_image_file(path: str | Path) -> str:
-    """
-    Return the dimension-aware decoded-pixel hash for an image file.
-    """
-    with Image.open(path) as image:
-        image.load()
-        return decoded_pixel_sha256(image)
-
-
 def annotation_signature(image: dict) -> tuple:
     """
     Return a stable comparison key for an image's mapped boxes.
@@ -581,7 +564,7 @@ hashable_images = [
     image for image in image_rows if image["status"] == "ready_for_hashing"
 ]
 for image in hashable_images:
-    image["pixel_sha256"] = hash_image_file(image["source_path"])
+    image["pixel_sha256"] = image_content_digest(image["source_path"])
 
 duplicate_groups = defaultdict(list)
 for image in hashable_images:
@@ -745,10 +728,6 @@ print(
 # isolation. The earlier inventory summaries exercise the class rules on real data.
 
 # %%
-assert decoded_pixel_sha256(Image.new("RGB", (1, 2))) != decoded_pixel_sha256(
-    Image.new("RGB", (2, 1))
-)
-
 test_background = {
     **retained_images[0],
     "mapped_annotations": [],

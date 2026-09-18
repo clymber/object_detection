@@ -14,7 +14,7 @@
 # # YOLOX-Tiny on the Large Basketball Dataset
 #
 # This notebook fine-tunes YOLOX-Tiny on
-# `DATA_ROOT/composed/coco_basketball_11501_1156_1395`.
+# `DATA_ROOT/composed/coco_basketball`.
 #
 # The run is designed to be comparable with `nb02.02-ultra_yolo11n_large_basketball.py`:
 # 640x640 input, 100 epochs by default, validation/test metrics, training plots, and
@@ -44,6 +44,7 @@ from detection_common import (
 )
 from detection_common.utils.image import display as display_img
 from IPython.display import Markdown, display
+
 from yolox_pipeline import yolox as yolox_platform
 from yolox_pipeline.config import (
     DATA_ROOT,
@@ -93,7 +94,7 @@ settings = yolox_platform.training_settings_from_env(default_epochs=100)
 PRETRAINED_PATH = (
     ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "yolox") / "yolox_tiny.pth"
 )
-DATASET_DIR = DATA_ROOT / "composed" / "coco_basketball_11501_1156_1395"
+DATASET_DIR = DATA_ROOT / "composed" / "coco_basketball"
 
 project_space = ensure_dir(OUTPUT_ROOT / "runs" / "basketball")
 project_name_base = "yolox_tiny_basketball_large_dataset"

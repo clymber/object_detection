@@ -52,6 +52,7 @@ from detection_common.utils.image import display as display_img
 from detection_common.utils.json_io import write_json
 from detection_evaluation import write_comparison
 from IPython.display import Markdown, display
+
 from rfdetr_pipeline import rfdetr as rfdetr_platform
 from rfdetr_pipeline.config import (
     DATA_ROOT,
@@ -116,10 +117,8 @@ RUN_OVERRIDES = {
     # "run_dir": "outputs/runs/basketball/rfdetr_small_basketball_large_dataset",
 }
 settings = rfdetr_platform.settings_from_env(overrides=RUN_OVERRIDES)
-SOURCE_DATASET = (
-    DATA_ROOT / "composed" / "coco_basketball_11501_1156_1395"
-)
-dataset_name = "basketball_11501_1156_1395"
+SOURCE_DATASET = DATA_ROOT / "composed" / "coco_basketball"
+dataset_name = "basketball"
 if settings.smoke_run:
     dataset_name += "_smoke"
 DERIVED_DATASET = DATA_ROOT / "processed" / "rfdetr" / dataset_name
@@ -142,29 +141,23 @@ aligned_print({
 # %% [markdown]
 # ## Dataset identity and loader layout
 #
-# The train/validation/test counts must be 11,501 / 1,156 / 1,395 before any
+# The train/validation/test counts must be 11,394 / 1,155 / 1,395 before any
 # smoke subset is selected. Preserve the single basketball class, every
 # negative image, and all source boxes and split membership. The derived
 # layout maps `val` to `valid` for RF-DETR, with links to the original images.
 #
-# Existing within-split duplicate images are retained and recorded, preserving
-# the YOLO experiment dataset. The frozen source also has one identical,
-# unannotated train/test pair (train 89c890b422c081f0.jpg, test
-# 629919dbb706e532.jpg). Acknowledge this known overlap while preserving split
-# membership and counts for comparison with YOLO. The test metric includes this
-# leaked negative image. The manifest records annotation and image hashes;
-# reusing the derived dataset rechecks them. This can take a few minutes.
-# Stale derived data raises an error: use a new derived directory after an
-# intentional source change and treat it as a different experiment.
+# The canonical source is globally deduplicated. The manifest records annotation
+# and image hashes; reusing the derived dataset rechecks them. This can take a few
+# minutes. Stale derived data raises an error: use a new derived directory after
+# an intentional source change and treat it as a different experiment.
 
 # %%
 manifest = prepare_coco_dataset(
     SOURCE_DATASET,
     DERIVED_DATASET,
-    expected_counts={"train": 11501, "val": 1156, "test": 1395},
+    expected_counts={"train": 11394, "val": 1155, "test": 1395},
     category_id=None,
     smoke_limits={"train": 16, "val": 8, "test": 8} if settings.smoke_run else None,
-    allow_cross_split_duplicates=True,
 )
 display(pd.DataFrame(summarize_dataset(manifest)))
 print(f"Dataset fingerprint: {manifest['fingerprint']}")

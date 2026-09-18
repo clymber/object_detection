@@ -12,6 +12,7 @@
 
 datasets/
 data/
+/weights/
 
 # YOLO / ML artifacts
 runs/

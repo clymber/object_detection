@@ -26,6 +26,7 @@ from typing import cast
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 from detection_common import configure_stdio_relative_path
+
 from ultralytics_pipeline.config import (
     DATA_ROOT,
     OUTPUT_ROOT,
@@ -42,6 +43,7 @@ from detection_common import (
     ensure_dir,
 )
 from detection_common.utils.image import display as display_img
+
 from ultralytics_pipeline import ultralytics as ultralitics_platform
 
 # Must be called before importing ultralytics.
@@ -51,7 +53,7 @@ from ultralytics import YOLO  # noqa: E402
 # %%
 PRETRAINED_DIR = ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "ultralytics")
 DATASET_DIR = ensure_dir(DATA_ROOT)
-DATA_YAML = DATASET_DIR / "composed" / "yolo_basketball_11501_1156_1395" / "data.yaml"
+DATA_YAML = DATASET_DIR / "composed" / "yolo_basketball" / "data.yaml"
 
 # %% [markdown]
 # ## Fine-tune Ultrlytics YOLO11 on a custom dataset.
