@@ -39,12 +39,14 @@ configure_stdio_relative_path(WORKSPACE_ROOT)
 # %%
 from detection_common import (
     Device,
+    allocate_run_directory,
     aligned_print,
     ensure_dir,
 )
 from detection_common.utils.image import display as display_img
 
 from ultralytics_pipeline import ultralytics as ultralitics_platform
+from ultralytics_pipeline import producer
 
 # Must be called before importing ultralytics.
 ultralitics_platform.configure_privacy()
@@ -53,63 +55,70 @@ from ultralytics import YOLO  # noqa: E402
 # %%
 PRETRAINED_DIR = ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "ultralytics")
 DATASET_DIR = ensure_dir(DATA_ROOT)
-DATA_YAML = DATASET_DIR / "composed" / "yolo_basketball" / "data.yaml"
+SOURCE_DATASET_DIR = DATASET_DIR / "composed" / "coco_basketball"
+YOLO_DATASET_DIR = DATASET_DIR / "composed" / "yolo_basketball"
 
 # %% [markdown]
 # ## Fine-tune Ultrlytics YOLO11 on a custom dataset.
 
 # %%
-project_space = OUTPUT_ROOT / "runs" / "basketball"
-project_name_base = "yolo11n_basketball_large_dataset"
 # Avoid container shared-memory exhaustion by default. Hosts with a larger /dev/shm
 # allocation can set ULTRALYTICS_WORKERS to a positive integer.
 DATALOADER_WORKERS = int(os.environ.get("ULTRALYTICS_WORKERS", "0"))
 if DATALOADER_WORKERS < 0:
     raise ValueError("ULTRALYTICS_WORKERS must be zero or greater")
 
+
 resume_checkpoint: Path | None = None
 # resume_checkpoint: Path | None = (
-#     project_space
-#     / "yolo11n_basketball_large_dataset-2"
+#     OUTPUT_ROOT
+#     / "runs"
+#     / "basketball"
+#     / "yolo11n_20260919T190000"
 #     / "weights"
 #     / "last.pt"
 # )
 
+training_settings = (
+    producer.settings_from_environment(workers=DATALOADER_WORKERS)
+    if resume_checkpoint is None
+    else producer.settings_from_run(resume_checkpoint.resolve().parent.parent)
+)
+dataset_paths = producer.resolve_dataset_paths(
+    SOURCE_DATASET_DIR,
+    YOLO_DATASET_DIR,
+    smoke_run=training_settings.smoke_run,
+)
+DATA_YAML = dataset_paths.yolo_dir / "data.yaml"
+
 if resume_checkpoint is None:
+    allocation = allocate_run_directory(OUTPUT_ROOT, "basketball", "yolo11n")
+    run_dir = allocation.path
     basketball_model = YOLO(PRETRAINED_DIR / "yolo11n.pt")
-    results = basketball_model.train(
-        data=DATA_YAML,
-        epochs=100,
-        imgsz=640,
-        device=Device.auto_choose(),
-        project=str(project_space),
-        name=project_name_base,
-        patience=25,
-        batch=16,
-        workers=DATALOADER_WORKERS,
-        cache=False,
-    )
+    original_utc = allocation.created_at
 else:
     if not resume_checkpoint.is_file():
         raise FileNotFoundError(f"Resume checkpoint not found: {resume_checkpoint}")
-
+    run_dir = resume_checkpoint.resolve().parent.parent
     basketball_model = YOLO(resume_checkpoint)
-    results = basketball_model.train(
-        resume=True,
-        device=Device.auto_choose(),
-        batch=16,
-        workers=DATALOADER_WORKERS,
-        cache=False,
-    )
+    original_utc = None
+
+results = producer.train_pinned_run(
+    basketball_model,
+    run_dir,
+    dataset_paths,
+    training_settings,
+    original_utc=original_utc,
+    resumed=resume_checkpoint is not None,
+)
 results = cast(ultralitics_platform.TrainingResult, results)
-run_dir = Path(results.save_dir)
+ultralitics_platform.assert_run_directory(results.save_dir, run_dir)
 print(f"Training run directory: {run_dir}")
 
 
 # %% [markdown]
-# Downstream cells use the actual Ultralytics save directory reported by
-# `results.save_dir`. This keeps plots, metrics, and checkpoint evaluation aligned if
-# Ultralytics increments the run name.
+# Downstream cells use the directory reserved before training. The assertions above
+# ensure Ultralytics has not changed that path.
 
 # %% [markdown]
 # To continue an interrupted run, set `resume_checkpoint` to that run's
@@ -221,6 +230,13 @@ aligned_print({
 # %%
 BEST_MODEL_PATH = run_dir / "weights" / "best.pt"
 eval_model = YOLO(BEST_MODEL_PATH)
+bundle_manifest = producer.recover_and_publish(
+    run_dir,
+    dataset_paths,
+    training_settings,
+    load_model=YOLO,
+)
+print(f"Published bundle generation: {bundle_manifest['generation']}")
 
 # %% [markdown]
 # ## Export Best Checkpoint to ONNX
@@ -250,8 +266,9 @@ validation_metrics = eval_model.val(
     device=Device.auto_choose(),
     split="val",
     plots=True,
-    project=str(project_space),
-    name=f"{run_dir.name}_val",
+    project=str(run_dir / "evaluation"),
+    name="val",
+    exist_ok=True,
 )
 test_metrics = eval_model.val(
     data=DATA_YAML,
@@ -259,8 +276,9 @@ test_metrics = eval_model.val(
     device=Device.auto_choose(),
     split="test",
     plots=True,
-    project=str(project_space),
-    name=f"{run_dir.name}_test",
+    project=str(run_dir / "evaluation"),
+    name="test",
+    exist_ok=True,
 )
 
 # %% [markdown]

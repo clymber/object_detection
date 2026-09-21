@@ -46,6 +46,29 @@ class TrainingResult(Protocol):
     save_dir: Path
 
 
+def assert_run_directory(actual_dir: Path | str, expected_dir: Path) -> None:
+    """
+    Verify that Ultralytics retained the run directory reserved by the caller.
+    """
+    actual = Path(actual_dir).resolve()
+    expected = Path(expected_dir).resolve()
+    if actual != expected:
+        raise RuntimeError(f"Trainer directory mismatch: {actual} != {expected}")
+
+
+def reserved_run_callback(expected_dir: Path):
+    """
+    Build an Ultralytics callback that verifies its run directory before training.
+    """
+    def verify_run_directory(trainer: Any) -> None:
+        """
+        Verify the trainer's run directory before its first training batch.
+        """
+        assert_run_directory(trainer.save_dir, expected_dir)
+
+    return verify_run_directory
+
+
 def official_dataset_yaml_url(dataset_name: str) -> str:
     """
     Return the official Ultralytics dataset YAML URL for a dataset name.

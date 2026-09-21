@@ -14,7 +14,7 @@ from .config import OUTPUT_ROOT
 from .ultralytics import configure_privacy
 
 CHECKPOINT = Path("weights/best.pt")
-RUN_PATTERN = "yolo11n_basketball_large_dataset*"
+RUN_PATTERN = "yolo11n_*"
 
 
 def framework_version() -> str:
@@ -39,7 +39,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--runs-dir", type=Path, default=OUTPUT_ROOT / "runs" / "basketball"
     )
     parser.add_argument("--dataset-dir", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--split", choices=("val", "test", "both"), default="both")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--resolution", type=int, default=640)
@@ -52,10 +52,11 @@ def export(args: argparse.Namespace) -> list[Path]:
     Validate the run, load its best checkpoint, and export held-out splits.
     """
     run_dir = args.run_dir or latest_run_dir(args.runs_dir, RUN_PATTERN, CHECKPOINT)
+    output_dir = args.output_dir or run_dir / "evaluation"
     context = prepare_baseline(
         run_dir,
         args.dataset_dir,
-        args.output_dir,
+        output_dir,
         checkpoint=CHECKPOINT,
         model_name="yolo11n",
         resolution=args.resolution,

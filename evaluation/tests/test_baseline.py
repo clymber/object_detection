@@ -100,7 +100,7 @@ def test_prepare_and_export_without_detector_frameworks(
         artifact = read_prediction_artifact(path, annotation_path)
         assert artifact["image_ids"] == [10]
         assert artifact["metadata"]["checkpoint"] == str(context.checkpoint)
-        assert read_json(output_dir / f"yolo11n_{split}_metrics.json")[
+        assert read_json(output_dir / split / f"yolo11n_{split}_metrics.json")[
             "ap50"
         ] == pytest.approx(1)
     with pytest.raises(FileExistsError, match="new output directory"):

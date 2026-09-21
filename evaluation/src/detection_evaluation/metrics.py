@@ -382,6 +382,97 @@ def _benchmark_columns(benchmark: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _training_columns(summary: Mapping[str, Any] | None) -> dict[str, Any]:
+    """
+    Validate a Stage 3 training summary and return tabular comparison columns.
+    """
+    if summary is None:
+        return {
+            "training_status": None,
+            "training_timing_available": None,
+            "training_total_seconds": None,
+            "training_total_hours": None,
+            "training_completed_epochs": None,
+            "training_amortized_seconds_per_completed_epoch": None,
+        }
+    required = {
+        "status",
+        "timing_available",
+        "total_seconds",
+        "total_hours",
+        "completed_epochs",
+        "amortized_seconds_per_completed_epoch",
+    }
+    if set(summary) != required:
+        raise ValueError("Training summary has missing or unsupported fields")
+    if summary["status"] not in {"completed", "interrupted", "incomplete"}:
+        raise ValueError("Training summary has an invalid status")
+    if type(summary["timing_available"]) is not bool:
+        raise ValueError("Training summary timing availability must be boolean")
+    if type(summary["completed_epochs"]) is not int or summary["completed_epochs"] < 0:
+        raise ValueError("Training summary completed epochs must be nonnegative")
+    timed_values = (
+        "total_seconds",
+        "total_hours",
+        "amortized_seconds_per_completed_epoch",
+    )
+    values = [summary[name] for name in timed_values]
+    if summary["timing_available"]:
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value < 0
+            for value in values
+        ):
+            raise ValueError("Available training timing must contain nonnegative values")
+    elif any(value is not None for value in values):
+        raise ValueError("Incomplete training timing must remain unavailable")
+    return {
+        "training_status": summary["status"],
+        "training_timing_available": summary["timing_available"],
+        "training_total_seconds": summary["total_seconds"],
+        "training_total_hours": summary["total_hours"],
+        "training_completed_epochs": summary["completed_epochs"],
+        "training_amortized_seconds_per_completed_epoch": summary[
+            "amortized_seconds_per_completed_epoch"
+        ],
+    }
+
+
+def _write_report_view(
+    destination: Path,
+    name: str,
+    split: str,
+    rows: list[dict[str, Any]],
+    columns: list[str],
+) -> None:
+    """
+    Persist one compact CSV, JSON, and Markdown comparison report view.
+    """
+    frame = pd.DataFrame([{column: row.get(column) for column in columns} for row in rows])
+    frame.to_csv(destination / f"{name}_{split}.csv", index=False)
+    records = frame.where(pd.notna(frame), None).to_dict(orient="records")
+    write_json(destination / f"{name}_{split}.json", {"split": split, "rows": records})
+    lines = [f"# Basketball {name}: {split}", ""]
+    lines.extend(
+        [
+            "| " + " | ".join(column.replace("_", " ") for column in columns) + " |",
+            "| " + " | ".join("---" for _ in columns) + " |",
+        ]
+    )
+    for row in records:
+        lines.append(
+            "| "
+            + " | ".join(
+                "-" if row[column] is None else str(row[column]) for column in columns
+            )
+            + " |"
+        )
+    (destination / f"{name}_{split}.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+
+
 def write_prediction_artifact(
     path: Path | str,
     annotation_path: Path | str,
@@ -472,10 +563,15 @@ def write_comparison(
     output_dir: Path | str,
     *,
     split: str,
+    training_summaries: Mapping[str, Mapping[str, Any] | None] | None = None,
 ) -> pd.DataFrame:
     """
     Re-evaluate all available exports with the same policy and save comparison reports.
     """
+    summaries = training_summaries or {}
+    unknown_summaries = set(summaries) - set(artifacts)
+    if unknown_summaries:
+        raise ValueError(f"Training summaries have unknown models: {unknown_summaries}")
     rows = []
     reports = {}
     benchmark_reference: tuple[str, dict[str, Any]] | None = None
@@ -487,6 +583,7 @@ def write_comparison(
                     "split": split,
                     "status": "unavailable",
                     **_benchmark_columns(None),
+                    **_training_columns(summaries.get(model)),
                 }
             )
             continue
@@ -518,6 +615,7 @@ def write_comparison(
             "metadata": metadata,
             "metrics": metrics,
             "timing": timing,
+            "training": summaries.get(model),
         }
         rows.append(
             {
@@ -543,6 +641,7 @@ def write_comparison(
                     )
                 },
                 **timing,
+                **_training_columns(summaries.get(model)),
             }
         )
     destination = Path(output_dir)
@@ -559,6 +658,56 @@ def write_comparison(
                 row["model"] for row in rows if row["status"] == "unavailable"
             ],
         },
+    )
+    _write_report_view(
+        destination,
+        "metrics",
+        split,
+        rows,
+        [
+            "model",
+            "status",
+            "ap50",
+            "ap50_95",
+            "ar100",
+            "precision",
+            "recall",
+            "f1",
+            "false_positives_per_negative_image",
+            "negative_image_false_positive_fraction",
+        ],
+    )
+    _write_report_view(
+        destination,
+        "inference",
+        split,
+        rows,
+        [
+            "model",
+            "status",
+            "resolution",
+            "parameters",
+            "benchmark_samples",
+            "latency_ms_median",
+            "latency_ms_mean",
+            "batch_one_images_per_second",
+        ],
+    )
+    _write_report_view(
+        destination,
+        "training",
+        split,
+        rows,
+        [
+            "model",
+            "status",
+            "training_status",
+            "training_timing_available",
+            "training_total_seconds",
+            "training_total_hours",
+            "training_completed_epochs",
+            "training_amortized_seconds_per_completed_epoch",
+        ],
     )
     lines = [
         f"# Basketball comparison: {split}",

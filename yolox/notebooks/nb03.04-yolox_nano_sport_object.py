@@ -34,10 +34,10 @@ import os
 import torch
 from detection_common import (
 	Device,
+	allocate_run_directory,
 	aligned_print,
 	configure_stdio_relative_path,
 	ensure_dir,
-	increment_path,
 )
 from detection_common.utils.image import display as display_img
 from IPython.display import Markdown, display
@@ -59,7 +59,7 @@ if DEVICE.type == "mps":
 # `YOLOX_NANO_SPORT_VERBOSE=1` for detailed training and evaluation output.
 #
 # Set `RESUME_RUN_DIR` to resume in place from a run directory containing
-# `weights/last_ckpt.pth`.
+# `weights/last_ckpt.pth`. Relative paths are resolved from `OUTPUT_ROOT`.
 
 # %%
 # os.environ["YOLOX_NANO_SPORT_VERBOSE"] = "1"
@@ -67,7 +67,7 @@ os.environ["YOLOX_NANO_SPORT_PROGRESS"] = "1"
 # os.environ["YOLOX_NANO_SPORT_SMOKE"] = "1"
 
 RESUME_RUN_DIR: str | None = None
-# RESUME_RUN_DIR = "outputs/runs/sport_object/yolox_nano_sport_object"
+# RESUME_RUN_DIR = "runs/sport_object/yolox_nano_20260919T190000"
 
 if RESUME_RUN_DIR is None:
 	os.environ.pop("YOLOX_NANO_SPORT_RESUME_RUN", None)
@@ -85,12 +85,11 @@ PRETRAINED_PATH = (
 	ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "yolox") / "yolox_nano.pth"
 )
 DATASET_DIR = DATA_ROOT / "composed" / "coco_sport_object"
-project_space = ensure_dir(OUTPUT_ROOT / "runs" / "sport_object")
-project_name_base = "yolox_nano_sport_object"
 run_mode = settings.run_mode
 
 if run_mode is yolox_platform.RunMode.FRESH:
-	run_dir = ensure_dir(increment_path(project_space / project_name_base))
+	allocation = allocate_run_directory(OUTPUT_ROOT, "sport_object", "yolox_nano")
+	run_dir = allocation.path
 else:
 	run_dir = settings.resolved_resume_run_dir
 	resume_checkpoint = run_dir / "weights" / "last_ckpt.pth"
@@ -98,6 +97,7 @@ else:
 		raise NotADirectoryError(f"Resume run directory not found: {run_dir}")
 	if not resume_checkpoint.is_file():
 		raise FileNotFoundError(f"Resume checkpoint not found: {resume_checkpoint}")
+project_space = run_dir.parent
 project_name = run_dir.name
 
 aligned_print(

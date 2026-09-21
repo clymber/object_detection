@@ -16,12 +16,10 @@ def test_parse_export_args(tmp_path: Path) -> None:
     """
     Keep Tiny/Nano choice explicit without importing a checkpoint.
     """
-    args = export_cli.parse_args(
-        ["--model", "nano", "--dataset-dir", str(tmp_path),
-         "--output-dir", str(tmp_path / "artifacts")]
-    )
+    args = export_cli.parse_args(["--model", "nano", "--dataset-dir", str(tmp_path)])
     assert args.model == "nano"
     assert args.device == "cpu"
+    assert args.output_dir is None
 
 
 def test_export_calls_native_adapter_and_neutral_writer(
@@ -84,8 +82,7 @@ def test_export_calls_native_adapter_and_neutral_writer(
     monkeypatch.setattr(export_cli, "export_baseline", fake_writer)
     args = export_cli.parse_args(
         ["--model", "tiny", "--run-dir", str(context.run_dir),
-         "--dataset-dir", str(context.dataset_dir),
-         "--output-dir", str(tmp_path / "artifacts")]
+            "--dataset-dir", str(context.dataset_dir)]
     )
     assert export_cli.export(args) == [tmp_path / "artifact.json"]
     assert native_calls == [((30, 20, 10), [7], 0.001)]

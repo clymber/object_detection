@@ -1,5 +1,8 @@
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
+from detection_common import allocate_run_directory
 from detection_common.utils.filepath import increment_path
 
 
@@ -31,3 +34,54 @@ def test_increment_path_skips_occupied_suffixes(tmp_path: Path) -> None:
         (tmp_path / name).mkdir()
 
     assert increment_path(tmp_path / "experiment") == tmp_path / "experiment-4"
+
+
+def test_allocate_run_directory_uses_utc_timestamp_and_reserves_path(
+    tmp_path: Path,
+) -> None:
+    """
+    Create the required timestamped path without overwriting an existing run.
+    """
+    created_at = datetime(2026, 9, 19, 19, 0, 0, tzinfo=UTC)
+
+    allocation = allocate_run_directory(
+        tmp_path,
+        "basketball",
+        "rfdetr_small",
+        clock=lambda: created_at,
+    )
+
+    assert allocation.created_at == created_at
+    assert allocation.path == (
+        tmp_path / "runs" / "basketball" / "rfdetr_small_20260919T190000"
+    )
+    assert allocation.path.is_dir()
+
+
+def test_allocate_run_directory_retries_at_next_utc_second(tmp_path: Path) -> None:
+    """
+    Retry a same-second collision with the next UTC timestamp instead of suffixing.
+    """
+    times: Iterator[datetime] = iter(
+        (
+            datetime(2026, 9, 19, 19, 0, 0, tzinfo=UTC),
+            datetime(2026, 9, 19, 19, 0, 1, tzinfo=UTC),
+        )
+    )
+    occupied = tmp_path / "runs" / "basketball" / "yolo11n_20260919T190000"
+    occupied.mkdir(parents=True)
+    delays: list[float] = []
+
+    allocation = allocate_run_directory(
+        tmp_path,
+        "basketball",
+        "yolo11n",
+        clock=lambda: next(times),
+        sleep=delays.append,
+    )
+
+    assert allocation.path == (
+        tmp_path / "runs" / "basketball" / "yolo11n_20260919T190001"
+    )
+    assert allocation.path.is_dir()
+    assert delays == [1.0]

@@ -168,3 +168,4 @@ cython_debug/
 
 # Temporary project plans
 /plans/*
+!/plans/nb05.01-basketball-models-comparison.md

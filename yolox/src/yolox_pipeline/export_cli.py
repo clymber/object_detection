@@ -16,12 +16,12 @@ CHECKPOINT = Path("weights/best_ckpt.pth")
 MODEL_RUNS = {
     "tiny": (
         "yolox_tiny",
-        "yolox_tiny_basketball_large_dataset*",
+        "yolox_tiny_*",
         "BasketballTinyExp",
     ),
     "nano": (
         "yolox_nano",
-        "yolox_nano_basketball_large_dataset*",
+        "yolox_nano_*",
         "BasketballNanoExp",
     ),
 }
@@ -38,7 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--runs-dir", type=Path, default=OUTPUT_ROOT / "runs" / "basketball"
     )
     parser.add_argument("--dataset-dir", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--split", choices=("val", "test", "both"), default="both")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--resolution", type=int, default=640)
@@ -52,10 +52,11 @@ def export(args: argparse.Namespace) -> list[Path]:
     """
     model_name, run_pattern, experiment_name = MODEL_RUNS[args.model]
     run_dir = args.run_dir or latest_run_dir(args.runs_dir, run_pattern, CHECKPOINT)
+    output_dir = args.output_dir or run_dir / "evaluation"
     context = prepare_baseline(
         run_dir,
         args.dataset_dir,
-        args.output_dir,
+        output_dir,
         checkpoint=CHECKPOINT,
         model_name=model_name,
         resolution=args.resolution,

@@ -124,7 +124,7 @@ class TrainingSettings:
     @property
     def resolved_resume_run_dir(self) -> Path:
         """
-        Return the resume directory resolved from the project root.
+        Return the resume directory resolved from the output root.
         """
         if self.resume_run_dir is None:
             raise ValueError("A fresh run does not have a resume directory.")
@@ -323,12 +323,9 @@ def training_settings_from_env(
     """
     smoke_run = os.environ.get(f"{env_prefix}_SMOKE", "0") == "1"
     return TrainingSettings(
-        epochs=env_int(f"{env_prefix}_EPOCHS", 1 if smoke_run else default_epochs),
+        epochs=env_int(f"{env_prefix}_EPOCHS", 2 if smoke_run else default_epochs),
         batch_size=env_int(f"{env_prefix}_BATCH_SIZE", default_batch_size),
-        train_batch_limit=env_optional_int(
-            f"{env_prefix}_TRAIN_BATCH_LIMIT",
-            2 if smoke_run else None,
-        ),
+        train_batch_limit=env_optional_int(f"{env_prefix}_TRAIN_BATCH_LIMIT", None),
         image_size=env_int(f"{env_prefix}_IMAGE_SIZE", default_image_size),
         seed=env_int(f"{env_prefix}_SEED", default_seed),
         smoke_run=smoke_run,

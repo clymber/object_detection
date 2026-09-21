@@ -33,33 +33,25 @@
 #    consistent across models.
 #
 # The experiment uses 640 x 640 input, overriding Small's 512-pixel default,
-# and up to 100 epochs. The final comparison recomputes metrics from saved
-# YOLO predictions; exporting those predictions does not require retraining.
-# You can complete this notebook before the YOLO exports are available.
+# and up to 100 epochs. Cross-model comparison now lives in
+# [nb05.01](../../evaluation/notebooks/nb05.01-basketball_models_comparison.py),
+# which consumes published bundles without loading detector frameworks.
 
 # %%
 from __future__ import annotations
 
 import gc
-import os
-from pathlib import Path
 
 import pandas as pd
 import torch
+from dataset_builder import prepare_smoke_layouts, smoke_layout_directory
 from dataset_builder.rfdetr import prepare_coco_dataset, summarize_dataset
 from detection_common import aligned_print, configure_stdio_relative_path
 from detection_common.utils.image import display as display_img
-from detection_common.utils.json_io import write_json
-from detection_evaluation import write_comparison
+from detection_common.utils.json_io import read_json, write_json
 from IPython.display import Markdown, display
-
 from rfdetr_pipeline import rfdetr as rfdetr_platform
-from rfdetr_pipeline.config import (
-    DATA_ROOT,
-    OUTPUT_ROOT,
-    SUBPROJECT_ROOT,
-    WORKSPACE_ROOT,
-)
+from rfdetr_pipeline.config import DATA_ROOT, WORKSPACE_ROOT
 
 configure_stdio_relative_path(WORKSPACE_ROOT)
 cache_paths = rfdetr_platform.configure_caches(WORKSPACE_ROOT)
@@ -70,42 +62,8 @@ aligned_print(runtime)
 # ## Experiment settings
 #
 # Leave `RUN_OVERRIDES` empty to use the defaults or `RFDETR_*` variables from
-# the active shell. For interactive use, edit the dictionary below. Its values
-# take precedence without changing the kernel environment.
-#
-# | Purpose | `RUN_OVERRIDES` |
-# | --- | --- |
-# | Full training (default) | `{}` |
-# | Short GPU smoke check | `{"smoke_run": True}` |
-# | Continue an interrupted run | `{"mode": "resume", "run_dir": "outputs/..."}` |
-# | Rebuild evaluation and reports | `{"mode": "evaluate", "run_dir": "outputs/..."}` |
-#
-# Use the exact directory printed by the original run for `run_dir`.
-# Resume/evaluate inherit its saved settings; incompatible overrides fail
-# before training. Resume continues the original total epoch budget. Once
-# that budget is complete, use `evaluate`. A fresh run always allocates a new
-# directory, so rerunning fresh training does not replace an earlier run.
-#
-# A **GPU smoke run** uses two epochs with
-# 16 training, 8 validation, and 8 test images selected within their existing
-# splits. It exercises training, checkpoint reload, plots, and both evaluation
-# paths before a full run. Its artifacts are excluded from the comparison.
-# For full training afterwards, start a fresh run with smoke off.
-#
-# Defaults are 100 epochs, batch size 4, accumulation 1, seed 42, AMP training,
-# and zero loader workers. Increase the physical batch if GPU memory permits;
-# on an out-of-memory error, reduce it or enable `gradient_checkpointing` in
-# a new run. Workers=0 avoids container shared-memory limits.
-#
-# Accumulation defaults to 1 because RF-DETR 1.10.1 and Lightning 2.6.1 both
-# normalize accumulated losses. Values above 1 therefore change gradient
-# scaling; they are not equivalent to increasing the physical batch. The
-# saved configuration records the actual settings for comparison with YOLO.
-# Training has a 100-epoch maximum and stops after 10 consecutive validation
-# epochs without an EMA AP50:95 improvement of at least 0.001. Both regular
-# and EMA weights are evaluated, but the smoother EMA metric controls stopping.
-# Test evaluation during fitting remains disabled, so the held-out test split
-# cannot influence when training stops.
+# the active shell. Its values take precedence without changing the kernel
+# environment. A smoke run is excluded from the full comparison.
 
 # %%
 RUN_OVERRIDES = {
@@ -113,30 +71,29 @@ RUN_OVERRIDES = {
     # "batch_size": 4,
     # "gradient_checkpointing": True,
     # "early_stopping_patience": 10,
-    # "mode": rfdetr_platform.RunMode.EVALUATE,
-    # "run_dir": "outputs/runs/basketball/rfdetr_small_basketball_large_dataset",
+    # "run_dir": "outputs/runs/basketball/rfdetr_small_20260919T190000",
 }
 settings = rfdetr_platform.settings_from_env(overrides=RUN_OVERRIDES)
-SOURCE_DATASET = DATA_ROOT / "composed" / "coco_basketball"
-dataset_name = "basketball"
+FULL_SOURCE_DATASET = DATA_ROOT / "composed" / "coco_basketball"
 if settings.smoke_run:
-    dataset_name += "_smoke"
-DERIVED_DATASET = DATA_ROOT / "processed" / "rfdetr" / dataset_name
+    smoke_root = smoke_layout_directory(FULL_SOURCE_DATASET)
+    smoke_record = prepare_smoke_layouts(FULL_SOURCE_DATASET, smoke_root)
+    if smoke_record["smoke_limits"] != {"train": 16, "val": 8, "test": 8}:
+        raise ValueError("RF-DETR smoke layout must use the complete 16/8/8 splits")
+    SOURCE_DATASET = smoke_root / "coco"
+    DERIVED_DATASET = smoke_root / "rfdetr"
+else:
+    SOURCE_DATASET = FULL_SOURCE_DATASET
+    DERIVED_DATASET = DATA_ROOT / "processed" / "rfdetr" / "basketball"
 
-# Set to a shared output directory used by the Ultralytics and YOLOX
-# `export-*-baseline` commands (see their project READMEs).
-# If omitted, YOLO rows are explicitly unavailable while RF-DETR still runs.
-BASELINE_EXPORT_DIR = os.environ.get("RFDETR_BASELINE_EXPORT_DIR") or None
-benchmark_setting = os.environ.get("RFDETR_BENCHMARK", "1")
-if benchmark_setting not in {"0", "1"}:
-    raise ValueError("RFDETR_BENCHMARK must be 0 or 1")
-BENCHMARK = benchmark_setting == "1"
-
-aligned_print({
-    **vars(settings), "samples_per_optimizer_step": settings.samples_per_optimizer_step,
-    "source_dataset": SOURCE_DATASET, "derived_dataset": DERIVED_DATASET,
-    "baseline_exports": BASELINE_EXPORT_DIR, "benchmark": BENCHMARK,
-})
+aligned_print(
+    {
+        **vars(settings),
+        "samples_per_optimizer_step": settings.samples_per_optimizer_step,
+        "source_dataset": SOURCE_DATASET,
+        "derived_dataset": DERIVED_DATASET,
+    }
+)
 
 # %% [markdown]
 # ## Dataset identity and loader layout
@@ -152,13 +109,15 @@ aligned_print({
 # an intentional source change and treat it as a different experiment.
 
 # %%
-manifest = prepare_coco_dataset(
-    SOURCE_DATASET,
-    DERIVED_DATASET,
-    expected_counts={"train": 11394, "val": 1155, "test": 1395},
-    category_id=None,
-    smoke_limits={"train": 16, "val": 8, "test": 8} if settings.smoke_run else None,
-)
+if settings.smoke_run:
+    manifest = read_json(DERIVED_DATASET / "manifest.json")
+else:
+    manifest = prepare_coco_dataset(
+        SOURCE_DATASET,
+        DERIVED_DATASET,
+        expected_counts={"train": 11394, "val": 1155, "test": 1395},
+        category_id=None,
+    )
 display(pd.DataFrame(summarize_dataset(manifest)))
 print(f"Dataset fingerprint: {manifest['fingerprint']}")
 print(f"Duplicate-content groups preserved: {len(manifest['duplicate_image_groups'])}")
@@ -174,7 +133,7 @@ for group in cross_split_duplicates:
 #
 # A fresh run gets a new output directory. Resume requires that run's full
 # `last.ckpt`, including optimizer/scheduler state, and its original epoch
-# budget. A completed run should be opened in evaluation mode.
+# budget. A completed run is recovered with the postprocess CLI instead.
 #
 # Before fitting, check the actual RF-DETR loader's image IDs, class mapping,
 # and negative targets in every split. Native loss and validation metrics go
@@ -201,16 +160,13 @@ run_dir = rfdetr_platform.prepare_run(settings, manifest, runtime)
 print(f"Run directory: {run_dir}")
 
 # %%
-if settings.mode is not rfdetr_platform.RunMode.EVALUATE:
-    training_model = rfdetr_platform.build_model(settings)
-    loader_report = rfdetr_platform.verify_loader(training_model, settings, manifest)
-    write_json(run_dir / "loader_check.json", loader_report)
-    history = rfdetr_platform.fit_model(training_model, settings, manifest, run_dir)
-    del training_model
-    gc.collect()
-    torch.cuda.empty_cache()
-else:
-    history = rfdetr_platform.read_training_history(run_dir)
+training_model = rfdetr_platform.build_model(settings)
+loader_report = rfdetr_platform.verify_loader(training_model, settings, manifest)
+write_json(run_dir / "loader_check.json", loader_report)
+history = rfdetr_platform.fit_model(training_model, settings, manifest, run_dir)
+del training_model
+gc.collect()
+torch.cuda.empty_cache()
 
 # %% [markdown]
 # ## Training history and selected checkpoint
@@ -235,23 +191,18 @@ else:
 # RF-DETR 1.10.1 strips epoch/resolution metadata from the total checkpoint.
 # The helper verifies its weights against the selected source checkpoint,
 # recovers the best epoch, and explicitly restores the trained resolution.
-# ONNX export runs in a fresh Python process because RF-DETR's in-process
-# exporter can hang under IPython. The worker suppresses the verbose graph,
-# validates a staged artifact, and atomically promotes it into the run.
+# Recovery validates the immutable protocol and dataset identity, regenerates
+# native outputs, and atomically republishes both prediction artifacts without
+# fitting or appending an attempt. It reuses a valid ONNX graph or replaces it
+# through the verified exporter before evaluating selected weights.
 
 # %%
-loss_figure, metric_figure = rfdetr_platform.plot_history(history)
-loss_figure.savefig(run_dir / "training_losses.png", bbox_inches="tight")
-metric_figure.savefig(run_dir / "validation_metrics.png", bbox_inches="tight")
-display_img(loss_figure, close=True)
-display_img(metric_figure, close=True)
-
-onnx_path = rfdetr_platform.ensure_onnx_model_in_subprocess(
-    SUBPROJECT_ROOT, run_dir
-)
-print(f"ONNX model: {onnx_path}")
-
-best_model, best_metadata = rfdetr_platform.load_best_model(run_dir)
+postprocess = rfdetr_platform.postprocess_run(run_dir)
+history = postprocess["history"]
+best_metadata = postprocess["best_metadata"]
+display_img(run_dir / "training_losses.png", width=1000)
+display_img(run_dir / "validation_metrics.png", width=1000)
+print(f"ONNX model: {postprocess['onnx_path']}")
 aligned_print(best_metadata)
 
 # %% [markdown]
@@ -275,14 +226,8 @@ aligned_print(best_metadata)
 # evaluation settings. Evaluation uses FP32 even when training used AMP.
 
 # %%
-split_metrics = {}
-prediction_artifacts = {}
-for split in ("val", "test"):
-    metrics, artifact = rfdetr_platform.evaluate_split(
-        best_model, manifest, run_dir, split, best_metadata, benchmark=BENCHMARK
-    )
-    split_metrics[split] = metrics
-    prediction_artifacts[split] = artifact
+split_metrics = postprocess["split_metrics"]
+prediction_artifacts = postprocess["prediction_artifacts"]
 
 metric_names = [
     "ap50", "ap50_95", "ar100", "precision", "recall", "f1",
@@ -307,54 +252,6 @@ for split in ("val", "test"):
     display_img(run_dir / f"{split}_batch0_labels.jpg", width=1000)
     print(f"{split}: predictions")
     display_img(run_dir / f"{split}_batch0_pred.jpg", width=1000)
-
-# %% [markdown]
-# ## Compare with YOLO11n and YOLOX-Tiny
-#
-# Export explicitly chosen YOLO best checkpoints with the Ultralytics and
-# YOLOX project environments (see their project READMEs). Use the same
-# `--output-dir` for all three exports.
-# Set `RFDETR_BASELINE_EXPORT_DIR` to the resulting directory. No YOLO imports
-# or retraining are needed here. Missing exports appear as unavailable;
-# artifacts with a different annotation hash or smoke identity are rejected.
-#
-# The comparison recomputes all four sets of metrics with one evaluator.
-# Treat these as preliminary fine-tuning experiments: batch size, actual
-# epochs, seeds, augmentations, and architecture differ. Timing is enabled by
-# default; set `RFDETR_BENCHMARK=0` to skip it. Records use batch-one FP32
-# inference on the same image sequence, including preprocessing, prediction
-# transfer, and postprocessing but excluding disk reads. When artifacts include
-# compatible benchmarks, the comparison reports median/mean latency and
-# inverse-median batch-one images/s.
-# Incompatible protocols, image sequences, hosts, or accelerators are rejected.
-# Historical MPS timings must not be ranked against Renku CUDA timings.
-#
-# Comparison CSV, JSON, and Markdown files are written under
-# `outputs/comparisons/basketball_large_dataset/<run name>/`. To add YOLO
-# results later, set the export directory and rerun in `evaluate` mode.
-
-# %%
-comparison_dir = (
-    OUTPUT_ROOT / "comparisons" / "basketball_large_dataset" / run_dir.name
-)
-if settings.smoke_run:
-    display(Markdown("**Smoke run:** full-dataset model comparison is disabled."))
-else:
-    for split in ("val", "test"):
-        baseline_dir = Path(BASELINE_EXPORT_DIR) if BASELINE_EXPORT_DIR else None
-        if baseline_dir is not None and not baseline_dir.is_absolute():
-            baseline_dir = WORKSPACE_ROOT / baseline_dir
-        artifacts = {
-            model: baseline_dir / f"{model}_{split}_predictions.json"
-            if baseline_dir else None
-            for model in ("yolo11n", "yolox_tiny", "yolox_nano")
-        }
-        artifacts["rfdetr_small"] = prediction_artifacts[split]
-        write_comparison(
-            artifacts, SOURCE_DATASET / "annotations" / f"instances_{split}.json",
-            comparison_dir, split=split,
-        )
-        display(Markdown((comparison_dir / f"comparison_{split}.md").read_text()))
 
 # %% [markdown]
 # ## Interpretation

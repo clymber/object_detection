@@ -35,10 +35,10 @@ from __future__ import annotations
 import torch
 from detection_common import (
     Device,
+    allocate_run_directory,
     aligned_print,
     configure_stdio_relative_path,
     ensure_dir,
-    increment_path,
 )
 from detection_common.utils.image import display as display_img
 from IPython.display import Markdown, display
@@ -71,11 +71,11 @@ PRETRAINED_PATH = (
     ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "yolox")
     / "yolox_tiny.pth"
 )
-DATASET_DIR = DATA_ROOT / "composed" / "coco_basketball_105_22_23"
+DATASET_DIR = DATA_ROOT / "composed" / "coco_basketball_small"
 
-project_space = ensure_dir(OUTPUT_ROOT / "runs" / "basketball")
-project_name_base = "yolox_tiny_basketball"
-run_dir = ensure_dir(increment_path(project_space / project_name_base))
+allocation = allocate_run_directory(OUTPUT_ROOT, "basketball_small", "yolox_tiny")
+run_dir = allocation.path
+project_space = run_dir.parent
 project_name = run_dir.name
 
 aligned_print(

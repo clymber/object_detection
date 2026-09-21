@@ -18,15 +18,16 @@ Export a completed basketball checkpoint without retraining:
 ```bash
 conda run -p .conda/envs/object-detection-yolox export-yolox-baseline \
   --model tiny \
-  --dataset-dir /absolute/path/to/coco_basketball_large_dataset \
-  --output-dir /absolute/path/to/new/artifact-directory \
+  --dataset-dir /absolute/path/to/coco_basketball \
   --device cpu
 ```
 
 Select `--model nano` for the Nano run, or `--run-dir` for an exact run.
 Without `--run-dir`, the newest complete matching run below
-`OUTPUT_ROOT/runs/basketball` is selected. Full export needs a real
-checkpoint and dataset; the local smoke check only covers the CLI boundary.
+`OUTPUT_ROOT/runs/basketball` is selected. Artifacts are written beneath
+`<run-dir>/evaluation/val/` and `<run-dir>/evaluation/test/`. Full export
+needs a real checkpoint and dataset; the local smoke check only covers the CLI
+boundary.
 
 Upstream YOLOX metadata requires `onnx-simplifier==0.4.10`, while the
 macOS environment uses a newer `onnxsim`. `pip check` reports that metadata
@@ -42,3 +43,10 @@ On Renku, setup fetches commit 6ddff48 and builds YOLOX with the
 C++17 and headless OpenCV adjustments. The Linux environment
 includes CUDA 13.0 PyTorch wheels and onnx-simplifier 0.5.0;
 the local macOS ONNX metadata caveat remains unchanged.
+
+For new-protocol basketball comparison bundles, use the owning
+`producer.recover_and_publish` helper with `producer.settings_from_run(run_dir)`
+and `producer.resolve_dataset_paths(...)`. The saved settings restore smoke
+identity for recovery/resume without repeating shell flags. Smoke layouts are
+shared below `DATA_ROOT/processed/smoke/<source-name>/<source-fingerprint>/`.
+The full-only baseline CLI above does not publish comparison bundles.

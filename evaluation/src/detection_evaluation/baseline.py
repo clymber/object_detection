@@ -105,8 +105,9 @@ def prepare_baseline(
     category_id = categories[0]["id"]
     splits = ("val", "test") if split == "both" else (split,)
     for selected in splits:
+        split_output_dir = output_dir / selected
         for kind in ("predictions", "metrics"):
-            path = output_dir / f"{model_name}_{selected}_{kind}.json"
+            path = split_output_dir / f"{model_name}_{selected}_{kind}.json"
             if path.exists():
                 raise FileExistsError(f"Choose a new output directory: {path}")
         annotations = read_json(
@@ -170,6 +171,8 @@ def export_baseline(
     }
     paths = []
     for split in context.splits:
+        split_output_dir = context.output_dir / split
+        split_output_dir.mkdir(parents=True, exist_ok=True)
         annotation_path = (
             context.dataset_dir / "annotations" / f"instances_{split}.json"
         )
@@ -184,7 +187,7 @@ def export_baseline(
                 predict_one, image_paths, device=context.device
             )
         artifact_path = (
-            context.output_dir / f"{context.model_name}_{split}_predictions.json"
+            split_output_dir / f"{context.model_name}_{split}_predictions.json"
         )
         paths.append(
             export_predictions(
@@ -197,7 +200,7 @@ def export_baseline(
         )
         artifact = read_prediction_artifact(artifact_path, annotation_path)
         write_json(
-            context.output_dir / f"{context.model_name}_{split}_metrics.json",
+            split_output_dir / f"{context.model_name}_{split}_metrics.json",
             evaluate_predictions(annotation_path, artifact["predictions"]),
         )
     return paths
