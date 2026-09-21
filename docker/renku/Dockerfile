@@ -4,7 +4,7 @@ FROM renku/renkulab-vscode:ubuntu-9c147f6
 USER root
 COPY --chmod=0755 scripts/start_tunnel.sh /usr/local/bin/start_tunnel
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq build-essential tmux \
+    build-essential curl git jq tmux vim-tiny \
     && rm -rf /var/lib/apt/lists/*
 
 # Switch back to the vscode user for subsequent operations
@@ -19,15 +19,13 @@ RUN --mount=type=bind,source=./scripts/install_vscode_extensions.sh,target=/tmp/
 # Install Miniforge for the vscode user
 RUN --mount=type=bind,source=./scripts/install_miniforge.sh,target=/tmp/install_miniforge.sh \
     bash /tmp/install_miniforge.sh
-ENV PATH="/home/vscode/miniforge3/bin:${PATH}"
-ENV CONDA_BIN="/home/vscode/miniforge3/bin/conda"
+ENV PATH="/home/vscode/.local/bin:/home/vscode/miniforge3/bin:${PATH}" \
+    CONDA_BIN="/home/vscode/miniforge3/bin/conda"
 
 # Configure Conda, the Bash prompt, and optional Roboflow credentials.
 COPY --chown=vscode:vscode --chmod=0644 scripts/bash_prompt.sh /home/vscode/.bash_prompt_rc
 RUN --mount=type=bind,source=./scripts/configure_bashrc.sh,target=/tmp/configure_bashrc.sh \
     bash /tmp/configure_bashrc.sh
-
-ENV PATH="/home/vscode/.local/bin:${PATH}"
 
 # Install Codex for the vscode user.
 RUN curl -fsSL https://chatgpt.com/codex/install.sh -o /tmp/install-codex.sh \

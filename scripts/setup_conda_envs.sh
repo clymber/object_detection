@@ -300,3 +300,7 @@ fi
 for subproject in "$@"; do
 	setup_one "$subproject";
 done
+
+# Set a custom conda env as the default, to prevent `base` being contaminated.
+default_conda_env="object-detection-notebooks"
+conda_cmd config --set default_activation_env ${default_conda_env}

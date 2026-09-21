@@ -8,3 +8,5 @@ dependencies:
   - jupytext
   - nbconvert
   - ipywidgets
+  - ruff
+  - black
