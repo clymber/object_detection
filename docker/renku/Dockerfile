@@ -5,6 +5,7 @@ USER root
 COPY --chmod=0755 scripts/start_tunnel.sh /usr/local/bin/start_tunnel
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential curl git jq tmux vim-tiny \
+    && ln -s /usr/bin/vim.tiny /usr/bin/vim \
     && rm -rf /var/lib/apt/lists/*
 
 # Switch back to the vscode user for subsequent operations
