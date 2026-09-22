@@ -79,7 +79,7 @@ def _canonical_split(coco: Mapping[str, Any], identities: list[dict[str, Any]]) 
 
 def canonical_coco_identity(source_dir: str | Path) -> dict[str, Any]:
     """
-    Build a root-independent identity for a train/val/test basketball COCO source.
+    Build a root-independent identity for a train/val/test COCO source.
 
     All source image bytes, including images without annotations, participate in
     the fingerprint. COCO document ordering and informational metadata do not.
@@ -486,20 +486,42 @@ def validate_rfdetr_layout(
     if not isinstance(mapping, dict):
         raise ValueError("RF-DETR manifest has no category mapping")
     categories = source_identity["canonical_source"]["category_mapping"]
-    if len(categories) != 1:
-        raise ValueError("RF-DETR layout validation requires one COCO category")
-    source_category = categories[0]
-    training_id = mapping.get("source_to_training", {}).get(str(source_category["id"]))
-    if (
-        training_id is None
-        or mapping.get("training_to_source", {}).get(str(training_id))
-        != source_category["id"]
-    ):
-        raise ValueError("RF-DETR category mapping does not round-trip the COCO class")
+    source_to_training = mapping.get("source_to_training", {})
+    training_to_source = mapping.get("training_to_source", {})
+    if set(source_to_training) != {str(category["id"]) for category in categories}:
+        raise ValueError("RF-DETR category mapping differs from COCO")
+    if len(training_to_source) != len(categories):
+        raise ValueError("RF-DETR category mapping is not bijective")
+    for category in categories:
+        training_id = source_to_training[str(category["id"])]
+        if (
+            type(training_id) is not int
+            or training_to_source.get(str(training_id)) != category["id"]
+        ):
+            raise ValueError(
+                "RF-DETR category mapping does not round-trip the COCO class"
+            )
+    expected_predictions = {
+        str(index): training_to_source[str(training_id)]
+        for index, training_id in enumerate(
+            sorted(int(value) for value in training_to_source)
+        )
+    }
+    if mapping.get("prediction_to_source") != expected_predictions:
+        raise ValueError("RF-DETR prediction mapping differs from training labels")
+    expected_categories = deepcopy(categories)
+    for category in expected_categories:
+        category["id"] = source_to_training[str(category["id"])]
+    if mapping.get("class_names") != [category["name"] for category in categories]:
+        raise ValueError("RF-DETR class names differ from COCO")
     payload_splits = {}
     for split, loader_split in SPLIT_NAMES.items():
         annotation_path = root / loader_split / "_annotations.coco.json"
         derived = json.loads(annotation_path.read_text(encoding="utf-8"))
+        if _canonical_categories(derived) != sorted(
+            expected_categories, key=lambda item: item["id"]
+        ):
+            raise ValueError("RF-DETR derived categories differ from COCO")
         source_images = _source_images(source_identity, split)
         actual_images = [
             {
@@ -522,7 +544,9 @@ def validate_rfdetr_layout(
             raise ValueError(f"RF-DETR {split} image membership differs from COCO")
         expected_annotations = deepcopy(_source_annotations(source_identity, split))
         for annotation in expected_annotations:
-            annotation["category_id"] = training_id
+            annotation["category_id"] = source_to_training[
+                str(annotation["category_id"])
+            ]
         actual_annotations = [
             {
                 key: annotation.get(key, [] if key == "segmentation" else 0)

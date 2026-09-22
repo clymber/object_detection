@@ -283,7 +283,13 @@ def runtime_report() -> dict:
     }
 
 
-def train_kwargs(settings: TrainingSettings, dataset_dir: Path, run_dir: Path) -> dict:
+def train_kwargs(
+    settings: TrainingSettings,
+    dataset_dir: Path,
+    run_dir: Path,
+    *,
+    class_names: list[str] | tuple[str, ...] = ("basketball",),
+) -> dict:
     """
     Build the RF-DETR 1.10.1 training configuration with validation-only selection.
     """
@@ -325,7 +331,7 @@ def train_kwargs(settings: TrainingSettings, dataset_dir: Path, run_dir: Path) -
         "eval_interval": 1,
         "eval_max_dets": 100,
         "checkpoint_interval": 10,
-        "class_names": ["basketball"],
+        "class_names": list(class_names),
         "tensorboard": False,
         "wandb": False,
         "mlflow": False,
@@ -451,17 +457,22 @@ def validate_resume_checkpoint(checkpoint: Path, epoch_budget: int) -> dict:
     return {"completed_epochs": completed, "global_step": state.get("global_step")}
 
 
-def build_model(settings: TrainingSettings) -> Any:
+def build_model(
+    settings: TrainingSettings,
+    class_names: list[str] | tuple[str, ...] = ("basketball",),
+) -> Any:
     """
-    Initialize the pinned one-class Small model with consistent positional embeddings.
+    Initialize the Small model with one output per dataset class.
     """
     from pytorch_lightning import seed_everything
     from rfdetr import RFDETRSmall
 
-    # Upstream seeds on_fit_start, after creating the one-class random head.
+    # Upstream seeds on_fit_start, after creating the random detection head.
+    if not class_names or len(set(class_names)) != len(class_names):
+        raise ValueError("Expected nonempty unique class names")
     seed_everything(settings.seed, workers=True)
     return RFDETRSmall(
-        num_classes=1,
+        num_classes=len(class_names),
         resolution=settings.resolution,
         positional_encoding_size=settings.resolution // 16,
         device="cuda:0",
@@ -479,7 +490,12 @@ def verify_loader(model: Any, settings: TrainingSettings, manifest: dict) -> dic
     from rfdetr.training import RFDETRDataModule
 
     dataset_dir = Path(manifest["dataset_dir"])
-    kwargs = train_kwargs(settings, dataset_dir, dataset_dir)
+    kwargs = train_kwargs(
+        settings,
+        dataset_dir,
+        dataset_dir,
+        class_names=manifest["category_mapping"]["class_names"],
+    )
     for key in ("device", "resolution"):
         kwargs.pop(key)
     datamodule = RFDETRDataModule(model.model_config, TrainConfig(**kwargs))
@@ -496,10 +512,12 @@ def verify_loader(model: Any, settings: TrainingSettings, manifest: dict) -> dic
         expected = {item["image_id"] for item in summary["images_identity"]}
         if len(dataset) != summary["images"] or set(dataset.ids) != expected:
             raise RuntimeError(f"RF-DETR loader changed the {split} image membership")
-        training_category = next(
-            iter(manifest["category_mapping"]["training_to_source"])
+        training_categories = sorted(
+            int(value) for value in manifest["category_mapping"]["training_to_source"]
         )
-        if dataset.cat2label != {int(training_category): 0}:
+        if dataset.cat2label != {
+            value: index for index, value in enumerate(training_categories)
+        }:
             raise RuntimeError(
                 f"Unexpected class mapping in {split}: {dataset.cat2label}"
             )
@@ -551,7 +569,12 @@ def fit_model(
     """
     from pytorch_lightning import seed_everything
 
-    kwargs = train_kwargs(settings, Path(manifest["dataset_dir"]), run_dir)
+    kwargs = train_kwargs(
+        settings,
+        Path(manifest["dataset_dir"]),
+        run_dir,
+        class_names=manifest["category_mapping"]["class_names"],
+    )
     if settings.mode is RunMode.RESUME:
         kwargs["resume"] = str(run_dir / RESUME_CHECKPOINT)
     config_kwargs = {
@@ -724,7 +747,15 @@ def load_best_model(run_dir: Path) -> tuple[Any, dict]:
         compile=False,
         gradient_checkpointing=False,
     )
-    if model.class_names != ["basketball"] or model.model_config.num_classes != 1:
+    manifest_path = run_dir / "dataset_manifest.json"
+    expected_names = (
+        read_json(manifest_path)["category_mapping"]["class_names"]
+        if manifest_path.is_file()
+        else model.class_names
+    )
+    if model.class_names != expected_names or model.model_config.num_classes != len(
+        expected_names
+    ):
         raise ValueError(
             f"Reloaded detector has unexpected classes: {model.class_names}"
         )
@@ -873,26 +904,27 @@ def _postprocess_state(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any], T
 
 
 def predictions_for_image(
-    model: Any, image: Image.Image, image_id: int, category_id: int
+    model: Any, image: Image.Image, image_id: int, category_id: int | list[int]
 ) -> list[dict]:
     """
     Convert RF-DETR's zero-based class labels and original-pixel xyxy boxes to COCO.
     """
+    category_ids = [category_id] if isinstance(category_id, int) else category_id
     detections = model.predict(image, threshold=0.001, include_source_image=False)
     rows = []
     for box, score, label in zip(
         detections.xyxy, detections.confidence, detections.class_id, strict=True
     ):
         # 1.10.1 predict() can include its explicit no-object slot at low scores.
-        if int(label) == 1:
+        if label == len(category_ids):
             continue
-        if int(label) != 0:
-            raise ValueError("One-class RF-DETR returned an unexpected class label")
+        if label != int(label) or not 0 <= int(label) < len(category_ids):
+            raise ValueError("RF-DETR returned an unexpected class label")
         x1, y1, x2, y2 = map(float, box)
         rows.append(
             {
                 "image_id": image_id,
-                "category_id": category_id,
+                "category_id": category_ids[int(label)],
                 "bbox": [x1, y1, x2 - x1, y2 - y1],
                 "score": float(score),
             }
@@ -928,13 +960,21 @@ def evaluate_split(
         else Path(manifest["source_dir"]) / "annotations" / f"instances_{split}.json"
     )
     ground_truth = read_json(annotation_path)
-    category_id = ground_truth["categories"][0]["id"]
+    mapping = manifest["category_mapping"]
+    category_ids = [
+        mapping["prediction_to_source"][str(index)]
+        for index in range(len(mapping["class_names"]))
+    ]
+    if manifest["mode"] == "smoke":
+        category_ids = [
+            mapping["source_to_training"][str(value)] for value in category_ids
+        ]
     predictions = []
     for image in ground_truth["images"]:
         with Image.open(derived_dir / image["file_name"]) as source:
             predictions.extend(
                 predictions_for_image(
-                    model, source.convert("RGB"), image["id"], category_id
+                    model, source.convert("RGB"), image["id"], category_ids
                 )
             )
     metrics = evaluate_predictions(annotation_path, predictions)
@@ -949,7 +989,7 @@ def evaluate_split(
         batch_size=1,
         eval_max_dets=100,
         compute_val_loss=True,
-        class_names=["basketball"],
+        class_names=manifest["category_mapping"]["class_names"],
     )
     write_json(run_dir / f"native_{split}_metrics.json", native)
     write_json(run_dir / f"{split}_metrics.json", metrics)
@@ -980,7 +1020,7 @@ def evaluate_split(
             """
             Execute the same PIL-to-CPU-predictions path used for detector exports.
             """
-            return predictions_for_image(model, image, 0, category_id)
+            return predictions_for_image(model, image, 0, category_ids)
 
         metadata["benchmark"] = benchmark_predict(
             predict_one,

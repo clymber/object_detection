@@ -21,7 +21,9 @@ from dataset_builder.identity import (
 from dataset_builder.rfdetr import prepare_coco_dataset
 
 
-def _source(root: Path, counts: dict[str, int] | None = None) -> Path:
+def _source(
+    root: Path, counts: dict[str, int] | None = None, *, class_name: str = "basketball"
+) -> Path:
     """
     Write a one-class source with deterministic positive and negative images.
     """
@@ -68,7 +70,7 @@ def _source(root: Path, counts: dict[str, int] | None = None) -> Path:
                     "categories": [
                         {
                             "id": 7,
-                            "name": "basketball",
+                            "name": class_name,
                             "supercategory": "ball",
                         }
                     ],
@@ -137,14 +139,25 @@ def test_canonical_identity_is_relocation_independent_and_content_sensitive(
     ]
 
 
-def test_smoke_layouts_are_deterministic_and_retain_negatives(tmp_path: Path) -> None:
+@pytest.mark.parametrize("class_name", ["basketball", "football"])
+def test_smoke_layouts_are_deterministic_and_retain_negatives(
+    tmp_path: Path, class_name: str
+) -> None:
     """
     Build 16/8/8 COCO, YOLO, and RF-DETR layouts with original IDs and boxes.
     """
-    source = _source(tmp_path / "source")
-    destination = tmp_path / "processed" / "basketball_smoke"
+    source = _source(tmp_path / "source", class_name=class_name)
+    destination = tmp_path / "processed" / f"{class_name}_smoke"
     record = prepare_smoke_layouts(source, destination, link_images=False)
 
+    manifest = json.loads((destination / "rfdetr" / "manifest.json").read_text())
+    assert manifest["category_mapping"]["class_names"] == [class_name]
+    assert (
+        canonical_coco_identity(source)["canonical_source"]["category_mapping"][0][
+            "name"
+        ]
+        == class_name
+    )
     assert record["selected_ids"] == {
         "train": list(range(1, 17)),
         "val": list(range(101, 109)),
@@ -363,3 +376,96 @@ def test_default_smoke_paths_preserve_subsets_of_previous_sources(
     new_record = prepare_smoke_layouts(source)
     assert new_record["parent_source_fingerprint"] != old_record["parent_source_fingerprint"]
     assert json.loads((old_root / IDENTITY_FILE_NAME).read_text()) == old_record
+
+
+@pytest.mark.parametrize("name", [None, "", "   ", 42])
+def test_invalid_category_names_are_rejected(tmp_path: Path, name: object) -> None:
+    """Reject malformed category names while permitting non-basketball classes."""
+    source = _source(tmp_path / "source")
+    _edit_annotation(
+        source / "annotations" / "instances_train.json",
+        lambda payload: payload["categories"][0].update(name=name),
+    )
+    with pytest.raises(ValueError, match="nonempty category name"):
+        canonical_coco_identity(source)
+
+
+def test_category_names_must_match_across_splits(tmp_path: Path) -> None:
+    """Reject a changed class meaning even when category IDs match."""
+    source = _source(tmp_path / "source", class_name="football")
+    _edit_annotation(
+        source / "annotations" / "instances_val.json",
+        lambda payload: payload["categories"][0].update(name="basketball"),
+    )
+    with pytest.raises(ValueError, match="category mapping differs"):
+        canonical_coco_identity(source)
+    with pytest.raises(ValueError, match="Category names or IDs differ"):
+        prepare_coco_dataset(source, tmp_path / "derived")
+
+
+@pytest.mark.parametrize("first_training_id", [None, 1])
+def test_multiclass_layouts_preserve_all_categories(
+    tmp_path: Path, first_training_id: int | None
+) -> None:
+    """Round-trip noncontiguous IDs through COCO, YOLO and RF-DETR smoke layouts."""
+    source = _source(tmp_path / "source", class_name="football")
+    for split in ("train", "val", "test"):
+
+        def add_class(payload):
+            payload["categories"].insert(
+                0, {"id": 19, "name": "basketball", "supercategory": "ball"}
+            )
+            for index, annotation in enumerate(payload["annotations"]):
+                if index % 2:
+                    annotation["category_id"] = 19
+
+        _edit_annotation(source / "annotations" / f"instances_{split}.json", add_class)
+    identity = canonical_coco_identity(source)
+    assert [
+        item["id"] for item in identity["canonical_source"]["category_mapping"]
+    ] == [7, 19]
+    derived = tmp_path / "rfdetr"
+    manifest = prepare_coco_dataset(
+        source, derived, category_id=first_training_id, link_images=False
+    )
+    expected = {"7": 7, "19": 19} if first_training_id is None else {"7": 1, "19": 2}
+    assert manifest["category_mapping"]["source_to_training"] == expected
+    assert manifest["category_mapping"]["prediction_to_source"] == {"0": 7, "1": 19}
+    assert manifest["category_mapping"]["class_names"] == ["football", "basketball"]
+    assert (
+        validate_rfdetr_layout(source, derived)["source_fingerprint"]
+        == identity["source_fingerprint"]
+    )
+    smoke = tmp_path / "smoke"
+    record = prepare_smoke_layouts(source, smoke, link_images=False)
+    assert prepare_smoke_layouts(source, smoke, link_images=False) == record
+    assert (
+        validate_yolo_layout(smoke / "coco", smoke / "yolo")["source_fingerprint"]
+        == record["subset_source_fingerprint"]
+    )
+    assert (
+        validate_rfdetr_layout(smoke / "coco", smoke / "rfdetr")["source_fingerprint"]
+        == record["subset_source_fingerprint"]
+    )
+    labels = "".join(
+        path.read_text() for path in (smoke / "yolo/labels/train").rglob("*.txt")
+    )
+    assert {line.split()[0] for line in labels.splitlines()} == {"0", "1"}
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        {"id": 7, "name": "other"},
+        {"id": 19, "name": "basketball"},
+    ],
+)
+def test_duplicate_categories_are_rejected(tmp_path: Path, category: dict) -> None:
+    """Reject duplicate IDs or names instead of conflating model labels."""
+    source = _source(tmp_path / "source")
+    _edit_annotation(
+        source / "annotations/instances_train.json",
+        lambda payload: payload["categories"].append(category),
+    )
+    with pytest.raises(ValueError, match="duplicate category"):
+        canonical_coco_identity(source)

@@ -1,5 +1,5 @@
 """
-Run provenance, timing, and bundle publication for YOLOX basketball runs.
+Run provenance, timing, and bundle publication for YOLOX detection runs.
 """
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from __future__ import annotations
 import csv
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
@@ -35,10 +35,9 @@ from detection_evaluation import (
 )
 
 from . import artifacts, yolox
-from .config import DATA_ROOT, OUTPUT_ROOT
+from .config import OUTPUT_ROOT
 
 BEST_CHECKPOINT = Path("weights/best_ckpt.pth")
-LOGICAL_DATASET = "basketball"
 
 
 @dataclass(frozen=True)
@@ -49,21 +48,22 @@ class ModelVariant:
 
     name: str
     source_notebook: str
-    experiment_class: type[yolox.BasketballTinyExp]
+    experiment_class: type[yolox.YOLOXTinyExp]
     fit: Callable[..., Any]
+    logical_dataset: str = "basketball"
 
 
 VARIANTS = {
     "tiny": ModelVariant(
         name="yolox_tiny",
         source_notebook="nb03.02-yolox_tiny_large_basketball.ipynb",
-        experiment_class=yolox.BasketballTinyExp,
+        experiment_class=yolox.YOLOXTinyExp,
         fit=yolox.fit_yolox_tiny,
     ),
     "nano": ModelVariant(
         name="yolox_nano",
         source_notebook="nb03.03-yolox_nano_large_basketball.ipynb",
-        experiment_class=yolox.BasketballNanoExp,
+        experiment_class=yolox.YOLOXNanoExp,
         fit=yolox.fit_yolox_nano,
     ),
 }
@@ -114,14 +114,26 @@ class ProducerSettings:
             )
 
 
-def variant(name: str) -> ModelVariant:
+def variant(
+    name: str,
+    *,
+    logical_dataset: str = "basketball",
+    source_notebook: str | None = None,
+) -> ModelVariant:
     """
     Return the requested Tiny or Nano producer configuration.
     """
     try:
-        return VARIANTS[name]
+        model = VARIANTS[name]
     except KeyError as error:
         raise ValueError(f"Unsupported YOLOX variant: {name}") from error
+    if logical_dataset != "basketball" and not source_notebook:
+        raise ValueError("A custom dataset requires its source notebook")
+    return replace(
+        model,
+        logical_dataset=logical_dataset,
+        source_notebook=source_notebook or model.source_notebook,
+    )
 
 
 def settings_from_run(run_dir: Path) -> ProducerSettings:
@@ -198,7 +210,7 @@ def prepare_run(
         original_utc = read_run_protocol(run_dir)["original_utc"]
     return create_run_protocol(
         run_dir,
-        logical_dataset=LOGICAL_DATASET,
+        logical_dataset=model.logical_dataset,
         model=model.name,
         source_notebook=model.source_notebook,
         original_utc=original_utc,
@@ -233,7 +245,7 @@ def fit_run(
     paths: DatasetPaths,
     settings: ProducerSettings,
     model: ModelVariant,
-    exp: yolox.BasketballTinyExp,
+    exp: yolox.YOLOXTinyExp,
     checkpoint_path: Path,
     device: torch.device,
     project_root: Path,
@@ -287,6 +299,12 @@ def fit_run(
             settings.training,
             device,
             project_root,
+            class_names=tuple(
+                category["name"]
+                for category in protocol["dataset_identity"]["canonical"][
+                    "canonical_source"
+                ]["category_mapping"]
+            ),
             resume=resumed,
         )
     except BaseException:
@@ -306,19 +324,19 @@ def fit_run(
     return result
 
 
-def _category_id(protocol: Mapping[str, Any]) -> int:
-    """
-    Return the one basketball category ID recorded in canonical provenance.
-    """
+def _category_ids(protocol: Mapping[str, Any]) -> list[int]:
+    """Return source IDs in the canonical model-label order."""
     categories = protocol["dataset_identity"]["canonical"]["canonical_source"][
         "category_mapping"
     ]
-    if len(categories) != 1 or categories[0]["name"] != "basketball":
-        raise ValueError("Run protocol does not describe one basketball category")
-    category_id = categories[0]["id"]
-    if type(category_id) is not int:
-        raise ValueError("Run protocol basketball category ID must be an integer")
-    return category_id
+    ids = [category["id"] for category in categories]
+    if (
+        not ids
+        or any(type(value) is not int for value in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        raise ValueError("Run protocol must describe unique integer category IDs")
+    return ids
 
 
 def _prediction_metadata(
@@ -348,10 +366,10 @@ def _prediction_metadata(
 
 def _benchmark_metadata(
     loaded_model: torch.nn.Module,
-    exp: yolox.BasketballTinyExp,
+    exp: yolox.YOLOXTinyExp,
     annotation_path: Path,
     image_dir: Path,
-    category_id: int,
+    category_ids: list[int],
     device: torch.device,
     settings: ProducerSettings,
     metadata: Mapping[str, Any],
@@ -371,7 +389,7 @@ def _benchmark_metadata(
             exp,
             image,
             device=device,
-            category_ids=[category_id],
+            category_ids=category_ids,
             score_floor=metadata["postprocessing"]["score_floor"],
         )
 
@@ -413,10 +431,16 @@ def recover_and_publish(
         image_size=settings.training.image_size,
         project_name=run_dir.name,
         seed=settings.training.seed,
+        class_names=tuple(
+            category["name"]
+            for category in protocol["dataset_identity"]["canonical"][
+                "canonical_source"
+            ]["category_mapping"]
+        ),
     )
     loaded_model = load_model(exp, checkpoint, device)
     metadata = _prediction_metadata(protocol, checkpoint, settings)
-    category_id = _category_id(protocol)
+    category_ids = _category_ids(protocol)
     evaluation_dir = run_dir / "evaluation"
     prediction_paths = {}
     for split in ("val", "test"):
@@ -430,7 +454,7 @@ def recover_and_publish(
                 exp,
                 annotation_path,
                 image_dir,
-                category_id,
+                category_ids,
                 device,
                 settings,
                 metadata,
@@ -443,13 +467,17 @@ def recover_and_publish(
             annotation_path,
             image_dir,
             device=device,
-            category_ids=[category_id],
+            category_ids=category_ids,
             metadata=split_metadata,
         )
     destination = bundle_root or (
         OUTPUT_ROOT
         / "evaluation"
-        / "basketball_large_dataset"
+        / (
+            "basketball_large_dataset"
+            if model.logical_dataset == "basketball"
+            else model.logical_dataset
+        )
         / model.name
         / run_dir.name
     )

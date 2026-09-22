@@ -160,7 +160,7 @@ display(dataset_summary)
 
 # %%
 PRETRAINED_PATH = yolox_platform.ensure_pretrained_checkpoint(PRETRAINED_PATH)
-exp = yolox_platform.BasketballTinyExp(
+exp = yolox_platform.YOLOXTinyExp(
     dataset_dir=DATASET_DIR,
     output_dir=project_space,
     max_epoch=settings.epochs,
@@ -227,7 +227,7 @@ display_img(fig, close=True)
 
 # %%
 best_model_path = run_dir / "weights" / "best_ckpt.pth"
-eval_exp = yolox_platform.BasketballTinyExp(
+eval_exp = yolox_platform.YOLOXTinyExp(
     dataset_dir=DATASET_DIR,
     output_dir=project_space,
     max_epoch=settings.epochs,

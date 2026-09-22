@@ -77,12 +77,21 @@ def _read_split(source_dir: Path, split: str) -> tuple[dict, list[dict]]:
     for key in ("images", "annotations", "categories"):
         if not isinstance(coco.get(key), list):
             raise ValueError(f"{annotation_path}: {key} must be a list")
-    if len(coco["categories"]) != 1:
-        raise ValueError(f"{annotation_path}: expected exactly one basketball class")
-    category = coco["categories"][0]
-    category_id = _integer(category.get("id"), f"{split} category ID")
-    if category.get("name") != "basketball":
-        raise ValueError(f"{annotation_path}: expected category name 'basketball'")
+    if not coco["categories"]:
+        raise ValueError(f"{annotation_path}: expected at least one detection class")
+    category_ids = set()
+    category_names = set()
+    for category in coco["categories"]:
+        if not isinstance(category, dict):
+            raise ValueError(f"{annotation_path}: expected a category object")
+        category_id = _integer(category.get("id"), f"{split} category ID")
+        category_name = category.get("name")
+        if not isinstance(category_name, str) or not category_name.strip():
+            raise ValueError(f"{annotation_path}: expected a nonempty category name")
+        if category_id in category_ids or category_name in category_names:
+            raise ValueError(f"{annotation_path}: duplicate category ID or name")
+        category_ids.add(category_id)
+        category_names.add(category_name)
 
     images = {}
     file_names = set()
@@ -129,7 +138,10 @@ def _read_split(source_dir: Path, split: str) -> tuple[dict, list[dict]]:
             raise ValueError(
                 f"{split}: annotation {annotation_id} has unknown image ID"
             )
-        if entry.get("category_id") != category_id:
+        if (
+            _integer(entry.get("category_id"), f"{split} annotation category ID")
+            not in category_ids
+        ):
             raise ValueError(
                 f"{split}: annotation {annotation_id} has unknown category"
             )
@@ -267,7 +279,8 @@ def prepare_coco_dataset(
     """
     Build or verify RF-DETR train/valid/test splits from frozen COCO annotations.
 
-    ``category_id`` selects the training label ID; ``None`` preserves source IDs.
+    ``category_id`` selects the first contiguous training label ID (in sorted
+    source-ID order); ``None`` preserves all source IDs.
     A reversible mapping always records the original category. ``smoke_limits``
     must bound all three splits explicitly; it creates a labeled subset without
     resplitting or moving images between splits. Count assertions always apply
@@ -291,13 +304,13 @@ def prepare_coco_dataset(
 
     source_coco = {}
     source_identities = {}
-    source_category_id = None
+    categories = None
     for split in SPLIT_NAMES:
         coco, identities = _read_split(source_dir, split)
-        current_category_id = coco["categories"][0]["id"]
-        if source_category_id is not None and current_category_id != source_category_id:
-            raise ValueError("Basketball category IDs differ between source splits")
-        source_category_id = current_category_id
+        current_categories = sorted(coco["categories"], key=lambda item: item["id"])
+        if categories is not None and current_categories != categories:
+            raise ValueError("Category names or IDs differ between source splits")
+        categories = current_categories
         if (
             expected_counts is not None
             and len(coco["images"]) != expected_counts[split]
@@ -324,20 +337,34 @@ def prepare_coco_dataset(
             )
         warnings.warn(message, UserWarning, stacklevel=2)
 
-    training_category_id = source_category_id if category_id is None else category_id
+    source_ids = [category["id"] for category in categories]
+    training_ids = (
+        source_ids
+        if category_id is None
+        else list(range(category_id, category_id + len(source_ids)))
+    )
+    source_to_training = dict(zip(source_ids, training_ids, strict=True))
+    category_mapping = {
+        "source_to_training": {
+            str(key): value for key, value in source_to_training.items()
+        },
+        "training_to_source": {
+            str(value): key for key, value in source_to_training.items()
+        },
+        "prediction_to_source": {
+            str(index): value for index, value in enumerate(source_ids)
+        },
+        "class_names": [category["name"] for category in categories],
+    }
+    if len(source_ids) == 1:
+        category_mapping["source_category_id"] = source_ids[0]
     manifest = {
         "schema_version": 1,
         "source_dir": str(source_dir),
         "dataset_dir": str(destination_dir),
         "mode": "smoke" if smoke_limits is not None else "full",
         "smoke_limits": dict(smoke_limits) if smoke_limits is not None else None,
-        "category_mapping": {
-            "source_category_id": source_category_id,
-            "source_to_training": {str(source_category_id): training_category_id},
-            "training_to_source": {str(training_category_id): source_category_id},
-            "prediction_to_source": {"0": source_category_id},
-            "class_names": ["basketball"],
-        },
+        "category_mapping": category_mapping,
         "duplicate_image_groups": duplicates,
         "allow_cross_split_duplicates": allow_cross_split_duplicates,
         "splits": {},
@@ -349,9 +376,10 @@ def prepare_coco_dataset(
             if smoke_limits is not None
             else deepcopy(coco)
         )
-        current["categories"][0]["id"] = training_category_id
+        for category in current["categories"]:
+            category["id"] = source_to_training[category["id"]]
         for annotation in current["annotations"]:
-            annotation["category_id"] = training_category_id
+            annotation["category_id"] = source_to_training[annotation["category_id"]]
         selected_ids = {entry["id"] for entry in current["images"]}
         adapted[split] = _json_bytes(current)
         annotation_path = source_dir / "annotations" / f"instances_{split}.json"

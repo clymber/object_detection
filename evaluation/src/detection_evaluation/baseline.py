@@ -33,9 +33,17 @@ class BaselineExport:
     resolution: int
     device: str
     splits: tuple[str, ...]
-    category_id: int
+    category_ids: tuple[int, ...]
+    class_names: tuple[str, ...]
     training_settings: dict[str, Any]
     epochs_completed: int
+
+    @property
+    def category_id(self) -> int:
+        """Return the legacy scalar for a single-category export."""
+        if len(self.category_ids) != 1:
+            raise ValueError("Use category_ids for multiclass exports")
+        return self.category_ids[0]
 
 
 def latest_run_dir(runs_dir: Path, pattern: str, checkpoint: Path) -> Path:
@@ -99,10 +107,11 @@ def prepare_baseline(
     if trained_name.removeprefix("yolo_").removeprefix("coco_") != dataset_name:
         raise ValueError("Run dataset name does not match comparison dataset")
     train = read_json(dataset_dir / "annotations" / "instances_train.json")
-    categories = train["categories"]
-    if len(categories) != 1 or categories[0]["name"] != "basketball":
-        raise ValueError("Expected a one-class basketball dataset")
-    category_id = categories[0]["id"]
+    categories = sorted(train["categories"], key=lambda item: item["id"])
+    category_ids = tuple(category["id"] for category in categories)
+    class_names = tuple(category["name"] for category in categories)
+    if not category_ids or len(set(category_ids)) != len(category_ids):
+        raise ValueError("Expected unique COCO categories")
     splits = ("val", "test") if split == "both" else (split,)
     for selected in splits:
         split_output_dir = output_dir / selected
@@ -115,9 +124,8 @@ def prepare_baseline(
         )
         split_categories = annotations["categories"]
         if (
-            len(split_categories) != 1
-            or split_categories[0]["id"] != category_id
-            or split_categories[0]["name"] != "basketball"
+            sorted((item["id"], item["name"]) for item in split_categories)
+            != list(zip(category_ids, class_names, strict=True))
             or not annotations["images"]
         ):
             raise ValueError(f"Invalid category mapping or empty {selected} split")
@@ -138,7 +146,8 @@ def prepare_baseline(
         resolution=resolution,
         device=device,
         splits=splits,
-        category_id=category_id,
+        category_ids=category_ids,
+        class_names=class_names,
         training_settings=settings,
         epochs_completed=int(history["epoch"].max()),
     )

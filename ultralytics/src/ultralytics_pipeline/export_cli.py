@@ -72,7 +72,9 @@ def export(args: argparse.Namespace) -> list[Path]:
     from .artifacts import predict_image
 
     model = YOLO(context.checkpoint)
-    if list(model.names.values()) != ["basketball"]:
+    if [model.names[index] for index in range(len(model.names))] != list(
+        context.class_names
+    ):
         raise ValueError(f"Unexpected checkpoint classes: {model.names}")
     inner_model = model.model
     if not isinstance(inner_model, torch.nn.Module):
@@ -95,7 +97,7 @@ def export(args: argparse.Namespace) -> list[Path]:
         return predict_image(
             model,
             image,
-            category_id=context.category_id,
+            category_ids=list(context.category_ids),
             resolution=context.resolution,
             device=context.device,
             score_floor=postprocessing["score_floor"],

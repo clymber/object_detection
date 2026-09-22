@@ -2,18 +2,23 @@
 Mock-only tests for the YOLOX Stage 5 producer lifecycle.
 """
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 import torch
+from detection_evaluation import (
+    read_bundle,
+    read_training_record,
+    write_prediction_artifact,
+)
 
-from detection_evaluation import read_bundle, read_training_record, write_prediction_artifact
 from yolox_pipeline import producer, yolox
 
 
-def identities() -> dict[str, dict[str, Any]]:
+def identities(class_name: str = "basketball") -> dict[str, dict[str, Any]]:
     """
     Return a compact valid identity pair for protocol lifecycle mocks.
     """
@@ -22,7 +27,7 @@ def identities() -> dict[str, dict[str, Any]]:
         "canonical": {
             "source_fingerprint": digest,
             "canonical_source": {
-                "category_mapping": [{"id": 1, "name": "basketball"}],
+                "category_mapping": [{"id": 1, "name": class_name}],
             },
         },
         "loader": {"source_fingerprint": digest, "loader_fingerprint": "1" * 64},
@@ -48,23 +53,29 @@ def settings(*, smoke_run: bool = False, benchmark: bool = False) -> producer.Pr
     )
 
 
-def patch_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+def patch_identity(
+    monkeypatch: pytest.MonkeyPatch, class_name: str = "basketball"
+) -> None:
     """
     Replace filesystem dataset identity work with deterministic fixtures.
     """
-    monkeypatch.setattr(producer, "_dataset_identity", lambda _paths: identities())
+    monkeypatch.setattr(
+        producer, "_dataset_identity", lambda _paths: identities(class_name)
+    )
 
 
+@pytest.mark.parametrize("class_name", ["basketball", "football"])
 @pytest.mark.parametrize("model_name", ["tiny", "nano"])
 def test_fresh_and_resumed_runs_append_timed_attempts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     model_name: str,
+    class_name: str,
 ) -> None:
     """
     Keep original provenance while appending exactly one fresh and resume attempt.
     """
-    patch_identity(monkeypatch)
+    patch_identity(monkeypatch, class_name)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     calls: list[bool] = []
@@ -73,6 +84,7 @@ def test_fresh_and_resumed_runs_append_timed_attempts(
         """
         Record resume mode and create one completed native history row.
         """
+        assert kwargs["class_names"] == (class_name,)
         calls.append(kwargs["resume"])
         with (run_dir / "results.csv").open("a", encoding="utf-8") as stream:
             if len(calls) == 1:
@@ -81,19 +93,21 @@ def test_fresh_and_resumed_runs_append_timed_attempts(
         return object()
 
     clock = iter((1.0, 4.0, 10.0, 16.0))
-    common = dict(
-        run_dir=run_dir,
-        paths=producer.DatasetPaths(tmp_path, tmp_path),
-        settings=settings(),
-        model=producer.variant(model_name),
-        exp=object(),
-        checkpoint_path=tmp_path / "pretrained.pth",
-        device=torch.device("cpu"),
-        project_root=tmp_path,
-        fit=fake_fit,
-        synchronize=lambda: None,
-        monotonic_clock=lambda: next(clock),
-    )
+    common = {
+        "run_dir": run_dir,
+        "paths": producer.DatasetPaths(tmp_path, tmp_path),
+        "settings": settings(),
+        "model": producer.variant(
+            model_name, logical_dataset=class_name, source_notebook="training.ipynb"
+        ),
+        "exp": object(),
+        "checkpoint_path": tmp_path / "pretrained.pth",
+        "device": torch.device("cpu"),
+        "project_root": tmp_path,
+        "fit": fake_fit,
+        "synchronize": lambda: None,
+        "monotonic_clock": lambda: next(clock),
+    }
     producer.fit_run(
         **common,
         original_utc=datetime(2026, 9, 19, tzinfo=UTC),
@@ -103,6 +117,8 @@ def test_fresh_and_resumed_runs_append_timed_attempts(
     protocol = producer.read_run_protocol(run_dir)
     attempts = read_training_record(run_dir)["attempts"]
     assert protocol["model"] == producer.variant(model_name).name
+    assert protocol["logical_dataset"] == class_name
+    assert protocol["source_notebook"] == "training.ipynb"
     assert protocol["original_utc"] == "2026-09-19T00:00:00Z"
     assert [attempt["kind"] for attempt in attempts] == ["fresh", "resume"]
     assert [attempt["duration_seconds"] for attempt in attempts] == [3.0, 6.0]
@@ -235,13 +251,14 @@ def test_prepare_run_rejects_changed_identity(
         producer.prepare_run(run_dir, paths, current, producer.variant("tiny"))
 
 
+@pytest.mark.parametrize("class_name", ["basketball", "football"])
 def test_recovery_republishes_without_training_after_a_failed_publication(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, class_name: str
 ) -> None:
     """
     Republish a completed run without changing attempts or invoking native fit.
     """
-    patch_identity(monkeypatch)
+    patch_identity(monkeypatch, class_name)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     checkpoint = run_dir / "weights" / "best_ckpt.pth"
@@ -249,7 +266,13 @@ def test_recovery_republishes_without_training_after_a_failed_publication(
     checkpoint.write_bytes(b"weights")
     paths = producer.DatasetPaths(tmp_path, tmp_path)
     current = settings(smoke_run=True)
-    model = producer.variant("nano")
+    model = producer.variant(
+        "nano",
+        logical_dataset=class_name,
+        source_notebook="nb03.05-yolox_nano_football.ipynb"
+        if class_name == "football"
+        else "nb03.03-yolox_nano_large_basketball.ipynb",
+    )
     producer.prepare_run(
         run_dir,
         paths,
@@ -270,18 +293,32 @@ def test_recovery_republishes_without_training_after_a_failed_publication(
         completed_epochs=2,
         monotonic_clock=lambda: 3.0,
     )
+    bundle = (
+        tmp_path
+        / "output"
+        / "evaluation"
+        / ("basketball_large_dataset" if class_name == "basketball" else class_name)
+        / "yolox_nano"
+        / "run"
+    )
     exported: list[str] = []
 
     def fake_export(*args: Any, **kwargs: Any) -> Path:
         """
         Write minimal valid artifacts through the native export handoff.
         """
+        assert kwargs["category_ids"] == [1]
         destination = args[2]
         split = kwargs["metadata"]["split"]
         annotation = tmp_path / f"{split}.json"
         annotation.write_text(
-            '{"images":[{"id":1,"file_name":"image.jpg"}],'
-            '"annotations":[],"categories":[{"id":1,"name":"basketball"}]}',
+            json.dumps(
+                {
+                    "images": [{"id": 1, "file_name": "image.jpg"}],
+                    "annotations": [],
+                    "categories": [{"id": 1, "name": class_name}],
+                }
+            ),
             encoding="utf-8",
         )
         exported.append(split)
@@ -289,6 +326,7 @@ def test_recovery_republishes_without_training_after_a_failed_publication(
 
     monkeypatch.setattr(producer.artifacts, "export_model_predictions", fake_export)
     monkeypatch.setattr(producer, "version", lambda _distribution: "test")
+    monkeypatch.setattr(producer, "OUTPUT_ROOT", tmp_path / "output")
     monkeypatch.setattr(
         producer,
         "publish_bundle",
@@ -303,14 +341,14 @@ def test_recovery_republishes_without_training_after_a_failed_publication(
             model,
             torch.device("cpu"),
             load_model=lambda *_args: torch.nn.Linear(1, 1),
-            bundle_root=tmp_path / "bundle",
         )
     assert len(read_training_record(run_dir)["attempts"]) == 1
 
     monkeypatch.undo()
-    patch_identity(monkeypatch)
+    patch_identity(monkeypatch, class_name)
     monkeypatch.setattr(producer.artifacts, "export_model_predictions", fake_export)
     monkeypatch.setattr(producer, "version", lambda _distribution: "test")
+    monkeypatch.setattr(producer, "OUTPUT_ROOT", tmp_path / "output")
     first = producer.recover_and_publish(
         run_dir,
         paths,
@@ -318,7 +356,6 @@ def test_recovery_republishes_without_training_after_a_failed_publication(
         model,
         torch.device("cpu"),
         load_model=lambda *_args: torch.nn.Linear(1, 1),
-        bundle_root=tmp_path / "bundle",
     )
     second = producer.recover_and_publish(
         run_dir,
@@ -327,29 +364,36 @@ def test_recovery_republishes_without_training_after_a_failed_publication(
         model,
         torch.device("cpu"),
         load_model=lambda *_args: torch.nn.Linear(1, 1),
-        bundle_root=tmp_path / "bundle",
     )
 
     assert exported == ["val", "test", "val", "test", "val", "test"]
     assert len(read_training_record(run_dir)["attempts"]) == 1
-    assert read_bundle(tmp_path / "bundle", allow_smoke=True)["manifest"] == second
+    assert read_bundle(bundle, allow_smoke=True)["manifest"] == second
     assert first["provenance"]["model"] == "yolox_nano"
+    assert producer.read_run_protocol(run_dir)["logical_dataset"] == class_name
 
 
 @pytest.mark.parametrize(
     ("model_name", "expected_class"),
-    [("tiny", yolox.BasketballTinyExp), ("nano", yolox.BasketballNanoExp)],
+    [("tiny", yolox.YOLOXTinyExp), ("nano", yolox.YOLOXNanoExp)],
 )
+@pytest.mark.parametrize("class_count", [1, 2])
 def test_recovery_uses_the_variant_experiment_and_best_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     model_name: str,
-    expected_class: type[yolox.BasketballTinyExp],
+    expected_class: type[yolox.YOLOXTinyExp],
+    class_count: int,
 ) -> None:
     """
     Reconstruct the requested variant and only load its selected best checkpoint.
     """
-    patch_identity(monkeypatch)
+    identity = identities()
+    if class_count == 2:
+        identity["canonical"]["canonical_source"]["category_mapping"].append(
+            {"id": 19, "name": "football"}
+        )
+    monkeypatch.setattr(producer, "_dataset_identity", lambda paths: identity)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     checkpoint = run_dir / "weights" / "best_ckpt.pth"
@@ -388,11 +432,12 @@ def test_recovery_uses_the_variant_experiment_and_best_checkpoint(
         return torch.nn.Linear(1, 1)
 
     monkeypatch.setattr(producer, "version", lambda _distribution: "test")
-    monkeypatch.setattr(
-        producer.artifacts,
-        "export_model_predictions",
-        lambda *_args, **_kwargs: tmp_path / "prediction.json",
-    )
+
+    def fake_export(*args: Any, **kwargs: Any) -> Path:
+        assert kwargs["category_ids"] == ([1, 19] if class_count == 2 else [1])
+        return tmp_path / "prediction.json"
+
+    monkeypatch.setattr(producer.artifacts, "export_model_predictions", fake_export)
     monkeypatch.setattr(producer, "publish_bundle", lambda *_args, **_kwargs: {})
 
     producer.recover_and_publish(
@@ -404,6 +449,7 @@ def test_recovery_uses_the_variant_experiment_and_best_checkpoint(
         load_model=fake_load,
     )
 
+    assert captured["exp"].num_classes == class_count
     assert isinstance(captured["exp"], expected_class)
     assert captured["path"] == checkpoint
     assert captured["device"] == torch.device("cpu")

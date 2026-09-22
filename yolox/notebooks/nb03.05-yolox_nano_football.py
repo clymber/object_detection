@@ -11,37 +11,39 @@
 # ---
 
 # %% [markdown]
-# # YOLOX-Tiny on the Basketball Dataset
+# # YOLOX-Nano on Football Dataset
 #
-# This notebook fine-tunes YOLOX-Tiny on
-# `DATA_ROOT/composed/coco_basketball_105_22_23`.
-#
-# The run is designed to be comparable with
-# `nb02-ultralytics_yolo11n_on_basketball.py`: 640x640 input, 150 epochs by
-# default, validation/test metrics, training plots, and qualitative prediction
-# grids. The YOLOX-specific training/evaluation machinery lives in
-# `yolox_pipeline.yolox` so the notebook stays readable.
+# Fine tunes a YOLOX-Nano model on the football dataset.
+# - Model: YOLOX-Nano
+# - Dataset: `DATA_ROOT/composed/coco_football`
+# - Input image size: `640 x 640`
+# - Max training epochs: 100
 
 # %%
 """
-Fine-tune and evaluate YOLOX-Tiny on a customized basketball dataset.
+Fine-tune and evaluate YOLOX-Nano on football dataset.
 """
-
 # %load_ext autoreload
 # %autoreload 2
+# %aimport -torch, -IPython
 
+# %%
 from __future__ import annotations
+
+import os
 
 import torch
 from detection_common import (
     Device,
-    allocate_run_directory,
     aligned_print,
+    allocate_run_directory,
     configure_stdio_relative_path,
     ensure_dir,
 )
 from detection_common.utils.image import display as display_img
 from IPython.display import Markdown, display
+
+from yolox_pipeline import producer
 from yolox_pipeline import yolox as yolox_platform
 from yolox_pipeline.config import (
     DATA_ROOT,
@@ -58,29 +60,81 @@ if DEVICE.type == "mps":
 # %% [markdown]
 # ## Experiment Setup
 #
-# The default run trains for 150 epochs. For a short smoke test, set
-# `YOLOX_TINY_SMOKE=1` before executing the notebook.
+# The default run trains for 100 epochs. For a short smoke test, set
+# `YOLOX_NANO_SMOKE=1` before executing the notebook.
 #
-# Output is quiet by default. Set `YOLOX_TINY_PROGRESS=1` for progress bars or
-# `YOLOX_TINY_VERBOSE=1` for detailed dataset/eval messages and per-epoch logs.
+# Output is quiet by default. Set `YOLOX_NANO_PROGRESS=1` for progress bars or
+# `YOLOX_NANO_VERBOSE=1` for detailed dataset/eval messages and per-epoch logs.
+#
+# A fresh run is the default. To resume one in place, set `RESUME_RUN_DIR` below to its
+# run directory. Relative paths are resolved from `OUTPUT_ROOT`. The recoverable
+# `weights/last_ckpt.pth` checkpoint is restored before any further training.
 
 # %%
-settings = yolox_platform.training_settings_from_env(default_epochs=150)
+# Standard Python environment settings for this notebook.
+# Uncomment values to override the defaults before reading the settings.
+#
+# os.environ["YOLOX_NANO_VERBOSE"] = "1"
+# os.environ["YOLOX_NANO_PROGRESS"] = "1"
+# os.environ["YOLOX_NANO_SMOKE"] = "1"
+
+RESUME_RUN_DIR: str | None = None
+# RESUME_RUN_DIR = "runs/football/yolox_nano_20260920T181447"
+
+if RESUME_RUN_DIR is None:
+    os.environ.pop("YOLOX_NANO_RESUME_RUN", None)
+else:
+    os.environ["YOLOX_NANO_RESUME_RUN"] = RESUME_RUN_DIR
+
+
+# %%
+CLASS_NAMES = ("football",)
+settings = yolox_platform.training_settings_from_env(
+    default_epochs=100,
+    env_prefix="YOLOX_NANO",
+)
 
 PRETRAINED_PATH = (
-    ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "yolox")
-    / "yolox_tiny.pth"
+    ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "yolox") / "yolox_nano.pth"
 )
-DATASET_DIR = DATA_ROOT / "composed" / "coco_basketball_small"
+if settings.run_mode is yolox_platform.RunMode.RESUME:
+    producer_settings = producer.settings_from_run(settings.resolved_resume_run_dir)
+    settings = producer_settings.training
+else:
+    producer_settings = producer.ProducerSettings(settings)
+dataset_paths = producer.resolve_dataset_paths(
+    DATA_ROOT / "composed" / "coco_football",
+    DATA_ROOT / "composed" / "yolo_football",
+    smoke_run=settings.smoke_run,
+)
+DATASET_DIR = dataset_paths.source_dir
+model_variant = producer.variant(
+    "nano",
+    logical_dataset="football",
+    source_notebook="nb03.05-yolox_nano_football.ipynb",
+)
 
-allocation = allocate_run_directory(OUTPUT_ROOT, "basketball_small", "yolox_tiny")
-run_dir = allocation.path
+run_mode = settings.run_mode
+
+if run_mode is yolox_platform.RunMode.FRESH:
+    allocation = allocate_run_directory(OUTPUT_ROOT, "football", "yolox_nano")
+    run_dir = allocation.path
+    original_utc = allocation.created_at
+else:
+    run_dir = settings.resolved_resume_run_dir
+    original_utc = None
+    resume_checkpoint = run_dir / "weights" / "last_ckpt.pth"
+    if not run_dir.is_dir():
+        raise NotADirectoryError(f"Resume run directory not found: {run_dir}")
+    if not resume_checkpoint.is_file():
+        raise FileNotFoundError(f"Resume checkpoint not found: {resume_checkpoint}")
 project_space = run_dir.parent
 project_name = run_dir.name
 
 aligned_print(
     {
         "run_dir": run_dir,
+        "run_mode": run_mode,
         "device": DEVICE,
         "epochs": settings.epochs,
         "batch_size": settings.batch_size,
@@ -95,9 +149,9 @@ aligned_print(
 # %% [markdown]
 # ## Dataset Summary
 #
-# The dataset has one class, `basketball`, and includes background images in each
-# split. Those negative examples help test whether the detector avoids false
-# basketball predictions.
+# The dataset has one class, `football`, and uses independent football sources for
+# the train, validation, and test splits. It also includes tennis images as negative
+# examples to test whether the detector avoids false football predictions.
 
 # %%
 dataset_summary = yolox_platform.summarize_coco_dataset(DATASET_DIR)
@@ -106,20 +160,21 @@ display(dataset_summary)
 # %% [markdown]
 # ## YOLOX Configuration
 #
-# The COCO-pretrained YOLOX-Tiny checkpoint is cached under
-# `models/pretrained/yolox`. Its 80-class classification head is skipped when
-# loading into this one-class basketball model; the backbone and detection
-# features are still initialized from the pretrained checkpoint.
+# The COCO-pretrained YOLOX-Nano checkpoint is cached under `models/pretrained/yolox`.
 
 # %%
-PRETRAINED_PATH = yolox_platform.ensure_pretrained_checkpoint(PRETRAINED_PATH)
-exp = yolox_platform.YOLOXTinyExp(
+PRETRAINED_PATH = yolox_platform.ensure_pretrained_checkpoint(
+    PRETRAINED_PATH,
+    yolox_platform.YOLOX_NANO_WEIGHTS_URL,
+)
+exp = yolox_platform.YOLOXNanoExp(
     dataset_dir=DATASET_DIR,
     output_dir=project_space,
     max_epoch=settings.epochs,
     image_size=settings.image_size,
     project_name=project_name,
     seed=settings.seed,
+    class_names=CLASS_NAMES,
 )
 
 aligned_print(
@@ -135,21 +190,24 @@ aligned_print(
 )
 
 # %% [markdown]
-# ## Fine-Tune YOLOX-Tiny
+# ## Fine-Tune YOLOX-Nano
 #
 # This cell is collapsed by default because the full run can take a while.
 # Metrics are written to `results.csv`; the best checkpoint is selected by
 # validation `mAP50-95`.
 
 # %% jupyter={"outputs_hidden": true}
-history = yolox_platform.fit_yolox_tiny(
+history = producer.fit_run(
+    run_dir,
+    dataset_paths,
+    producer_settings,
+    model_variant,
     exp,
     PRETRAINED_PATH,
-    run_dir,
-    DATASET_DIR,
-    settings,
     DEVICE,
     WORKSPACE_ROOT,
+    original_utc=original_utc,
+    resumed=run_mode is yolox_platform.RunMode.RESUME,
 )
 
 # %% [markdown]
@@ -177,13 +235,14 @@ display_img(fig, close=True)
 
 # %%
 best_model_path = run_dir / "weights" / "best_ckpt.pth"
-eval_exp = yolox_platform.YOLOXTinyExp(
+eval_exp = yolox_platform.YOLOXNanoExp(
     dataset_dir=DATASET_DIR,
     output_dir=project_space,
     max_epoch=settings.epochs,
     image_size=settings.image_size,
     project_name=project_name,
     seed=settings.seed,
+    class_names=CLASS_NAMES,
 )
 
 # %%
@@ -202,6 +261,22 @@ print(f"Exported ONNX model: {onnx_model_path}")
 
 # %%
 best_model = yolox_platform.load_trained_model(eval_exp, best_model_path, DEVICE)
+
+# %% [markdown]
+# ## Protocol Bundle
+#
+# Reload the selected checkpoint through the same YOLOX adapter and atomically
+# publish protocol-bearing validation and test prediction artifacts.
+
+# %%
+bundle_manifest = producer.recover_and_publish(
+    run_dir,
+    dataset_paths,
+    producer_settings,
+    model_variant,
+    DEVICE,
+)
+print(bundle_manifest["generation"])
 
 validation_metrics = yolox_platform.evaluate_model(
     best_model,
@@ -254,7 +329,7 @@ if settings.verbose_output:
 # ## Qualitative Prediction Review
 #
 # Save and display ground-truth and prediction grids for validation and test
-# images, matching the style of the sample artifacts in `nb02`.
+# images, matching the style of the sample artifacts in `nb02` and `nb03.02`.
 
 # %%
 val_labels_path, val_preds_path = yolox_platform.save_sample_visualizations(

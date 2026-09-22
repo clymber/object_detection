@@ -136,7 +136,7 @@ PRETRAINED_PATH = yolox_platform.ensure_pretrained_checkpoint(
 	PRETRAINED_PATH,
 	yolox_platform.YOLOX_NANO_WEIGHTS_URL,
 )
-exp = yolox_platform.BasketballNanoExp(
+exp = yolox_platform.YOLOXNanoExp(
 	dataset_dir=DATASET_DIR,
 	output_dir=project_space,
 	max_epoch=settings.epochs,
@@ -194,7 +194,7 @@ display_img(fig, close=True)
 
 # %%
 best_model_path = run_dir / "weights" / "best_ckpt.pth"
-eval_exp = yolox_platform.BasketballNanoExp(
+eval_exp = yolox_platform.YOLOXNanoExp(
 	dataset_dir=DATASET_DIR,
 	output_dir=project_space,
 	max_epoch=settings.epochs,

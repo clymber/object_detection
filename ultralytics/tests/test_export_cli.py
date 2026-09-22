@@ -31,7 +31,8 @@ def test_export_calls_native_adapter_and_neutral_writer(
     """
     context = SimpleNamespace(
         checkpoint=tmp_path / "best.pt",
-        category_id=7,
+        category_ids=(7,),
+        class_names=("basketball",),
         resolution=640,
         device="cpu",
         training_settings={"iou": 0.6},

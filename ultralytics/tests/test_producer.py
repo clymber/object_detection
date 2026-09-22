@@ -2,6 +2,7 @@
 Mock-only tests for the Ultralytics Stage 4 producer lifecycle.
 """
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -175,13 +176,18 @@ def test_train_timing_synchronizes_both_boundaries(
     assert read_training_record(run_dir)["summary"]["total_seconds"] == 5.0
 
 
+@pytest.mark.parametrize("class_count", [1, 2])
 def test_recovery_publishes_bundle_without_training(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, class_count: int
 ) -> None:
     """
     Recover a finished run without registering another train call or attempt.
     """
-    patch_identity(monkeypatch)
+    identity = identities()
+    categories = identity["canonical"]["canonical_source"]["category_mapping"]
+    if class_count == 2:
+        categories.append({"id": 19, "name": "football"})
+    monkeypatch.setattr(producer, "_dataset_identity", lambda paths: identity)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     checkpoint = run_dir / "weights" / "best.pt"
@@ -221,11 +227,15 @@ def test_recovery_publishes_bundle_without_training(
         from detection_evaluation import write_prediction_artifact
 
         annotation = tmp_path / f"{kwargs['metadata']['split']}.json"
+        assert kwargs["category_ids"] == [item["id"] for item in categories]
         annotation.write_text(
-            "{"
-            '\"images\":[{\"id\":1,\"file_name\":\"image.jpg\"}],'
-            '\"annotations\":[],\"categories\":[{\"id\":1,\"name\":\"basketball\"}]'
-            "}",
+            json.dumps(
+                {
+                    "images": [{"id": 1, "file_name": "image.jpg"}],
+                    "annotations": [],
+                    "categories": categories,
+                }
+            ),
             encoding="utf-8",
         )
         artifacts[kwargs["metadata"]["split"]] = write_prediction_artifact(
@@ -235,7 +245,7 @@ def test_recovery_publishes_bundle_without_training(
 
     monkeypatch.setattr(producer, "export_model_predictions", fake_export)
     model = SimpleNamespace(
-        names={0: "basketball"},
+        names={index: item["name"] for index, item in enumerate(categories)},
         model=SimpleNamespace(parameters=lambda: [SimpleNamespace(numel=lambda: 1)]),
     )
     manifest = producer.recover_and_publish(

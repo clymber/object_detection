@@ -597,7 +597,10 @@ def test_fit_closes_synchronized_timing_before_postprocessing(
     history = rfdetr.fit_model(
         FakeTrainingModel(),
         settings,
-        {"dataset_dir": str(tmp_path)},
+        {
+            "dataset_dir": str(tmp_path),
+            "category_mapping": {"class_names": ["basketball"]},
+        },
         run_dir,
         synchronize=lambda: calls.append("sync"),
         monotonic_clock=lambda: next(clock),
@@ -703,3 +706,34 @@ def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
     assert len(read_training_record(run_dir)["attempts"]) == 1
     assert first["bundle"]["provenance"]["smoke_run"] is True
     assert read_bundle(tmp_path / "bundle", allow_smoke=True)["manifest"] == second["bundle"]
+
+
+def test_multiclass_predictions_keep_second_class_and_skip_background() -> None:
+    """Label one is a real class; only label num_classes is the no-object slot."""
+    detections = SimpleNamespace(
+        xyxy=[[0.0, 0.0, 2.0, 2.0]] * 3,
+        confidence=[0.9, 0.8, 0.1],
+        class_id=[0, 1, 2],
+    )
+    model = SimpleNamespace(predict=lambda *args, **kwargs: detections)
+    rows = rfdetr.predictions_for_image(model, None, 42, [7, 19])
+    assert [row["category_id"] for row in rows] == [7, 19]
+    assert all(row["image_id"] == 42 for row in rows)
+
+
+def test_multiclass_model_construction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build a two-output head without downloading pretrained weights."""
+    module = ModuleType("rfdetr")
+    module.RFDETRSmall = lambda **kwargs: kwargs
+    monkeypatch.setitem(sys.modules, "rfdetr", module)
+    model = rfdetr.build_model(
+        rfdetr.TrainingSettings(), class_names=["football", "basketball"]
+    )
+    assert model["num_classes"] == 2
+    kwargs = rfdetr.train_kwargs(
+        rfdetr.TrainingSettings(),
+        Path("dataset"),
+        Path("run"),
+        class_names=["football", "basketball"],
+    )
+    assert kwargs["class_names"] == ["football", "basketball"]

@@ -336,7 +336,7 @@ def test_basketball_nano_uses_official_nano_model_geometry(tmp_path: Path) -> No
     """
     Configure Nano with its narrower depthwise architecture and shared image size.
     """
-    exp = yolox.BasketballNanoExp(
+    exp = yolox.YOLOXNanoExp(
         dataset_dir=tmp_path / "dataset",
         output_dir=tmp_path / "outputs",
         max_epoch=100,

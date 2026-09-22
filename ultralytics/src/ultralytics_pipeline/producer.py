@@ -362,26 +362,26 @@ def _prediction_metadata(
     }
 
 
-def _category_id(protocol: Mapping[str, Any]) -> int:
-    """
-    Return the one basketball category ID recorded in canonical provenance.
-    """
+def _category_ids(protocol: Mapping[str, Any]) -> list[int]:
+    """Return source IDs in the canonical model-label order."""
     categories = protocol["dataset_identity"]["canonical"]["canonical_source"][
         "category_mapping"
     ]
-    if len(categories) != 1 or categories[0]["name"] != "basketball":
-        raise ValueError("Run protocol does not describe one basketball category")
-    category_id = categories[0]["id"]
-    if type(category_id) is not int:
-        raise ValueError("Run protocol basketball category ID must be an integer")
-    return category_id
+    ids = [category["id"] for category in categories]
+    if (
+        not ids
+        or any(type(value) is not int for value in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        raise ValueError("Run protocol must describe unique integer category IDs")
+    return ids
 
 
 def _benchmark_metadata(
     model: Any,
     annotation_path: Path,
     image_dir: Path,
-    category_id: int,
+    category_ids: list[int],
     settings: TrainingSettings,
     metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -399,7 +399,7 @@ def _benchmark_metadata(
         return predict_image(
             model,
             image,
-            category_id=category_id,
+            category_ids=category_ids,
             resolution=settings.resolution,
             device=settings.device,
             score_floor=postprocessing["score_floor"],
@@ -436,11 +436,17 @@ def recover_and_publish(
     if not checkpoint.is_file():
         raise FileNotFoundError(checkpoint)
     model = load_model(checkpoint)
-    names = list(model.names.values())
-    if names != ["basketball"]:
+    names = [model.names[index] for index in range(len(model.names))]
+    expected_names = [
+        category["name"]
+        for category in protocol["dataset_identity"]["canonical"]["canonical_source"][
+            "category_mapping"
+        ]
+    ]
+    if names != expected_names:
         raise ValueError(f"Unexpected checkpoint classes: {model.names}")
     metadata = _prediction_metadata(protocol, checkpoint, settings)
-    category_id = _category_id(protocol)
+    category_ids = _category_ids(protocol)
     evaluation_dir = run_dir / "evaluation"
     prediction_paths = {}
     for split in ("val", "test"):
@@ -453,7 +459,7 @@ def recover_and_publish(
                 model,
                 annotation_path,
                 image_dir,
-                category_id,
+                category_ids,
                 settings,
                 metadata,
             ),
@@ -463,7 +469,7 @@ def recover_and_publish(
             evaluation_dir / f"{split}_predictions.json",
             annotation_path,
             image_dir,
-            category_id=category_id,
+            category_ids=category_ids,
             resolution=settings.resolution,
             device=settings.device,
             metadata=split_metadata,

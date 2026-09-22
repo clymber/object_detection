@@ -17,12 +17,12 @@ MODEL_RUNS = {
     "tiny": (
         "yolox_tiny",
         "yolox_tiny_*",
-        "BasketballTinyExp",
+        "YOLOXTinyExp",
     ),
     "nano": (
         "yolox_nano",
         "yolox_nano_*",
-        "BasketballNanoExp",
+        "YOLOXNanoExp",
     ),
 }
 
@@ -71,14 +71,15 @@ def export(args: argparse.Namespace) -> list[Path]:
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable; select a GPU or use --device cpu")
     settings = context.training_settings
-    if settings.get("classes") != ["basketball"]:
-        raise ValueError("YOLOX run must use one basketball class")
+    if settings.get("classes") != list(context.class_names):
+        raise ValueError("YOLOX run classes differ from the dataset")
     experiment = getattr(yolox, experiment_name)(
         dataset_dir=context.dataset_dir,
         output_dir=context.run_dir.parent,
         max_epoch=int(settings["epochs"]),
         image_size=context.resolution,
         project_name=context.run_dir.name,
+        class_names=context.class_names,
     )
     experiment.test_conf = 0.001
     experiment.nmsthre = float(settings.get("nms_threshold", experiment.nmsthre))
@@ -94,7 +95,7 @@ def export(args: argparse.Namespace) -> list[Path]:
             experiment,
             image,
             device=device,
-            category_ids=[context.category_id],
+            category_ids=list(context.category_ids),
             score_floor=0.001,
         )
 

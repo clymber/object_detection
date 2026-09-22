@@ -160,7 +160,9 @@ run_dir = rfdetr_platform.prepare_run(settings, manifest, runtime)
 print(f"Run directory: {run_dir}")
 
 # %%
-training_model = rfdetr_platform.build_model(settings)
+training_model = rfdetr_platform.build_model(
+    settings, class_names=manifest["category_mapping"]["class_names"]
+)
 loader_report = rfdetr_platform.verify_loader(training_model, settings, manifest)
 write_json(run_dir / "loader_check.json", loader_report)
 history = rfdetr_platform.fit_model(training_model, settings, manifest, run_dir)
