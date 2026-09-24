@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
-import math
 import json
+import math
 import os
 import platform
 import shutil

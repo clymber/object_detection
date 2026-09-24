@@ -26,6 +26,7 @@ from typing import cast
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 from detection_common import configure_stdio_relative_path
+
 from ultralytics_pipeline.config import (
     DATA_ROOT,
     OUTPUT_ROOT,
@@ -38,11 +39,12 @@ configure_stdio_relative_path(WORKSPACE_ROOT)
 # %%
 from detection_common import (
     Device,
-    allocate_run_directory,
     aligned_print,
+    allocate_run_directory,
     ensure_dir,
 )
 from detection_common.utils.image import display as display_img
+
 from ultralytics_pipeline import ultralytics as ultralitics_platform
 
 # Must be called before importing ultralytics.

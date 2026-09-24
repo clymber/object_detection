@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from rfdetr_pipeline import onnx_cli as export_rfdetr_onnx
 
 

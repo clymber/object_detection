@@ -8,9 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from PIL import Image
-
 from detection_evaluation import export_predictions
+from PIL import Image
 
 
 def predict_image(

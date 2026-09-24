@@ -11,7 +11,6 @@ from typing import Any, Protocol
 from zipfile import ZipFile
 
 import yaml
-
 from detection_common.utils.urlhelper import cache_download
 
 from .config import DATA_ROOT, OUTPUT_ROOT

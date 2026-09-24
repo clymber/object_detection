@@ -7,10 +7,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from PIL import Image
-
 from detection_common.utils.json_io import write_json
 from detection_evaluation import read_prediction_artifact
+from PIL import Image
+
 from yolox_pipeline import yolox
 from yolox_pipeline.artifacts import export_model_predictions
 

@@ -69,6 +69,7 @@ def export(args: argparse.Namespace) -> list[Path]:
         raise RuntimeError("CUDA is unavailable; select a GPU or use --device cpu")
     configure_privacy()
     from ultralytics import YOLO
+
     from .artifacts import predict_image
 
     model = YOLO(context.checkpoint)

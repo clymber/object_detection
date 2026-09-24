@@ -30,13 +30,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+from IPython.display import Markdown, display
+
 from detection_evaluation import (
 	MODEL_NAMES,
 	discover_bundles,
 	write_bundle_comparisons,
 )
 from detection_evaluation.config import DATA_ROOT, OUTPUT_ROOT
-from IPython.display import Markdown, display
 
 # %% [markdown]
 # ## Comparison settings

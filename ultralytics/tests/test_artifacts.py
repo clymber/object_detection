@@ -6,10 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import torch
-from PIL import Image
-
 from detection_common.utils.json_io import write_json
 from detection_evaluation import read_prediction_artifact
+from PIL import Image
+
 from ultralytics_pipeline.artifacts import export_model_predictions
 
 

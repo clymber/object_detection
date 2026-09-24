@@ -18,9 +18,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from PIL import Image
-
 from detection_common.utils.json_io import read_json, write_json
+from PIL import Image
 
 
 def file_sha256(path: Path | str) -> str:

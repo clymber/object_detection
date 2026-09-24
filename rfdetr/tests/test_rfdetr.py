@@ -12,8 +12,6 @@ from types import ModuleType, SimpleNamespace
 import pandas as pd
 import pytest
 import torch
-from PIL import Image
-
 from detection_common.utils.json_io import read_json, write_json
 from detection_evaluation import (
     file_sha256,
@@ -23,6 +21,8 @@ from detection_evaluation import (
     start_training_attempt,
     write_prediction_artifact,
 )
+from PIL import Image
+
 from rfdetr_pipeline import rfdetr
 
 

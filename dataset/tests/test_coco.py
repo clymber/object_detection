@@ -1,11 +1,12 @@
 from pathlib import Path
 from typing import Any
 
+from detection_common.utils.json_io import write_json
+
 from dataset_builder import (
     filter_coco_annotation_by_labels,
     summarize_coco_datasets,
 )
-from detection_common.utils.json_io import write_json
 
 
 def coco_fixture() -> dict[str, Any]:

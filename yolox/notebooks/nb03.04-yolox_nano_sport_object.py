@@ -34,8 +34,8 @@ import os
 import torch
 from detection_common import (
 	Device,
-	allocate_run_directory,
 	aligned_print,
+	allocate_run_directory,
 	configure_stdio_relative_path,
 	ensure_dir,
 )

@@ -10,9 +10,8 @@ from typing import Any
 
 import numpy as np
 import torch
-from PIL import Image
-
 from detection_evaluation import export_predictions
+from PIL import Image
 
 from . import yolox
 

@@ -5,6 +5,7 @@ Verify shared detector metrics and portable artifact provenance on small COCO fi
 from pathlib import Path
 
 import pytest
+from detection_common.utils.json_io import read_json, write_json
 
 from detection_evaluation import (
     evaluate_predictions,
@@ -13,7 +14,6 @@ from detection_evaluation import (
     write_comparison,
     write_prediction_artifact,
 )
-from detection_common.utils.json_io import read_json, write_json
 
 
 @pytest.fixture

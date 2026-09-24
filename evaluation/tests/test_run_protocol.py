@@ -9,8 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
 from detection_common.utils.json_io import read_json, write_json
+
 from detection_evaluation import (
     capture_training_hardware,
     create_run_protocol,

@@ -24,29 +24,28 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from PIL import Image, ImageDraw
-
-from detection_evaluation import (
-    benchmark_predict,
-    capture_training_hardware,
-    create_run_protocol,
-    evaluate_predictions,
-    finalize_training_attempt,
-    file_sha256,
-    publish_bundle,
-    read_run_protocol,
-    read_training_record,
-    start_training_attempt,
-    write_prediction_artifact,
-)
-from detection_common import allocate_run_directory
-from detection_common.utils.json_io import read_json, write_json
 from dataset_builder import (
     canonical_coco_identity,
     capture_dataset_identity,
     validate_rfdetr_layout,
     verify_dataset_identity,
 )
+from detection_common import allocate_run_directory
+from detection_common.utils.json_io import read_json, write_json
+from detection_evaluation import (
+    benchmark_predict,
+    capture_training_hardware,
+    create_run_protocol,
+    evaluate_predictions,
+    file_sha256,
+    finalize_training_attempt,
+    publish_bundle,
+    read_run_protocol,
+    read_training_record,
+    start_training_attempt,
+    write_prediction_artifact,
+)
+from PIL import Image, ImageDraw
 
 from .config import OUTPUT_ROOT, SUBPROJECT_ROOT
 

@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-
 from detection_common.utils.json_io import write_json
 
 from .metrics import write_comparison

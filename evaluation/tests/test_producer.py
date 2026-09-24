@@ -4,9 +4,9 @@ Tests for framework-neutral image coverage during artifact export.
 
 from pathlib import Path
 
+from detection_common.utils.json_io import write_json
 from PIL import Image
 
-from detection_common.utils.json_io import write_json
 from detection_evaluation import export_predictions, read_prediction_artifact
 
 

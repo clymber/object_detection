@@ -39,14 +39,14 @@ configure_stdio_relative_path(WORKSPACE_ROOT)
 # %%
 from detection_common import (
     Device,
-    allocate_run_directory,
     aligned_print,
+    allocate_run_directory,
     ensure_dir,
 )
 from detection_common.utils.image import display as display_img
 
-from ultralytics_pipeline import ultralytics as ultralitics_platform
 from ultralytics_pipeline import producer
+from ultralytics_pipeline import ultralytics as ultralitics_platform
 
 # Must be called before importing ultralytics.
 ultralitics_platform.configure_privacy()

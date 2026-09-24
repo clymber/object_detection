@@ -19,6 +19,7 @@ from dataset_builder import (
     validate_yolo_layout,
     verify_dataset_identity,
 )
+from detection_common.utils.json_io import read_json
 from detection_evaluation import (
     benchmark_predict,
     capture_training_hardware,
@@ -28,7 +29,6 @@ from detection_evaluation import (
     read_run_protocol,
     start_training_attempt,
 )
-from detection_common.utils.json_io import read_json
 
 from .artifacts import export_model_predictions, predict_image
 from .config import DATA_ROOT, OUTPUT_ROOT

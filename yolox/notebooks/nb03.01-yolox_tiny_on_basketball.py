@@ -35,13 +35,14 @@ from __future__ import annotations
 import torch
 from detection_common import (
     Device,
-    allocate_run_directory,
     aligned_print,
+    allocate_run_directory,
     configure_stdio_relative_path,
     ensure_dir,
 )
 from detection_common.utils.image import display as display_img
 from IPython.display import Markdown, display
+
 from yolox_pipeline import yolox as yolox_platform
 from yolox_pipeline.config import (
     DATA_ROOT,

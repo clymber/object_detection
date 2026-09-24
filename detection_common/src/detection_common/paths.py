@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-
 MODEL_IDS = frozenset({"yolo11n", "yolox_tiny", "yolox_nano", "rfdetr_small"})
 
 

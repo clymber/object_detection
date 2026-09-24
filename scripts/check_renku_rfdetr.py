@@ -21,6 +21,7 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 import torch  # noqa: E402
 from PIL import Image  # noqa: E402
+
 from rfdetr import RFDETRSmall  # noqa: E402
 
 if not torch.cuda.is_available():

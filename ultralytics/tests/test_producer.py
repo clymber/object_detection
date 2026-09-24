@@ -9,8 +9,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from detection_evaluation import read_bundle, read_training_record
+
 from ultralytics_pipeline import producer
 
 

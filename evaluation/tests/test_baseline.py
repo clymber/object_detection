@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 import yaml
+from detection_common.utils.json_io import read_json, write_json
 from PIL import Image
 
-from detection_common.utils.json_io import read_json, write_json
 from detection_evaluation import (
     export_baseline,
     latest_run_dir,

@@ -8,9 +8,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
 from detection_common.utils.json_io import read_json
+from PIL import Image
 
 from .metrics import write_prediction_artifact
 

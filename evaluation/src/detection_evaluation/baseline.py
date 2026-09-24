@@ -11,9 +11,8 @@ from typing import Any
 
 import pandas as pd
 import yaml
-from PIL import Image
-
 from detection_common.utils.json_io import read_json, write_json
+from PIL import Image
 
 from .metrics import benchmark_predict, evaluate_predictions, read_prediction_artifact
 from .producer import export_predictions
