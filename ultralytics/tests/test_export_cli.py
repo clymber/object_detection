@@ -15,13 +15,12 @@ from ultralytics_pipeline import export_cli
 
 def test_parse_export_args(tmp_path: Path) -> None:
     """
-    Require explicit frozen data and an unused artifact destination.
+    Default artifacts to the selected run's evaluation directory.
     """
-    args = export_cli.parse_args(
-        ["--dataset-dir", str(tmp_path / "dataset"), "--output-dir", str(tmp_path)]
-    )
+    args = export_cli.parse_args(["--dataset-dir", str(tmp_path / "dataset")])
     assert args.device == "cpu"
     assert args.split == "both"
+    assert args.output_dir is None
 
 
 def test_export_calls_native_adapter_and_neutral_writer(
@@ -32,7 +31,8 @@ def test_export_calls_native_adapter_and_neutral_writer(
     """
     context = SimpleNamespace(
         checkpoint=tmp_path / "best.pt",
-        category_id=7,
+        category_ids=(7,),
+        class_names=("basketball",),
         resolution=640,
         device="cpu",
         training_settings={"iou": 0.6},
@@ -84,8 +84,7 @@ def test_export_calls_native_adapter_and_neutral_writer(
     fake_module.YOLO = FakeYOLO
     monkeypatch.setitem(sys.modules, "ultralytics", fake_module)
     args = export_cli.parse_args(
-        ["--run-dir", str(tmp_path), "--dataset-dir", str(tmp_path),
-         "--output-dir", str(tmp_path)]
+        ["--run-dir", str(tmp_path), "--dataset-dir", str(tmp_path)]
     )
     assert export_cli.export(args) == [tmp_path / "artifact.json"]
     assert rows[0]["category_id"] == 7

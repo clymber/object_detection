@@ -5,6 +5,7 @@ Test RF-DETR run configuration, recovery, history, and prediction conversion.
 from __future__ import annotations
 
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -14,7 +15,29 @@ import torch
 from PIL import Image
 
 from detection_common.utils.json_io import read_json, write_json
+from detection_evaluation import (
+    file_sha256,
+    finalize_training_attempt,
+    read_bundle,
+    read_training_record,
+    start_training_attempt,
+    write_prediction_artifact,
+)
 from rfdetr_pipeline import rfdetr
+
+
+def _identity() -> dict[str, dict[str, object]]:
+    """
+    Return a compact valid dataset identity pair for run protocol fixtures.
+    """
+    digest = "0" * 64
+    return {
+        "canonical": {
+            "source_fingerprint": digest,
+            "canonical_source": {"category_mapping": [{"id": 1, "name": "basketball"}]},
+        },
+        "loader": {"source_fingerprint": digest, "loader_fingerprint": "1" * 64},
+    }
 
 
 def _run_config(path: Path, settings: rfdetr.TrainingSettings) -> None:
@@ -27,11 +50,11 @@ def _run_config(path: Path, settings: rfdetr.TrainingSettings) -> None:
     write_json(path / rfdetr.RUN_CONFIG, {"settings": values})
 
 
-def test_settings_support_smoke_and_saved_evaluation_overrides(
+def test_settings_support_smoke_and_removed_evaluate_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
-    Bound a new smoke run and inherit an existing run before explicit overrides.
+    Bound a new smoke run and direct removed evaluate requests to recovery.
     """
     monkeypatch.delenv("RFDETR_EPOCHS", raising=False)
     smoke = rfdetr.settings_from_env(overrides={"smoke_run": True})
@@ -45,58 +68,22 @@ def test_settings_support_smoke_and_saved_evaluation_overrides(
     assert smoke.early_stopping_use_ema is True
     assert smoke.mode is rfdetr.RunMode.FRESH
 
-    run_dir = tmp_path / "saved"
-    run_dir.mkdir()
-    saved = rfdetr.TrainingSettings(epochs=17, batch_size=2)
-    _run_config(run_dir, saved)
-    evaluation = rfdetr.settings_from_env(
-        overrides={"mode": "evaluate", "run_dir": str(run_dir)},
-    )
-    assert evaluation.epochs == 17
-    assert evaluation.batch_size == 2
-    assert evaluation.mode is rfdetr.RunMode.EVALUATE
-    assert evaluation.run_dir == str(run_dir.resolve())
+    with pytest.raises(ValueError, match="postprocess_cli"):
+        rfdetr.settings_from_env(
+            overrides={"mode": "evaluate", "run_dir": str(tmp_path)},
+        )
 
 
-def test_legacy_run_retains_disabled_early_stopping(tmp_path: Path) -> None:
+def test_resume_of_a_preprotocol_run_requires_a_fresh_experiment(tmp_path: Path) -> None:
     """
-    Keep runs created before the new policy evaluable without changing identity.
+    Reject historical runs rather than attempting an unsafe protocol conversion.
     """
     run_dir = tmp_path / "legacy"
     run_dir.mkdir()
-    legacy = rfdetr.TrainingSettings(
-        early_stopping=False,
-        early_stopping_use_ema=False,
-    )
-    values = vars(legacy).copy()
-    values.pop("mode")
-    values.pop("run_dir")
-    for name in rfdetr.LEGACY_EARLY_STOPPING:
-        values.pop(name)
-    write_json(
-        run_dir / rfdetr.RUN_CONFIG,
-        {
-            "settings": values,
-            "dataset_fingerprint": "fixture",
-            "model": "rfdetr_small",
-            "rfdetr_version": rfdetr.RFDETR_VERSION,
-        },
-    )
-    (run_dir / rfdetr.BEST_CHECKPOINT).touch()
-
-    settings = rfdetr.settings_from_env(
-        overrides={"mode": "evaluate", "run_dir": str(run_dir)},
-    )
-    assert settings.early_stopping is False
-    assert settings.early_stopping_use_ema is False
-    assert (
-        rfdetr.prepare_run(
-            settings,
-            {"fingerprint": "fixture", "source_dir": "fixture"},
-            {},
+    with pytest.raises(ValueError, match="fresh experiment"):
+        rfdetr.settings_from_env(
+            overrides={"mode": "resume", "run_dir": str(run_dir)},
         )
-        == run_dir
-    )
 
 
 def test_fresh_run_uses_configured_output_root(
@@ -107,18 +94,41 @@ def test_fresh_run_uses_configured_output_root(
     """
     output_root = tmp_path / "mounted-output"
     monkeypatch.setattr(rfdetr, "OUTPUT_ROOT", output_root)
-    settings = rfdetr.TrainingSettings(smoke_run=True)
+    monkeypatch.setattr(rfdetr, "_dataset_identity", lambda _manifest: _identity())
+    settings = rfdetr.TrainingSettings(epochs=2, smoke_run=True)
     manifest = {"fingerprint": "fixture", "source_dir": "fixture"}
     run_dir = rfdetr.prepare_run(settings, manifest, {})
     assert run_dir.parent == output_root / "runs" / "basketball"
-    (run_dir / rfdetr.BEST_CHECKPOINT).touch()
-    evaluation = rfdetr.settings_from_env(
-        overrides={
-            "mode": "evaluate",
-            "run_dir": str(run_dir.relative_to(output_root)),
-        }
-    )
-    assert evaluation.run_dir == str(run_dir)
+    protocol = read_json(run_dir / "run_protocol.json")
+    assert protocol["smoke_run"] is True
+
+
+def test_prepare_run_rejects_changed_dataset_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Refuse a resume when the current canonical or loader identity has changed.
+    """
+    monkeypatch.setattr(rfdetr, "OUTPUT_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(rfdetr, "_dataset_identity", lambda _manifest: _identity())
+    settings = rfdetr.TrainingSettings(epochs=2, smoke_run=True)
+    manifest = {"fingerprint": "fixture", "source_dir": "fixture"}
+    run_dir = rfdetr.prepare_run(settings, manifest, {})
+    changed = _identity()
+    changed["loader"]["loader_fingerprint"] = "2" * 64
+    monkeypatch.setattr(rfdetr, "_dataset_identity", lambda _manifest: changed)
+
+    with pytest.raises(ValueError, match="Dataset identity mismatch"):
+        rfdetr.prepare_run(
+            rfdetr.TrainingSettings(
+                epochs=2,
+                smoke_run=True,
+                mode="resume",
+                run_dir=str(run_dir),
+            ),
+            manifest,
+            {},
+        )
 
 
 @pytest.mark.parametrize(
@@ -509,3 +519,221 @@ def test_predictions_skip_background_and_convert_xyxy_to_coco() -> None:
             "score": 0.8,
         }
     ]
+
+
+def _completed_protocol_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, rfdetr.TrainingSettings]:
+    """
+    Create a completed smoke run with mockable model-owned postprocessing inputs.
+    """
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    settings = rfdetr.TrainingSettings(epochs=2, smoke_run=True, benchmark=False)
+    monkeypatch.setattr(rfdetr, "_dataset_identity", lambda _manifest: _identity())
+    write_json(run_dir / "dataset_manifest.json", {"source_dir": "source"})
+    rfdetr.capture_dataset_identity(run_dir / "dataset_identity.json", _identity())
+    rfdetr._verify_protocol(
+        run_dir,
+        _identity(),
+        settings,
+        datetime(2026, 9, 19, tzinfo=UTC),
+    )
+    attempt = start_training_attempt(
+        run_dir,
+        resumed=False,
+        training_hardware={"device": "cuda:0"},
+        monotonic_clock=lambda: 1.0,
+    )
+    finalize_training_attempt(
+        run_dir,
+        attempt,
+        outcome="completed",
+        completed_epochs=2,
+        monotonic_clock=lambda: 3.0,
+    )
+    pd.DataFrame([{"epoch": 1, "train/loss": 1.0}]).to_csv(
+        run_dir / "metrics.csv", index=False
+    )
+    (run_dir / rfdetr.BEST_CHECKPOINT).write_bytes(b"selected weights")
+    return run_dir, settings
+
+
+def test_fit_closes_synchronized_timing_before_postprocessing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Time exactly model.train and finalize its record before callers can evaluate.
+    """
+    run_dir, settings = _completed_protocol_run(tmp_path, monkeypatch)
+    (run_dir / "training.json").unlink()
+    calls: list[str] = []
+    clock = iter((10.0, 16.0))
+
+    class FakeTrainingModel:
+        """
+        Provide the small native RF-DETR surface used by the fitting wrapper.
+        """
+
+        model_config = SimpleNamespace(model_dump=lambda **_kwargs: {})
+
+        def get_train_config(self, **_kwargs: object) -> SimpleNamespace:
+            """
+            Return a serializable resolved training configuration.
+            """
+            return SimpleNamespace(model_dump=lambda **_kwargs: {})
+
+        def train(self, **_kwargs: object) -> None:
+            """
+            Write native outputs while the shared attempt is still running.
+            """
+            calls.append("train")
+            assert read_training_record(run_dir)["summary"]["status"] == "incomplete"
+            pd.DataFrame([{"epoch": 0, "train/loss": 1.0}]).to_csv(
+                run_dir / "metrics.csv", index=False
+            )
+            (run_dir / rfdetr.BEST_CHECKPOINT).write_bytes(b"selected weights")
+
+    history = rfdetr.fit_model(
+        FakeTrainingModel(),
+        settings,
+        {
+            "dataset_dir": str(tmp_path),
+            "category_mapping": {"class_names": ["basketball"]},
+        },
+        run_dir,
+        synchronize=lambda: calls.append("sync"),
+        monotonic_clock=lambda: next(clock),
+    )
+
+    assert calls == ["sync", "train", "sync"]
+    assert history["epoch"].tolist() == [1]
+    assert read_training_record(run_dir)["summary"]["total_seconds"] == 6.0
+
+
+def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Recover a successful fit after postprocessing fails without another attempt.
+    """
+    run_dir, _settings = _completed_protocol_run(tmp_path, monkeypatch)
+    checkpoint = run_dir / rfdetr.BEST_CHECKPOINT
+
+    class FakeFigure:
+        """
+        Create the expected plot paths without importing a GUI backend.
+        """
+
+        def savefig(self, path: Path, **_kwargs: object) -> None:
+            """
+            Materialize a tiny plot placeholder.
+            """
+            Path(path).touch()
+
+    monkeypatch.setattr(rfdetr, "plot_history", lambda _history: (FakeFigure(), FakeFigure()))
+    monkeypatch.setattr(
+        rfdetr,
+        "ensure_onnx_model_in_subprocess",
+        lambda _project, path: path / rfdetr.BEST_ONNX_MODEL,
+    )
+    monkeypatch.setattr(
+        rfdetr,
+        "load_best_model",
+        lambda _path: (
+            SimpleNamespace(model_config=SimpleNamespace(resolution=640)),
+            {"parameters": 1, "checkpoint_sha256": file_sha256(checkpoint)},
+        ),
+    )
+    monkeypatch.setattr(
+        rfdetr,
+        "fit_model",
+        lambda *_args, **_kwargs: pytest.fail("postprocessing must not fit"),
+    )
+
+    with pytest.raises(RuntimeError, match="postprocess failed"):
+        monkeypatch.setattr(
+            rfdetr,
+            "evaluate_split",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("postprocess failed")
+            ),
+        )
+        rfdetr.postprocess_run(run_dir, bundle_root=tmp_path / "bundle")
+    assert len(read_training_record(run_dir)["attempts"]) == 1
+
+    def fake_evaluate(
+        _model: object,
+        _manifest: dict,
+        _run_dir: Path,
+        split: str,
+        _best_metadata: dict,
+        **_kwargs: object,
+    ) -> tuple[dict, Path]:
+        """
+        Write a minimal shared prediction artifact for each recovered split.
+        """
+        annotation = tmp_path / f"{split}.json"
+        annotation.write_text(
+            '{"images":[{"id":1,"file_name":"image.jpg"}],'
+            '"annotations":[],"categories":[{"id":1,"name":"basketball"}]}',
+            encoding="utf-8",
+        )
+        artifact = write_prediction_artifact(
+            run_dir / f"{split}_predictions.json",
+            annotation,
+            [],
+            metadata={
+                "model": rfdetr.MODEL_NAME,
+                "split": split,
+                "run_dir": str(run_dir),
+                "checkpoint": str(checkpoint),
+                "smoke_run": True,
+                "resolution": 640,
+                "checkpoint_sha256": file_sha256(checkpoint),
+                "postprocessing": {
+                    "score_floor": 0.001,
+                    "precision": "float32",
+                },
+            },
+        )
+        return {}, artifact
+
+    monkeypatch.setattr(rfdetr, "evaluate_split", fake_evaluate)
+    first = rfdetr.postprocess_run(run_dir, bundle_root=tmp_path / "bundle")
+    second = rfdetr.postprocess_run(run_dir, bundle_root=tmp_path / "bundle")
+
+    assert len(read_training_record(run_dir)["attempts"]) == 1
+    assert first["bundle"]["provenance"]["smoke_run"] is True
+    assert read_bundle(tmp_path / "bundle", allow_smoke=True)["manifest"] == second["bundle"]
+
+
+def test_multiclass_predictions_keep_second_class_and_skip_background() -> None:
+    """Label one is a real class; only label num_classes is the no-object slot."""
+    detections = SimpleNamespace(
+        xyxy=[[0.0, 0.0, 2.0, 2.0]] * 3,
+        confidence=[0.9, 0.8, 0.1],
+        class_id=[0, 1, 2],
+    )
+    model = SimpleNamespace(predict=lambda *args, **kwargs: detections)
+    rows = rfdetr.predictions_for_image(model, None, 42, [7, 19])
+    assert [row["category_id"] for row in rows] == [7, 19]
+    assert all(row["image_id"] == 42 for row in rows)
+
+
+def test_multiclass_model_construction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build a two-output head without downloading pretrained weights."""
+    module = ModuleType("rfdetr")
+    module.RFDETRSmall = lambda **kwargs: kwargs
+    monkeypatch.setitem(sys.modules, "rfdetr", module)
+    model = rfdetr.build_model(
+        rfdetr.TrainingSettings(), class_names=["football", "basketball"]
+    )
+    assert model["num_classes"] == 2
+    kwargs = rfdetr.train_kwargs(
+        rfdetr.TrainingSettings(),
+        Path("dataset"),
+        Path("run"),
+        class_names=["football", "basketball"],
+    )
+    assert kwargs["class_names"] == ["football", "basketball"]

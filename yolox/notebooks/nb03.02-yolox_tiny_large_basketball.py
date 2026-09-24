@@ -37,15 +37,15 @@ import os
 import torch
 from detection_common import (
     Device,
+    allocate_run_directory,
     aligned_print,
     configure_stdio_relative_path,
     ensure_dir,
-    increment_path,
 )
 from detection_common.utils.image import display as display_img
 from IPython.display import Markdown, display
 
-from yolox_pipeline import yolox as yolox_platform
+from yolox_pipeline import producer, yolox as yolox_platform
 from yolox_pipeline.config import (
     DATA_ROOT,
     OUTPUT_ROOT,
@@ -68,7 +68,7 @@ if DEVICE.type == "mps":
 # `YOLOX_TINY_VERBOSE=1` for detailed dataset/eval messages and per-epoch logs.
 #
 # A fresh run is the default. To resume one in place, set `RESUME_RUN_DIR` below to its
-# run directory. Relative paths are resolved from the project root. The recoverable
+# run directory. Relative paths are resolved from `OUTPUT_ROOT`. The recoverable
 # `weights/last_ckpt.pth` checkpoint is restored before any further training.
 
 # %%
@@ -80,7 +80,7 @@ os.environ["YOLOX_TINY_PROGRESS"] = "1"
 # os.environ["YOLOX_TINY_SMOKE"] = "1"
 
 RESUME_RUN_DIR: str | None = None
-# RESUME_RUN_DIR = "outputs/runs/basketball/yolox_tiny_basketball_large_dataset"
+# RESUME_RUN_DIR = "runs/basketball/yolox_tiny_20260920T183040"
 
 if RESUME_RUN_DIR is None:
     os.environ.pop("YOLOX_TINY_RESUME_RUN", None)
@@ -94,21 +94,34 @@ settings = yolox_platform.training_settings_from_env(default_epochs=100)
 PRETRAINED_PATH = (
     ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "yolox") / "yolox_tiny.pth"
 )
-DATASET_DIR = DATA_ROOT / "composed" / "coco_basketball"
+if settings.run_mode is yolox_platform.RunMode.RESUME:
+    producer_settings = producer.settings_from_run(settings.resolved_resume_run_dir)
+    settings = producer_settings.training
+else:
+    producer_settings = producer.ProducerSettings(settings)
+dataset_paths = producer.resolve_dataset_paths(
+    DATA_ROOT / "composed" / "coco_basketball",
+    DATA_ROOT / "composed" / "yolo_basketball",
+    smoke_run=settings.smoke_run,
+)
+DATASET_DIR = dataset_paths.source_dir
+model_variant = producer.variant("tiny")
 
-project_space = ensure_dir(OUTPUT_ROOT / "runs" / "basketball")
-project_name_base = "yolox_tiny_basketball_large_dataset"
 run_mode = settings.run_mode
 
 if run_mode is yolox_platform.RunMode.FRESH:
-    run_dir = ensure_dir(increment_path(project_space / project_name_base))
+    allocation = allocate_run_directory(OUTPUT_ROOT, "basketball", "yolox_tiny")
+    run_dir = allocation.path
+    original_utc = allocation.created_at
 else:
     run_dir = settings.resolved_resume_run_dir
+    original_utc = None
     resume_checkpoint = run_dir / "weights" / "last_ckpt.pth"
     if not run_dir.is_dir():
         raise NotADirectoryError(f"Resume run directory not found: {run_dir}")
     if not resume_checkpoint.is_file():
         raise FileNotFoundError(f"Resume checkpoint not found: {resume_checkpoint}")
+project_space = run_dir.parent
 project_name = run_dir.name
 
 aligned_print(
@@ -147,7 +160,7 @@ display(dataset_summary)
 
 # %%
 PRETRAINED_PATH = yolox_platform.ensure_pretrained_checkpoint(PRETRAINED_PATH)
-exp = yolox_platform.BasketballTinyExp(
+exp = yolox_platform.YOLOXTinyExp(
     dataset_dir=DATASET_DIR,
     output_dir=project_space,
     max_epoch=settings.epochs,
@@ -176,15 +189,17 @@ aligned_print(
 # validation `mAP50-95`.
 
 # %% jupyter={"outputs_hidden": true}
-history = yolox_platform.fit_yolox_tiny(
+history = producer.fit_run(
+    run_dir,
+    dataset_paths,
+    producer_settings,
+    model_variant,
     exp,
     PRETRAINED_PATH,
-    run_dir,
-    DATASET_DIR,
-    settings,
     DEVICE,
     WORKSPACE_ROOT,
-    resume=run_mode is yolox_platform.RunMode.RESUME,
+    original_utc=original_utc,
+    resumed=run_mode is yolox_platform.RunMode.RESUME,
 )
 
 # %% [markdown]
@@ -212,7 +227,7 @@ display_img(fig, close=True)
 
 # %%
 best_model_path = run_dir / "weights" / "best_ckpt.pth"
-eval_exp = yolox_platform.BasketballTinyExp(
+eval_exp = yolox_platform.YOLOXTinyExp(
     dataset_dir=DATASET_DIR,
     output_dir=project_space,
     max_epoch=settings.epochs,
@@ -237,6 +252,22 @@ print(f"Exported ONNX model: {onnx_model_path}")
 
 # %%
 best_model = yolox_platform.load_trained_model(eval_exp, best_model_path, DEVICE)
+
+# %% [markdown]
+# ## Protocol Bundle
+#
+# Reload the selected checkpoint through the same YOLOX adapter and atomically
+# publish protocol-bearing validation and test prediction artifacts.
+
+# %%
+bundle_manifest = producer.recover_and_publish(
+    run_dir,
+    dataset_paths,
+    producer_settings,
+    model_variant,
+    DEVICE,
+)
+print(bundle_manifest["generation"])
 
 validation_metrics = yolox_platform.evaluate_model(
     best_model,

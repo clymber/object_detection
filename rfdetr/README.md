@@ -35,8 +35,17 @@ bash scripts/run_notebook_tmux.sh check --session rfdetr-small-smoke
 ```
 
 For a full run, set `RFDETR_SMOKE=0` and use a new session name. To continue
-or reevaluate an existing run, set `RFDETR_MODE=resume` or `evaluate` and
-set `RFDETR_RUN_DIR` to the exact recorded run directory.
+an interrupted run, set `RFDETR_MODE=resume` and `RFDETR_RUN_DIR` to the exact
+recorded run directory. After a completed new-protocol run, regenerate outputs
+and safely republish its bundle without training:
+
+```bash
+conda run -p .conda/envs/object-detection-rfdetr python -m \
+  rfdetr_pipeline.postprocess_cli --run-dir <run>
+```
+
+Runs created before `run_protocol.json` cannot be recovered or converted; start
+a fresh experiment for shared comparison.
 
 For YOLO comparison, run `export-ultralytics-baseline` through
 `.conda/envs/object-detection-ultralytics` and

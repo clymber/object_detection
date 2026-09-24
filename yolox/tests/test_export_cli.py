@@ -16,12 +16,10 @@ def test_parse_export_args(tmp_path: Path) -> None:
     """
     Keep Tiny/Nano choice explicit without importing a checkpoint.
     """
-    args = export_cli.parse_args(
-        ["--model", "nano", "--dataset-dir", str(tmp_path),
-         "--output-dir", str(tmp_path / "artifacts")]
-    )
+    args = export_cli.parse_args(["--model", "nano", "--dataset-dir", str(tmp_path)])
     assert args.model == "nano"
     assert args.device == "cpu"
+    assert args.output_dir is None
 
 
 def test_export_calls_native_adapter_and_neutral_writer(
@@ -34,7 +32,8 @@ def test_export_calls_native_adapter_and_neutral_writer(
         run_dir=tmp_path / "run",
         dataset_dir=tmp_path / "dataset",
         checkpoint=tmp_path / "run" / "weights" / "best_ckpt.pth",
-        category_id=7,
+        category_ids=(7,),
+        class_names=("basketball",),
         resolution=640,
         device="cpu",
         training_settings={"classes": ["basketball"], "epochs": 5},
@@ -54,7 +53,7 @@ def test_export_calls_native_adapter_and_neutral_writer(
             assert kwargs["dataset_dir"] == context.dataset_dir
             self.nmsthre = 0.65
 
-    monkeypatch.setattr(yolox, "BasketballTinyExp", FakeExperiment)
+    monkeypatch.setattr(yolox, "YOLOXTinyExp", FakeExperiment)
     monkeypatch.setattr(
         yolox, "load_trained_model", lambda experiment, checkpoint, device:
         torch.nn.Linear(1, 1),
@@ -84,8 +83,7 @@ def test_export_calls_native_adapter_and_neutral_writer(
     monkeypatch.setattr(export_cli, "export_baseline", fake_writer)
     args = export_cli.parse_args(
         ["--model", "tiny", "--run-dir", str(context.run_dir),
-         "--dataset-dir", str(context.dataset_dir),
-         "--output-dir", str(tmp_path / "artifacts")]
+            "--dataset-dir", str(context.dataset_dir)]
     )
     assert export_cli.export(args) == [tmp_path / "artifact.json"]
     assert native_calls == [((30, 20, 10), [7], 0.001)]

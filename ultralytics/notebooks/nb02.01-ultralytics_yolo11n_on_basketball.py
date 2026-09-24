@@ -38,6 +38,7 @@ configure_stdio_relative_path(WORKSPACE_ROOT)
 # %%
 from detection_common import (
     Device,
+    allocate_run_directory,
     aligned_print,
     ensure_dir,
 )
@@ -51,33 +52,38 @@ from ultralytics import YOLO  # noqa: E402
 # %%
 PRETRAINED_DIR = ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "ultralytics")
 DATASET_DIR = ensure_dir(DATA_ROOT)
-DATA_YAML = DATASET_DIR / "composed" / "yolo_basketball_105_22_23" / "data.yaml"
+DATA_YAML = DATASET_DIR / "composed" / "yolo_basketball_small" / "data.yaml"
 
 # %% [markdown]
 # ## Fine-tune Ultrlytics YOLO11 on a custom dataset.
 
 # %%
-project_space = OUTPUT_ROOT / "runs" / "basketball"
-project_name_base = "yolo11n_basketball"
+allocation = allocate_run_directory(OUTPUT_ROOT, "basketball_small", "yolo11n")
+run_dir = allocation.path
 basketball_model = YOLO(PRETRAINED_DIR / "yolo11n.pt")
+basketball_model.add_callback(
+    "on_pretrain_routine_start",
+    ultralitics_platform.reserved_run_callback(run_dir),
+)
 
 results = basketball_model.train(
     data=DATA_YAML,
     epochs=100,
     imgsz=640,
     device=Device.auto_choose(),
-    project=str(project_space),
-    name=project_name_base,
+    save_dir=str(run_dir),
+    project=str(run_dir.parent),
+    name=run_dir.name,
+    exist_ok=True,
 )
 results = cast(ultralitics_platform.TrainingResult, results)
-run_dir = Path(results.save_dir)
+ultralitics_platform.assert_run_directory(results.save_dir, run_dir)
 print(f"Training run directory: {run_dir}")
 
 
 # %% [markdown]
-# Downstream cells use the actual Ultralytics save directory reported by
-# `results.save_dir`. This keeps plots, metrics, and checkpoint evaluation aligned if
-# Ultralytics increments the run name.
+# Downstream cells use the directory reserved before training. The assertions above
+# ensure Ultralytics has not changed that path.
 
 # %% [markdown]
 # ## Plot the training history
@@ -211,7 +217,7 @@ validation_metrics = eval_model.val(
     device=Device.auto_choose(),
     split="val",
     plots=True,
-    project=str(project_space),
+    project=str(run_dir / "evaluation"),
     name=f"{run_dir.name}_val",
 )
 test_metrics = eval_model.val(
@@ -220,7 +226,7 @@ test_metrics = eval_model.val(
     device=Device.auto_choose(),
     split="test",
     plots=True,
-    project=str(project_space),
+    project=str(run_dir / "evaluation"),
     name=f"{run_dir.name}_test",
 )
 

@@ -16,10 +16,10 @@ command -v tmux >/dev/null || { printf 'tmux is required.\n' >&2; exit 1; }
 
 shopt -s nullglob
 notebooks=(
-    {dataset,evaluation,rfdetr,ultralytics,yolox}/notebooks/nb0[1-4]*.ipynb
+    {dataset,evaluation,rfdetr,ultralytics,yolox}/notebooks/nb0[1-5]*.ipynb
 )
 if [[ ${#notebooks[@]} -eq 0 ]]; then
-    printf 'No nb01* through nb04*.ipynb notebooks found.\n' >&2
+    printf 'No nb01* through nb05*.ipynb notebooks found.\n' >&2
     printf 'Generate the notebooks first with make sync-notebooks.\n' >&2
     exit 1
 fi

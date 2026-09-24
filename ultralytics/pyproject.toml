@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "detection-common==0.1.0",
+    "dataset-builder==0.1.0",
     "detection-evaluation==0.1.0",
     "pyyaml",
     "ultralytics; sys_platform == 'darwin'",

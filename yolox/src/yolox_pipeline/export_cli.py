@@ -16,13 +16,13 @@ CHECKPOINT = Path("weights/best_ckpt.pth")
 MODEL_RUNS = {
     "tiny": (
         "yolox_tiny",
-        "yolox_tiny_basketball_large_dataset*",
-        "BasketballTinyExp",
+        "yolox_tiny_*",
+        "YOLOXTinyExp",
     ),
     "nano": (
         "yolox_nano",
-        "yolox_nano_basketball_large_dataset*",
-        "BasketballNanoExp",
+        "yolox_nano_*",
+        "YOLOXNanoExp",
     ),
 }
 
@@ -38,7 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--runs-dir", type=Path, default=OUTPUT_ROOT / "runs" / "basketball"
     )
     parser.add_argument("--dataset-dir", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--split", choices=("val", "test", "both"), default="both")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--resolution", type=int, default=640)
@@ -52,10 +52,11 @@ def export(args: argparse.Namespace) -> list[Path]:
     """
     model_name, run_pattern, experiment_name = MODEL_RUNS[args.model]
     run_dir = args.run_dir or latest_run_dir(args.runs_dir, run_pattern, CHECKPOINT)
+    output_dir = args.output_dir or run_dir / "evaluation"
     context = prepare_baseline(
         run_dir,
         args.dataset_dir,
-        args.output_dir,
+        output_dir,
         checkpoint=CHECKPOINT,
         model_name=model_name,
         resolution=args.resolution,
@@ -70,14 +71,15 @@ def export(args: argparse.Namespace) -> list[Path]:
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable; select a GPU or use --device cpu")
     settings = context.training_settings
-    if settings.get("classes") != ["basketball"]:
-        raise ValueError("YOLOX run must use one basketball class")
+    if settings.get("classes") != list(context.class_names):
+        raise ValueError("YOLOX run classes differ from the dataset")
     experiment = getattr(yolox, experiment_name)(
         dataset_dir=context.dataset_dir,
         output_dir=context.run_dir.parent,
         max_epoch=int(settings["epochs"]),
         image_size=context.resolution,
         project_name=context.run_dir.name,
+        class_names=context.class_names,
     )
     experiment.test_conf = 0.001
     experiment.nmsthre = float(settings.get("nms_threshold", experiment.nmsthre))
@@ -93,7 +95,7 @@ def export(args: argparse.Namespace) -> list[Path]:
             experiment,
             image,
             device=device,
-            category_ids=[context.category_id],
+            category_ids=list(context.category_ids),
             score_floor=0.001,
         )
 

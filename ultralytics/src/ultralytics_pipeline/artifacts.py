@@ -17,7 +17,8 @@ def predict_image(
     model: Any,
     image: Image.Image,
     *,
-    category_id: int,
+    category_id: int | None = None,
+    category_ids: list[int] | None = None,
     resolution: int,
     device: str,
     score_floor: float = 0.001,
@@ -28,6 +29,10 @@ def predict_image(
     """
     Convert one Ultralytics result's xyxy tensors to COCO xywh rows.
     """
+    if category_ids is None:
+        category_ids = [] if category_id is None else [category_id]
+    if not category_ids:
+        raise ValueError("Category IDs are required")
     result = next(
         iter(
             model.predict(
@@ -60,12 +65,12 @@ def predict_image(
         boxes.cls.cpu().tolist(),
         strict=True,
     ):
-        if int(label) != 0:
+        if label != int(label) or not 0 <= int(label) < len(category_ids):
             raise ValueError("Unexpected Ultralytics class label")
         x1, y1, x2, y2 = box
         rows.append(
             {
-                "category_id": category_id,
+                "category_id": category_ids[int(label)],
                 "bbox": [x1, y1, x2 - x1, y2 - y1],
                 "score": score,
             }
@@ -79,7 +84,8 @@ def export_model_predictions(
     annotation_path: Path | str,
     image_dir: Path | str,
     *,
-    category_id: int,
+    category_id: int | None = None,
+    category_ids: list[int] | None = None,
     resolution: int,
     device: str,
     metadata: dict[str, Any],
@@ -97,6 +103,7 @@ def export_model_predictions(
             model,
             image,
             category_id=category_id,
+            category_ids=category_ids,
             resolution=resolution,
             device=device,
             score_floor=postprocessing["score_floor"],

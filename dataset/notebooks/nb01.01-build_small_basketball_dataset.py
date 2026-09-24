@@ -21,8 +21,9 @@ Builds separate datasets for object detection tasks in COCO and YOLO formats.
 # %autoreload 2
 # %aimport -csv -textwrap -functools -IPython -ultralytics -pandas -datumaro -random
 
-from dataset_builder.config import DATA_ROOT, WORKSPACE_ROOT
 from detection_common import configure_stdio_relative_path
+
+from dataset_builder.config import DATA_ROOT, WORKSPACE_ROOT
 
 # Display project paths relatively for consistent output across environments.
 configure_stdio_relative_path(WORKSPACE_ROOT)
@@ -32,6 +33,9 @@ import random
 
 import datumaro as dm
 import pandas as pd
+from detection_common.utils.filepath import dir_tree, ensure_dir
+from IPython.display import display
+
 from dataset_builder import (
     prefer_hardlinked_datumaro_media,
     summarize_coco_dataset,
@@ -41,8 +45,6 @@ from dataset_builder import roboflow as roboflow_platform
 from dataset_builder.datumaro import ExportFormat as DatumaroExpFmt
 from dataset_builder.datumaro import ImportFormat as DatumaroImpFmt
 from dataset_builder.roboflow import RoboflowFormat
-from detection_common.utils.filepath import dir_tree, ensure_dir
-from IPython.display import display
 
 # %% [markdown]
 # ## 1. Object detection targets
@@ -158,8 +160,8 @@ print(composed_dataset)
 # Export the sampled dataset into both COCO and YOLO formats, using hardlinks for media
 # files when possible to save disk space.
 # %%
-coco_dataset_dir = DATASET_ROOT / "composed" / "coco_basketball_105_22_23"
-yolo_dataset_dir = DATASET_ROOT / "composed" / "yolo_basketball_105_22_23"
+coco_dataset_dir = DATASET_ROOT / "composed" / "coco_basketball_small"
+yolo_dataset_dir = DATASET_ROOT / "composed" / "yolo_basketball_small"
 with prefer_hardlinked_datumaro_media():
     if not coco_dataset_dir.exists():
         ensure_dir(coco_dataset_dir)

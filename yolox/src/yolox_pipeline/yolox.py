@@ -124,7 +124,7 @@ class TrainingSettings:
     @property
     def resolved_resume_run_dir(self) -> Path:
         """
-        Return the resume directory resolved from the project root.
+        Return the resume directory resolved from the output root.
         """
         if self.resume_run_dir is None:
             raise ValueError("A fresh run does not have a resume directory.")
@@ -157,9 +157,9 @@ SPLITS = {
 }
 
 
-class BasketballTinyExp(YOLOXExp):
+class YOLOXTinyExp(YOLOXExp):
     """
-    YOLOX-Tiny experiment configuration for the basketball COCO dataset.
+    YOLOX-Tiny experiment configuration for a COCO-format dataset.
     """
 
     def __init__(
@@ -174,7 +174,7 @@ class BasketballTinyExp(YOLOXExp):
         workers: int = 0,
     ) -> None:
         """
-        Configure YOLOX-Tiny for one-class basketball detection.
+        Configure YOLOX-Tiny for the configured detection classes.
         """
         super().__init__()
         self.depth = 0.33
@@ -217,9 +217,9 @@ class BasketballTinyExp(YOLOXExp):
         return self.input_size
 
 
-class BasketballNanoExp(BasketballTinyExp):
+class YOLOXNanoExp(YOLOXTinyExp):
     """
-    YOLOX-Nano experiment configuration for the basketball COCO dataset.
+    YOLOX-Nano experiment configuration for a COCO-format dataset.
     """
 
     def __init__(
@@ -234,7 +234,7 @@ class BasketballNanoExp(BasketballTinyExp):
         workers: int = 0,
     ) -> None:
         """
-        Configure YOLOX-Nano for one-class basketball detection.
+        Configure YOLOX-Nano for the configured detection classes.
         """
         super().__init__(
             dataset_dir=dataset_dir,
@@ -323,12 +323,9 @@ def training_settings_from_env(
     """
     smoke_run = os.environ.get(f"{env_prefix}_SMOKE", "0") == "1"
     return TrainingSettings(
-        epochs=env_int(f"{env_prefix}_EPOCHS", 1 if smoke_run else default_epochs),
+        epochs=env_int(f"{env_prefix}_EPOCHS", 2 if smoke_run else default_epochs),
         batch_size=env_int(f"{env_prefix}_BATCH_SIZE", default_batch_size),
-        train_batch_limit=env_optional_int(
-            f"{env_prefix}_TRAIN_BATCH_LIMIT",
-            2 if smoke_run else None,
-        ),
+        train_batch_limit=env_optional_int(f"{env_prefix}_TRAIN_BATCH_LIMIT", None),
         image_size=env_int(f"{env_prefix}_IMAGE_SIZE", default_image_size),
         seed=env_int(f"{env_prefix}_SEED", default_seed),
         smoke_run=smoke_run,
@@ -558,7 +555,7 @@ def set_reproducibility(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def discard_cached_exp_attribute(exp: BasketballTinyExp, attr: str) -> None:
+def discard_cached_exp_attribute(exp: YOLOXTinyExp, attr: str) -> None:
     """
     Remove a cached YOLOX experiment attribute when it exists.
     """
@@ -599,7 +596,7 @@ def optional_stdout_suppression(
 
 
 def build_train_loader(
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     batch_size: int,
     cache_img: str | None = None,
     verbose: bool = False,
@@ -658,7 +655,7 @@ def build_train_loader(
 
 
 def build_eval_dataset(
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     split: str,
     verbose: bool = False,
 ) -> COCODataset:
@@ -677,7 +674,7 @@ def build_eval_dataset(
 
 
 def build_eval_loader(
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     split: str,
     batch_size: int,
     verbose: bool = False,
@@ -696,7 +693,7 @@ def build_eval_loader(
 
 
 def build_loss_loader(
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     split: str,
     batch_size: int,
     verbose: bool = False,
@@ -905,7 +902,7 @@ def run_coco_eval(
 @torch.no_grad()
 def evaluate_model(
     model: torch.nn.Module,
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     split: str,
     batch_size: int,
     device: torch.device,
@@ -977,7 +974,7 @@ def evaluate_model(
 
 
 def make_lr_scheduler(
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     base_lr: float,
     iters_per_epoch: int,
 ) -> LRScheduler:
@@ -1197,7 +1194,7 @@ def restore_checkpoint(
 
 def write_run_metadata(
     path: Path,
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     dataset_dir: Path,
     pretrained_path: Path,
     class_names: tuple[str, ...],
@@ -1251,7 +1248,7 @@ def load_pretrained_weights(
     model.load_state_dict(compatible_state, strict=False)
     if skipped_keys:
         print(
-            "Skipped incompatible pretrained tensors for the one-class head: "
+            "Skipped incompatible pretrained tensors for the dataset-specific head: "
             f"{', '.join(skipped_keys)}"
         )
     return model
@@ -1260,7 +1257,7 @@ def load_pretrained_weights(
 @torch.no_grad()
 def evaluate_losses(
     model: torch.nn.Module,
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     split: str,
     batch_size: int,
     device: torch.device,
@@ -1411,7 +1408,7 @@ def apply_training_phase(
 
 def evaluate_training_epoch(
     eval_model: torch.nn.Module,
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     settings: TrainingSettings,
     device: torch.device,
     epoch: int,
@@ -1479,7 +1476,7 @@ def write_training_history(
 
 
 def fit_yolox(
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     checkpoint_path: Path,
     output_dir: Path,
     dataset_dir: Path,
@@ -1709,7 +1706,7 @@ def fit_yolox(
 
 
 def fit_yolox_tiny(
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     checkpoint_path: Path,
     output_dir: Path,
     dataset_dir: Path,
@@ -1737,7 +1734,7 @@ def fit_yolox_tiny(
 
 
 def fit_yolox_nano(
-    exp: BasketballNanoExp,
+    exp: YOLOXNanoExp,
     checkpoint_path: Path,
     output_dir: Path,
     dataset_dir: Path,
@@ -1783,7 +1780,7 @@ def print_epoch_summary(record: dict[str, float]) -> None:
 
 
 def load_trained_model(
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     checkpoint_path: Path,
     device: torch.device,
 ) -> torch.nn.Module:
@@ -1801,7 +1798,7 @@ def load_trained_model(
 
 
 def export_trained_model_to_onnx(
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     checkpoint_path: Path,
     output_path: Path,
 ) -> Path:
@@ -2026,7 +2023,7 @@ def make_image_grid(
 @torch.no_grad()
 def predict_image(
     model: torch.nn.Module,
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     image: np.ndarray,
     device: torch.device,
     class_ids: Sequence[int],
@@ -2075,7 +2072,7 @@ def predict_image(
 
 def save_sample_visualizations(
     model: torch.nn.Module,
-    exp: BasketballTinyExp,
+    exp: YOLOXTinyExp,
     split: str,
     output_dir: Path,
     device: torch.device,

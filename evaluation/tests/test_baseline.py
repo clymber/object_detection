@@ -100,7 +100,7 @@ def test_prepare_and_export_without_detector_frameworks(
         artifact = read_prediction_artifact(path, annotation_path)
         assert artifact["image_ids"] == [10]
         assert artifact["metadata"]["checkpoint"] == str(context.checkpoint)
-        assert read_json(output_dir / f"yolo11n_{split}_metrics.json")[
+        assert read_json(output_dir / split / f"yolo11n_{split}_metrics.json")[
             "ap50"
         ] == pytest.approx(1)
     with pytest.raises(FileExistsError, match="new output directory"):
@@ -135,3 +135,26 @@ def test_prepare_rejects_truncated_run(
             resolution=640,
             device="cpu",
         )
+
+
+def test_multiclass_baseline_preserves_sorted_category_mapping(baseline_files) -> None:
+    """Accept multiple classes regardless of category list order across splits."""
+    run_dir, dataset_dir, output_dir = baseline_files
+    for split in ("train", "val", "test"):
+        path = dataset_dir / "annotations" / f"instances_{split}.json"
+        document = read_json(path)
+        document["categories"].append({"id": 19, "name": "football"})
+        if split == "train":
+            document["categories"].reverse()
+        write_json(path, document)
+    context = prepare_baseline(
+        run_dir,
+        dataset_dir,
+        output_dir,
+        checkpoint=Path("weights/best.pt"),
+        model_name="yolo11n",
+        resolution=640,
+        device="cpu",
+    )
+    assert context.category_ids == (7, 19)
+    assert context.class_names == ("basketball", "football")

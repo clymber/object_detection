@@ -259,9 +259,9 @@ setup_one() {
         rfdetr)
 			installs+=("$workspace_root/evaluation" "$workspace_root/dataset" "$workspace_root/rfdetr") ;;
         ultralytics)
-			installs+=("$workspace_root/evaluation" "$workspace_root/ultralytics") ;;
+            installs+=("$workspace_root/evaluation" "$workspace_root/dataset" "$workspace_root/ultralytics") ;;
         yolox)
-			installs+=("$workspace_root/evaluation" "$workspace_root/yolox") ;;
+			installs+=("$workspace_root/evaluation" "$workspace_root/dataset" "$workspace_root/yolox") ;;
     esac
 
     local paths=()

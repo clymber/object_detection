@@ -69,3 +69,25 @@ def test_export_converts_xyxy_and_preserves_image_coverage(tmp_path: Path) -> No
     document = read_prediction_artifact(artifact, annotation)
     assert document["image_ids"] == [2]
     assert document["predictions"][0]["bbox"] == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_multiclass_predictions_keep_category_ids() -> None:
+    """Map both zero-based output labels to their noncontiguous COCO IDs."""
+    from ultralytics_pipeline.artifacts import predict_image
+
+    boxes = SimpleNamespace(
+        xyxy=torch.tensor([[1.0, 2.0, 4.0, 6.0], [0.0, 0.0, 2.0, 2.0]]),
+        conf=torch.tensor([0.8, 0.7]),
+        cls=torch.tensor([1.0, 0.0]),
+    )
+    model = SimpleNamespace(
+        predict=lambda *args, **kwargs: [SimpleNamespace(boxes=boxes)]
+    )
+    rows = predict_image(
+        model,
+        Image.new("RGB", (8, 8)),
+        category_ids=[7, 19],
+        resolution=8,
+        device="cpu",
+    )
+    assert [row["category_id"] for row in rows] == [19, 7]

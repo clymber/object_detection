@@ -7,7 +7,6 @@ Detector imports are lazy so data/evaluation helpers work outside its GPU enviro
 from __future__ import annotations
 
 import gc
-import json
 import math
 import os
 import platform
@@ -16,7 +15,9 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from enum import StrEnum
 from importlib.metadata import version
 from pathlib import Path
@@ -27,35 +28,40 @@ from PIL import Image, ImageDraw
 
 from detection_evaluation import (
     benchmark_predict,
+    capture_training_hardware,
+    create_run_protocol,
     evaluate_predictions,
+    finalize_training_attempt,
     file_sha256,
+    publish_bundle,
+    read_run_protocol,
+    read_training_record,
+    start_training_attempt,
     write_prediction_artifact,
 )
+from detection_common import allocate_run_directory
 from detection_common.utils.json_io import read_json, write_json
+from dataset_builder import (
+    canonical_coco_identity,
+    capture_dataset_identity,
+    validate_rfdetr_layout,
+    verify_dataset_identity,
+)
 
-from .config import OUTPUT_ROOT
+from .config import OUTPUT_ROOT, SUBPROJECT_ROOT
 
 RFDETR_VERSION = "1.10.1"
 RUN_CONFIG = "run_config.json"
 BEST_CHECKPOINT = "checkpoint_best_total.pth"
 BEST_ONNX_MODEL = "checkpoint_best_total.onnx"
 RESUME_CHECKPOINT = "last.ckpt"
-LEGACY_EARLY_STOPPING = {
-    "early_stopping": False,
-    "early_stopping_patience": 10,
-    "early_stopping_min_delta": 0.001,
-    "early_stopping_use_ema": False,
-}
-
-
 class RunMode(StrEnum):
     """
-    Identify whether an RF-DETR run is created, resumed, or evaluated.
+    Identify whether an RF-DETR run is created or resumed.
     """
 
     FRESH = "fresh"
     RESUME = "resume"
-    EVALUATE = "evaluate"
 
     @classmethod
     def parse(cls, value: Any) -> RunMode:
@@ -65,6 +71,11 @@ class RunMode(StrEnum):
         try:
             return cls(value)
         except (TypeError, ValueError) as error:
+            if value == "evaluate":
+                raise ValueError(
+                    "RFDETR_MODE=evaluate was removed; use python -m "
+                    "rfdetr_pipeline.postprocess_cli --run-dir <run>"
+                ) from error
             options = ", ".join(option.value for option in cls)
             raise ValueError(f"RFDETR_MODE must be {options}") from error
 
@@ -89,6 +100,8 @@ class TrainingSettings:
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
     early_stopping_use_ema: bool = True
+    device: str = "cuda:0"
+    benchmark: bool = True
     smoke_run: bool = False
     mode: RunMode = RunMode.FRESH
     run_dir: str | None = None
@@ -125,15 +138,20 @@ class TrainingSettings:
             "gradient_checkpointing",
             "early_stopping",
             "early_stopping_use_ema",
+            "benchmark",
             "smoke_run",
         ):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be a boolean")
+        if self.device != "cuda:0":
+            raise ValueError("RF-DETR requires device cuda:0")
         object.__setattr__(self, "mode", RunMode.parse(self.mode))
-        if self.mode is not RunMode.FRESH and not self.run_dir:
-            raise ValueError("RFDETR_RUN_DIR is required for resume/evaluate")
+        if self.smoke_run and self.epochs != 2:
+            raise ValueError("RF-DETR smoke runs require exactly two epochs")
+        if self.mode is RunMode.RESUME and not self.run_dir:
+            raise ValueError("RFDETR_RUN_DIR is required for resume")
         if self.mode is RunMode.FRESH and self.run_dir:
-            raise ValueError("Use resume/evaluate to open an existing RFDETR_RUN_DIR")
+            raise ValueError("Use resume to open an existing RFDETR_RUN_DIR")
 
     @property
     def samples_per_optimizer_step(self) -> int:
@@ -143,9 +161,21 @@ class TrainingSettings:
         return self.batch_size * self.grad_accum_steps
 
 
+def _settings_from_protocol(protocol: Mapping[str, Any], run_dir: Path) -> TrainingSettings:
+    """
+    Reconstruct model settings from immutable provenance for a resumed run.
+    """
+    return TrainingSettings(
+        **dict(protocol["training_settings"]),
+        smoke_run=protocol["smoke_run"],
+        mode=RunMode.RESUME,
+        run_dir=str(run_dir),
+    )
+
+
 def settings_from_env(*, overrides: dict[str, Any] | None = None) -> TrainingSettings:
     """
-    Read explicit overrides, inheriting saved training settings for resume/evaluation.
+    Read explicit overrides, inheriting immutable settings for a resumed run.
     """
     overrides = overrides or {}
     mode = RunMode.parse(
@@ -160,15 +190,22 @@ def settings_from_env(*, overrides: dict[str, Any] | None = None) -> TrainingSet
             path = OUTPUT_ROOT.joinpath(*parts)
         path = path.resolve()
         run_dir = str(path)
-        if mode in {RunMode.RESUME, RunMode.EVALUATE}:
-            values = read_json(path / RUN_CONFIG)["settings"]
-            for name, value in LEGACY_EARLY_STOPPING.items():
-                values.setdefault(name, value)
+        if mode is RunMode.RESUME:
+            try:
+                protocol = read_run_protocol(path)
+            except FileNotFoundError as error:
+                raise ValueError(
+                    "This RF-DETR run predates the shared protocol; start a fresh "
+                    "experiment for comparison."
+                ) from error
+            values = dict(protocol["training_settings"])
+            values["smoke_run"] = protocol["smoke_run"]
     boolean_fields = {
         "amp",
         "gradient_checkpointing",
         "early_stopping",
         "early_stopping_use_ema",
+        "benchmark",
         "smoke_run",
     }
     float_fields = {"lr", "lr_encoder", "early_stopping_min_delta"}
@@ -184,7 +221,9 @@ def settings_from_env(*, overrides: dict[str, Any] | None = None) -> TrainingSet
                 values[field] = value == "1"
             else:
                 values[field] = float(value) if field in float_fields else int(value)
-    values.update(overrides)
+    values.update(
+        {key: value for key, value in overrides.items() if key not in {"mode", "run_dir"}}
+    )
     if mode is RunMode.FRESH and values.get("smoke_run"):
         values.setdefault("epochs", 2)
     return TrainingSettings(**{**values, "mode": mode, "run_dir": run_dir})
@@ -244,7 +283,13 @@ def runtime_report() -> dict:
     }
 
 
-def train_kwargs(settings: TrainingSettings, dataset_dir: Path, run_dir: Path) -> dict:
+def train_kwargs(
+    settings: TrainingSettings,
+    dataset_dir: Path,
+    run_dir: Path,
+    *,
+    class_names: list[str] | tuple[str, ...] = ("basketball",),
+) -> dict:
     """
     Build the RF-DETR 1.10.1 training configuration with validation-only selection.
     """
@@ -286,7 +331,7 @@ def train_kwargs(settings: TrainingSettings, dataset_dir: Path, run_dir: Path) -
         "eval_interval": 1,
         "eval_max_dets": 100,
         "checkpoint_interval": 10,
-        "class_names": ["basketball"],
+        "class_names": list(class_names),
         "tensorboard": False,
         "wandb": False,
         "mlflow": False,
@@ -298,10 +343,61 @@ def train_kwargs(settings: TrainingSettings, dataset_dir: Path, run_dir: Path) -
     }
 
 
+LOGICAL_DATASET = "basketball"
+MODEL_NAME = "rfdetr_small"
+SOURCE_NOTEBOOK = "nb04.02-rfdetr_small_large_basketball.ipynb"
+
+
+def _dataset_identity(manifest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """
+    Capture canonical COCO provenance and the validated RF-DETR loader layout.
+    """
+    source_dir = Path(manifest["source_dir"])
+    dataset_dir = Path(manifest["dataset_dir"])
+    return {
+        "canonical": canonical_coco_identity(source_dir),
+        "loader": validate_rfdetr_layout(source_dir, dataset_dir),
+    }
+
+
+def _protocol_settings(settings: TrainingSettings) -> dict[str, Any]:
+    """
+    Return immutable controls that define an RF-DETR producer run.
+    """
+    values = asdict(settings)
+    values.pop("mode")
+    values.pop("run_dir")
+    values.pop("smoke_run")
+    return values
+
+
+def _verify_protocol(
+    run_dir: Path,
+    identity: Mapping[str, Any],
+    settings: TrainingSettings,
+    original_utc: datetime | str,
+) -> dict[str, Any]:
+    """
+    Persist or verify immutable shared provenance for one RF-DETR run.
+    """
+    return create_run_protocol(
+        run_dir,
+        logical_dataset=LOGICAL_DATASET,
+        model=MODEL_NAME,
+        source_notebook=SOURCE_NOTEBOOK,
+        original_utc=original_utc,
+        training_settings=_protocol_settings(settings),
+        smoke_run=settings.smoke_run,
+        canonical_dataset_identity=identity["canonical"],
+        loader_dataset_identity=identity["loader"],
+    )
+
+
 def prepare_run(settings: TrainingSettings, manifest: dict, runtime: dict) -> Path:
     """
     Allocate a fresh run or verify the identity/configuration of an existing run.
     """
+    dataset_identity = _dataset_identity(manifest)
     experiment = asdict(settings)
     experiment.pop("mode")
     experiment.pop("run_dir")
@@ -315,44 +411,29 @@ def prepare_run(settings: TrainingSettings, manifest: dict, runtime: dict) -> Pa
     }
     if settings.mode is not RunMode.FRESH:
         run_dir = Path(settings.run_dir).resolve()
-        stored = read_json(run_dir / RUN_CONFIG)
-        stored_settings = stored.get("settings")
-        if isinstance(stored_settings, dict):
-            stored_settings = stored_settings.copy()
-            for name, value in LEGACY_EARLY_STOPPING.items():
-                stored_settings.setdefault(name, value)
-        for key in ("settings", "dataset_fingerprint", "model", "rfdetr_version"):
-            stored_value = stored_settings if key == "settings" else stored.get(key)
-            if stored_value != identity[key]:
-                raise ValueError(
-                    f"Existing run has different {key}; restore its settings"
-                )
-        checkpoint = (
-            RESUME_CHECKPOINT if settings.mode is RunMode.RESUME else BEST_CHECKPOINT
-        )
+        try:
+            protocol = read_run_protocol(run_dir)
+        except FileNotFoundError as error:
+            raise ValueError(
+                "This RF-DETR run predates the shared protocol; start a fresh "
+                "experiment for comparison."
+            ) from error
+        verify_dataset_identity(run_dir / "dataset_identity.json", dataset_identity)
+        _verify_protocol(run_dir, dataset_identity, settings, protocol["original_utc"])
+        checkpoint = RESUME_CHECKPOINT
         if not (run_dir / checkpoint).is_file():
             raise FileNotFoundError(
                 f"Missing {settings.mode} checkpoint: {run_dir / checkpoint}"
             )
-        if settings.mode is RunMode.RESUME:
-            validate_resume_checkpoint(run_dir / checkpoint, settings.epochs)
+        validate_resume_checkpoint(run_dir / checkpoint, settings.epochs)
         return run_dir
-    base = OUTPUT_ROOT / "runs" / "basketball"
-    name = "rfdetr_small_basketball_large_dataset"
-    if settings.smoke_run:
-        name += "_smoke"
-    base.mkdir(parents=True, exist_ok=True)
-    for index in range(1, 10000):
-        run_dir = base / (name if index == 1 else f"{name}-{index}")
-        try:
-            run_dir.mkdir()
-            break
-        except FileExistsError:
-            continue
-    else:
-        raise RuntimeError("No available experiment output directory")
+    allocation = allocate_run_directory(OUTPUT_ROOT, "basketball", "rfdetr_small")
+    run_dir = allocation.path
+    identity["created_at"] = allocation.created_at.isoformat()
     write_json(run_dir / RUN_CONFIG, {**identity, "runtime": runtime})
     write_json(run_dir / "dataset_manifest.json", manifest)
+    capture_dataset_identity(run_dir / "dataset_identity.json", dataset_identity)
+    _verify_protocol(run_dir, dataset_identity, settings, allocation.created_at)
     return run_dir
 
 
@@ -370,22 +451,28 @@ def validate_resume_checkpoint(checkpoint: Path, epoch_budget: int) -> dict:
     completed = int(state["epoch"]) + 1
     if completed >= epoch_budget:
         raise ValueError(
-            "Run already reached its epoch budget; use RFDETR_MODE=evaluate"
+            "Run already reached its epoch budget; use python -m "
+            "rfdetr_pipeline.postprocess_cli --run-dir <run>"
         )
     return {"completed_epochs": completed, "global_step": state.get("global_step")}
 
 
-def build_model(settings: TrainingSettings) -> Any:
+def build_model(
+    settings: TrainingSettings,
+    class_names: list[str] | tuple[str, ...] = ("basketball",),
+) -> Any:
     """
-    Initialize the pinned one-class Small model with consistent positional embeddings.
+    Initialize the Small model with one output per dataset class.
     """
     from pytorch_lightning import seed_everything
     from rfdetr import RFDETRSmall
 
-    # Upstream seeds on_fit_start, after creating the one-class random head.
+    # Upstream seeds on_fit_start, after creating the random detection head.
+    if not class_names or len(set(class_names)) != len(class_names):
+        raise ValueError("Expected nonempty unique class names")
     seed_everything(settings.seed, workers=True)
     return RFDETRSmall(
-        num_classes=1,
+        num_classes=len(class_names),
         resolution=settings.resolution,
         positional_encoding_size=settings.resolution // 16,
         device="cuda:0",
@@ -403,7 +490,12 @@ def verify_loader(model: Any, settings: TrainingSettings, manifest: dict) -> dic
     from rfdetr.training import RFDETRDataModule
 
     dataset_dir = Path(manifest["dataset_dir"])
-    kwargs = train_kwargs(settings, dataset_dir, dataset_dir)
+    kwargs = train_kwargs(
+        settings,
+        dataset_dir,
+        dataset_dir,
+        class_names=manifest["category_mapping"]["class_names"],
+    )
     for key in ("device", "resolution"):
         kwargs.pop(key)
     datamodule = RFDETRDataModule(model.model_config, TrainConfig(**kwargs))
@@ -420,10 +512,12 @@ def verify_loader(model: Any, settings: TrainingSettings, manifest: dict) -> dic
         expected = {item["image_id"] for item in summary["images_identity"]}
         if len(dataset) != summary["images"] or set(dataset.ids) != expected:
             raise RuntimeError(f"RF-DETR loader changed the {split} image membership")
-        training_category = next(
-            iter(manifest["category_mapping"]["training_to_source"])
+        training_categories = sorted(
+            int(value) for value in manifest["category_mapping"]["training_to_source"]
         )
-        if dataset.cat2label != {int(training_category): 0}:
+        if dataset.cat2label != {
+            value: index for index, value in enumerate(training_categories)
+        }:
             raise RuntimeError(
                 f"Unexpected class mapping in {split}: {dataset.cat2label}"
             )
@@ -441,15 +535,46 @@ def verify_loader(model: Any, settings: TrainingSettings, manifest: dict) -> dic
     return results
 
 
+def synchronize_cuda(device: str) -> None:
+    """
+    Synchronize the allocated CUDA device at a native training timing boundary.
+    """
+    import torch
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+
+
+def _completed_epochs(run_dir: Path) -> int:
+    """
+    Return the final native epoch number without deriving timing from files.
+    """
+    try:
+        return int(read_training_history(run_dir)["epoch"].max())
+    except (FileNotFoundError, ValueError, pd.errors.EmptyDataError):
+        return 0
+
+
 def fit_model(
-    model: Any, settings: TrainingSettings, manifest: dict, run_dir: Path
+    model: Any,
+    settings: TrainingSettings,
+    manifest: dict,
+    run_dir: Path,
+    *,
+    synchronize: Callable[[], None] | None = None,
+    monotonic_clock: Callable[[], float] = time.monotonic,
 ) -> pd.DataFrame:
     """
     Train or resume, persisting resolved configuration and attempt duration on failure.
     """
     from pytorch_lightning import seed_everything
 
-    kwargs = train_kwargs(settings, Path(manifest["dataset_dir"]), run_dir)
+    kwargs = train_kwargs(
+        settings,
+        Path(manifest["dataset_dir"]),
+        run_dir,
+        class_names=manifest["category_mapping"]["class_names"],
+    )
     if settings.mode is RunMode.RESUME:
         kwargs["resume"] = str(run_dir / RESUME_CHECKPOINT)
     config_kwargs = {
@@ -468,8 +593,30 @@ def fit_model(
             "preprocessing": "RF-DETR torchvision square resize; fixed scale",
         },
     )
-    started = time.perf_counter()
-    status = "interrupted"
+    import torch
+
+    before_epochs = _completed_epochs(run_dir)
+    boundary = synchronize or (lambda: synchronize_cuda(settings.device))
+    attempt_id = start_training_attempt(
+        run_dir,
+        completed_epochs_before=before_epochs,
+        resumed=settings.mode is RunMode.RESUME,
+        training_hardware=capture_training_hardware(
+            device=settings.device,
+            details={
+                "torch": str(torch.__version__),
+                "cuda_runtime": torch.version.cuda,
+                "gpu": (
+                    torch.cuda.get_device_name(settings.device)
+                    if settings.device.startswith("cuda") and torch.cuda.is_available()
+                    else None
+                ),
+            },
+        ),
+        monotonic_clock=monotonic_clock,
+        synchronize=boundary,
+    )
+    outcome = "completed"
     try:
         # train() creates another model; loader verification has consumed RNG.
         seed_everything(settings.seed, workers=True)
@@ -480,19 +627,18 @@ def fit_model(
             flush=True,
         )
         model.train(**kwargs)
-        status = "completed"
+    except BaseException:
+        outcome = "interrupted"
+        raise
     finally:
-        with (run_dir / "attempts.jsonl").open("a") as stream:
-            stream.write(
-                json.dumps(
-                    {
-                        "mode": settings.mode,
-                        "status": status,
-                        "elapsed_seconds": time.perf_counter() - started,
-                    }
-                )
-                + "\n"
-            )
+        finalize_training_attempt(
+            run_dir,
+            attempt_id,
+            outcome=outcome,
+            completed_epochs=max(0, _completed_epochs(run_dir) - before_epochs),
+            monotonic_clock=monotonic_clock,
+            synchronize=boundary,
+        )
     if not (run_dir / BEST_CHECKPOINT).is_file():
         raise FileNotFoundError("RF-DETR did not produce the expected best checkpoint")
     return read_training_history(run_dir)
@@ -601,7 +747,15 @@ def load_best_model(run_dir: Path) -> tuple[Any, dict]:
         compile=False,
         gradient_checkpointing=False,
     )
-    if model.class_names != ["basketball"] or model.model_config.num_classes != 1:
+    manifest_path = run_dir / "dataset_manifest.json"
+    expected_names = (
+        read_json(manifest_path)["category_mapping"]["class_names"]
+        if manifest_path.is_file()
+        else model.class_names
+    )
+    if model.class_names != expected_names or model.model_config.num_classes != len(
+        expected_names
+    ):
         raise ValueError(
             f"Reloaded detector has unexpected classes: {model.class_names}"
         )
@@ -710,27 +864,67 @@ def ensure_onnx_model_in_subprocess(project_root: Path, run_dir: Path) -> Path:
     return expected
 
 
+def _postprocess_state(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any], TrainingSettings]:
+    """
+    Read and verify the new-protocol provenance required for recovery output.
+    """
+    run_dir = run_dir.expanduser().resolve()
+    try:
+        protocol = read_run_protocol(run_dir)
+    except FileNotFoundError as error:
+        raise ValueError(
+            "This RF-DETR run predates the shared protocol; start a fresh "
+            "experiment for comparison."
+        ) from error
+    manifest_path = run_dir / "dataset_manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError(
+            "This RF-DETR run has no persisted dataset manifest; start a fresh "
+            "experiment for comparison."
+        )
+    manifest = read_json(manifest_path)
+    identity = _dataset_identity(manifest)
+    verify_dataset_identity(run_dir / "dataset_identity.json", identity)
+    if protocol["dataset_identity"] != identity:
+        raise ValueError("Run protocol dataset identity differs from the saved run")
+    settings = TrainingSettings(
+        **dict(protocol["training_settings"]),
+        smoke_run=protocol["smoke_run"],
+    )
+    if _protocol_settings(settings) != protocol["training_settings"]:
+        raise ValueError("Run protocol training settings cannot be reconstructed")
+    training = read_training_record(run_dir)
+    if (
+        not training["attempts"]
+        or any(a["status"] == "running" for a in training["attempts"])
+        or training["attempts"][-1]["status"] != "completed"
+    ):
+        raise ValueError("Postprocessing requires a completed RF-DETR training run")
+    return protocol, manifest, settings
+
+
 def predictions_for_image(
-    model: Any, image: Image.Image, image_id: int, category_id: int
+    model: Any, image: Image.Image, image_id: int, category_id: int | list[int]
 ) -> list[dict]:
     """
     Convert RF-DETR's zero-based class labels and original-pixel xyxy boxes to COCO.
     """
+    category_ids = [category_id] if isinstance(category_id, int) else category_id
     detections = model.predict(image, threshold=0.001, include_source_image=False)
     rows = []
     for box, score, label in zip(
         detections.xyxy, detections.confidence, detections.class_id, strict=True
     ):
         # 1.10.1 predict() can include its explicit no-object slot at low scores.
-        if int(label) == 1:
+        if label == len(category_ids):
             continue
-        if int(label) != 0:
-            raise ValueError("One-class RF-DETR returned an unexpected class label")
+        if label != int(label) or not 0 <= int(label) < len(category_ids):
+            raise ValueError("RF-DETR returned an unexpected class label")
         x1, y1, x2, y2 = map(float, box)
         rows.append(
             {
                 "image_id": image_id,
-                "category_id": category_id,
+                "category_id": category_ids[int(label)],
                 "bbox": [x1, y1, x2 - x1, y2 - y1],
                 "score": float(score),
             }
@@ -745,7 +939,8 @@ def evaluate_split(
     split: str,
     best_metadata: dict,
     *,
-    benchmark: bool = False,
+    settings: TrainingSettings,
+    protocol: Mapping[str, Any],
 ) -> tuple[dict, Path]:
     """
     Evaluate an explicit frozen split and save native metrics and portable predictions.
@@ -765,13 +960,21 @@ def evaluate_split(
         else Path(manifest["source_dir"]) / "annotations" / f"instances_{split}.json"
     )
     ground_truth = read_json(annotation_path)
-    category_id = ground_truth["categories"][0]["id"]
+    mapping = manifest["category_mapping"]
+    category_ids = [
+        mapping["prediction_to_source"][str(index)]
+        for index in range(len(mapping["class_names"]))
+    ]
+    if manifest["mode"] == "smoke":
+        category_ids = [
+            mapping["source_to_training"][str(value)] for value in category_ids
+        ]
     predictions = []
     for image in ground_truth["images"]:
         with Image.open(derived_dir / image["file_name"]) as source:
             predictions.extend(
                 predictions_for_image(
-                    model, source.convert("RGB"), image["id"], category_id
+                    model, source.convert("RGB"), image["id"], category_ids
                 )
             )
     metrics = evaluate_predictions(annotation_path, predictions)
@@ -779,26 +982,29 @@ def evaluate_split(
         dataset_dir=manifest["dataset_dir"],
         dataset_file="roboflow",
         split=split,
+        # Match the supported scalar form used by train_kwargs for RF-DETR 1.10.1.
         device="cuda",
+        devices=1,
         num_workers=0,
         batch_size=1,
         eval_max_dets=100,
         compute_val_loss=True,
-        class_names=["basketball"],
+        class_names=manifest["category_mapping"]["class_names"],
     )
     write_json(run_dir / f"native_{split}_metrics.json", native)
     write_json(run_dir / f"{split}_metrics.json", metrics)
-    runtime = read_json(run_dir / RUN_CONFIG)
     metadata = {
-        "model": "rfdetr_small",
+        "model": MODEL_NAME,
         "split": split,
         "run_dir": str(run_dir),
         **best_metadata,
         "resolution": model.model_config.resolution,
-        "smoke_run": manifest["mode"] == "smoke",
+        "smoke_run": protocol["smoke_run"],
         "rfdetr_version": RFDETR_VERSION,
-        "dataset_fingerprint": manifest["fingerprint"],
-        "training_settings": runtime["settings"],
+        "dataset_fingerprint": protocol["dataset_identity"]["canonical"][
+            "source_fingerprint"
+        ],
+        "training_settings": protocol["training_settings"],
         "epochs_completed": int(read_training_history(run_dir)["epoch"].max()),
         "postprocessing": {
             "score_floor": 0.001,
@@ -808,17 +1014,18 @@ def evaluate_split(
             "resize": "square",
         },
     }
-    if benchmark:
+    if settings.benchmark:
 
         def predict_one(image: Image.Image) -> list[dict]:
             """
             Execute the same PIL-to-CPU-predictions path used for detector exports.
             """
-            return predictions_for_image(model, image, 0, category_id)
+            return predictions_for_image(model, image, 0, category_ids)
 
         metadata["benchmark"] = benchmark_predict(
             predict_one,
             [derived_dir / image["file_name"] for image in ground_truth["images"]],
+            device=settings.device,
         )
     artifact = write_prediction_artifact(
         run_dir / f"{split}_predictions.json",
@@ -828,6 +1035,62 @@ def evaluate_split(
     )
     save_prediction_grids(ground_truth, predictions, derived_dir, run_dir, split)
     return metrics, artifact
+
+
+def postprocess_run(
+    run_dir: Path,
+    *,
+    bundle_root: Path | None = None,
+) -> dict[str, Any]:
+    """
+    Regenerate completed-run outputs and atomically publish both split artifacts.
+    """
+    run_dir = run_dir.expanduser().resolve()
+    protocol, manifest, settings = _postprocess_state(run_dir)
+    history = read_training_history(run_dir)
+    loss_figure, metric_figure = plot_history(history)
+    loss_figure.savefig(run_dir / "training_losses.png", bbox_inches="tight")
+    metric_figure.savefig(run_dir / "validation_metrics.png", bbox_inches="tight")
+    onnx_path = ensure_onnx_model_in_subprocess(SUBPROJECT_ROOT, run_dir)
+    best_model, best_metadata = load_best_model(run_dir)
+    split_metrics = {}
+    prediction_artifacts = {}
+    for split in ("val", "test"):
+        metrics, artifact = evaluate_split(
+            best_model,
+            manifest,
+            run_dir,
+            split,
+            best_metadata,
+            settings=settings,
+            protocol=protocol,
+        )
+        split_metrics[split] = metrics
+        prediction_artifacts[split] = artifact
+    destination = bundle_root or (
+        OUTPUT_ROOT
+        / "evaluation"
+        / "basketball_large_dataset"
+        / MODEL_NAME
+        / run_dir.name
+    )
+    bundle = publish_bundle(
+        destination,
+        run_dir=run_dir,
+        val_predictions=prediction_artifacts["val"],
+        test_predictions=prediction_artifacts["test"],
+        selected_checkpoint=run_dir / BEST_CHECKPOINT,
+        resolution=settings.resolution,
+        parameter_count=best_metadata["parameters"],
+    )
+    return {
+        "history": history,
+        "onnx_path": onnx_path,
+        "best_metadata": best_metadata,
+        "split_metrics": split_metrics,
+        "prediction_artifacts": prediction_artifacts,
+        "bundle": bundle,
+    }
 
 
 def save_prediction_grids(

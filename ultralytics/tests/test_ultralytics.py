@@ -10,6 +10,18 @@ import yaml
 from ultralytics_pipeline import ultralytics
 
 
+def test_reserved_run_callback_rejects_a_directory_mismatch(tmp_path: Path) -> None:
+    """
+    Fail before training when Ultralytics changes the reserved output directory.
+    """
+    expected = tmp_path / "expected"
+    callback = ultralytics.reserved_run_callback(expected)
+
+    callback(Mock(save_dir=expected))
+    with pytest.raises(RuntimeError, match="Trainer directory mismatch"):
+        callback(Mock(save_dir=tmp_path / "other"))
+
+
 def test_configure_privacy_skips_settings_removed_by_ultralytics(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
