@@ -9,3 +9,6 @@ dependencies:
   - pillow
   - matplotlib
   - ipython
+
+  - pip:
+    - opencv-python-headless>=4.10,<5

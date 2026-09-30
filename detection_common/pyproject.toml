@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Framework-neutral helpers for the object-detection workspace"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["numpy", "pillow", "matplotlib", "ipython"]
+dependencies = ["numpy", "pillow", "matplotlib", "ipython", "opencv-python-headless>=4.10,<5"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

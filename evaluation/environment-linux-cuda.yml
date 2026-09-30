@@ -2,13 +2,28 @@ name: object-detection-evaluation
 channels:
   - conda-forge
 dependencies:
+  # Python basic
   - python=3.11
   - pip
   - pytest
+
+  # Data processing
   - numpy
   - pandas
   - pillow
   - matplotlib
   - pycocotools
+
+  # Utils
   - pyyaml
+  - zlib
+
+  # For Jupyter Notebook
   - ipykernel
+
+  # CV
+  - opencv
+
+  - pip:
+    - onnx
+    - onnxruntime-gpu[cuda,cudnn]==1.30.0
