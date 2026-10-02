@@ -1,10 +1,10 @@
 # YOLOX Pipeline
 
-YOLOX training and inference helpers. The upstream YOLOX source checkout is
-not vendored; set `YOLOX_SOURCE` to its absolute directory, or place it beside
-this workspace as `../YOLOX`. The macOS setup script installs that checkout
-with the environment's PyTorch and without build isolation. The currently
-tested sibling checkout is commit `6ddff48` of upstream YOLOX.
+YOLOX training and inference helpers. Official YOLOX is pinned at commit
+`6ddff48` as the `thirdparty/YOLOX` Git submodule. Clone the workspace with
+`--recurse-submodules`, or initialize an existing clone with
+`git submodule update --init -- thirdparty/YOLOX`. Setup builds a temporary
+copy, leaving the submodule unchanged.
 
 From the workspace root, run `bash scripts/setup_conda_envs.sh yolox` and
 `conda run -p .conda/envs/object-detection-yolox python -m pytest
@@ -29,20 +29,19 @@ Without `--run-dir`, the newest complete matching run below
 needs a real checkpoint and dataset; the local smoke check only covers the CLI
 boundary.
 
-Upstream YOLOX metadata requires `onnx-simplifier==0.4.10`, while the
-macOS environment uses a newer `onnxsim`. `pip check` reports that metadata
-mismatch. Training and unit tests do not depend on the pinned simplifier;
-validate ONNX export separately before relying on it.
+The Conda manifests provide platform-compatible OpenCV and ONNX simplifier
+packages. Setup removes YOLOX's obsolete package pins from the staged build
+metadata, so the environment remains the source of those dependency choices.
+Validate ONNX export separately before relying on it.
 
 The setup command selects environment-macos-mps.yml on Apple Silicon and
 environment-linux-cuda.yml on Renku Linux. Both profiles use the checkout-local
 `.conda/envs/object-detection-yolox` prefix; on Renku, bootstrap Miniforge first from the
 workspace root with bash scripts/install_miniforge_renku.sh.
 
-On Renku, setup fetches commit 6ddff48 and builds YOLOX with the
-C++17 and headless OpenCV adjustments. The Linux environment
-includes CUDA 13.0 PyTorch wheels and onnx-simplifier 0.5.0;
-the local macOS ONNX metadata caveat remains unchanged.
+Both platforms build the pinned submodule with C++17. The Linux environment
+uses CUDA 13.0 PyTorch wheels, headless OpenCV, and onnx-simplifier 0.5.0;
+macOS uses its MPS-compatible PyTorch and regular OpenCV packages.
 
 For new-protocol basketball comparison bundles, use the owning
 `producer.recover_and_publish` helper with `producer.settings_from_run(run_dir)`

@@ -19,6 +19,15 @@ to give each project its own interpreter, tests, and notebook kernel.
 
 Supporting reports and archives are in [`documents/`](documents/).
 
+Clone the workspace with its pinned official YOLOX submodule:
+
+```bash
+git clone --recurse-submodules <repository-url>
+```
+
+For an existing clone, initialize it with
+`git submodule update --init -- thirdparty/YOLOX`.
+
 ## Conda Setup and Tests
 
 On macOS, use your existing Conda installation. On Renku Linux x86_64,
@@ -46,9 +55,9 @@ inside the project environments. Descriptive prefix names stay legible in Conda
 and VS Code while remaining isolated from another workspace copy.
 Setup also registers the workspace-local `envs` directory in the user's Conda
 configuration so `conda env list` can show these prefix names from any shell.
-On macOS, YOLOX needs an upstream checkout at `../YOLOX` or an absolute
-`YOLOX_SOURCE`. On Renku, setup fetches and builds the pinned revision with
-headless OpenCV and C++17 adjustments.
+On both platforms, setup builds the pinned `thirdparty/YOLOX` submodule from a
+temporary copy with C++17. The YOLOX environment manifests select regular
+OpenCV on macOS and headless OpenCV on Renku.
 
 Run tests independently with the owning interpreter, for example:
 

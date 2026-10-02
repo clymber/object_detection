@@ -4,6 +4,8 @@ channels:
 dependencies:
   - python=3.11
   - pip
+  - setuptools>=69
+  - wheel
   - pytest
   - pytorch=2.10
   - torchvision=0.25
@@ -17,6 +19,7 @@ dependencies:
   - ipykernel
   - ipywidgets
   - loguru
+  - psutil
   - tabulate
   - tensorboard
   - pip:

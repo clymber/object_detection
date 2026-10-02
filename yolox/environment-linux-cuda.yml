@@ -17,6 +17,7 @@ dependencies:
   - ipykernel
   - ipywidgets
   - loguru
+  - psutil
   - tabulate
   - tensorboard
   - pip:
