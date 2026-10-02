@@ -43,16 +43,17 @@ from dataset_builder.config import DATA_ROOT, OUTPUT_ROOT, WORKSPACE_ROOT
 configure_stdio_relative_path(WORKSPACE_ROOT)
 
 # %%
-import json
 import math
 import os
 from collections import defaultdict
+from json import JSONDecodeError
 from pathlib import Path
 from typing import NamedTuple
 
 import datumaro as dm
 import pandas as pd
-from detection_common.utils.image import image_content_digest
+from detection_common.utils.digest import image_content_digest
+from detection_common.utils.json_io import read_json
 from IPython.display import display
 from PIL import Image
 from sklearn.model_selection import GroupShuffleSplit
@@ -232,9 +233,8 @@ for config in source_configs:
             annotation_path.parent.name,
         )
         try:
-            with annotation_path.open(encoding="utf-8") as file:
-                coco = json.load(file)
-        except (OSError, json.JSONDecodeError) as error:
+            coco = read_json(annotation_path)
+        except (OSError, JSONDecodeError) as error:
             raise RuntimeError(
                 f"COCO annotation file cannot be loaded: {annotation_path}"
             ) from error
@@ -927,8 +927,7 @@ expected_names = {
 }
 for split in ("train", "val", "test"):
     annotation_path = coco_dataset_dir / "annotations" / f"instances_{split}.json"
-    with annotation_path.open(encoding="utf-8") as file:
-        exported_coco = json.load(file)
+    exported_coco = read_json(annotation_path)
     assert exported_coco["categories"] == [
         {"id": 1, "name": "football", "supercategory": ""}
     ]

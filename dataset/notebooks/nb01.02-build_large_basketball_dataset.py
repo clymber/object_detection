@@ -37,8 +37,8 @@ from pathlib import Path
 import datumaro as dm
 import pandas as pd
 from detection_common.utils import json_io
+from detection_common.utils.digest import image_content_digest
 from detection_common.utils.filepath import dir_tree
-from detection_common.utils.image import image_content_digest
 from IPython.display import display
 
 from dataset_builder import (

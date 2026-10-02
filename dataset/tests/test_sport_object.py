@@ -1,7 +1,7 @@
-import json
 from pathlib import Path
 
 import pytest
+from detection_common.utils.json_io import read_json, write_json
 from PIL import Image
 
 pytest.importorskip("datumaro")
@@ -70,7 +70,7 @@ def write_source(
         }
         annotation_path = root / "annotations" / f"instances_{split}.json"
         annotation_path.parent.mkdir(exist_ok=True)
-        annotation_path.write_text(json.dumps(payload), encoding="utf-8")
+        write_json(annotation_path, payload)
 
 
 def build_fixture_dataset(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
@@ -121,10 +121,8 @@ def test_build_sport_object_dataset_exports_matching_formats(tmp_path: Path) -> 
     assert manifest["yolo_output_path"].map(Path).map(Path.is_file).all()
     assert paths[4].is_file()
     for split in SPLITS:
-        payload = json.loads(
-            (paths[2] / "annotations" / f"instances_{split}.json").read_text(
-                encoding="utf-8"
-            )
+        payload = read_json(
+            paths[2] / "annotations" / f"instances_{split}.json"
         )
         assert [category["name"] for category in payload["categories"]] == [
             "football",
@@ -201,9 +199,9 @@ def test_build_sport_object_dataset_rejects_invalid_annotation(tmp_path: Path) -
     """
     paths = build_fixture_dataset(tmp_path)
     annotation_path = paths[0] / "annotations" / "instances_train.json"
-    payload = json.loads(annotation_path.read_text(encoding="utf-8"))
+    payload = read_json(annotation_path)
     payload["annotations"][0]["bbox"] = [15, 1, 8, 4]
-    annotation_path.write_text(json.dumps(payload), encoding="utf-8")
+    write_json(annotation_path, payload)
 
     with pytest.raises(ValueError, match="Out-of-bounds bounding box"):
         build_sport_object_dataset(

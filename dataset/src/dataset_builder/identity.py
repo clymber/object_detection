@@ -8,8 +8,6 @@ mapping, relative image names, and image bytes.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 import os
 import shutil
@@ -20,11 +18,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from detection_common.utils.digest import file_digest, json_digest
+from detection_common.utils.json_io import json_normalize, read_json, write_json
+
 from .config import DATA_ROOT
 from .rfdetr import (
     SPLIT_NAMES,
-    _file_hash,
-    _json_bytes,
     _read_split,
     _smoke_subset,
     _validate_derived,
@@ -33,13 +32,6 @@ from .rfdetr import (
 
 IDENTITY_FILE_NAME = "dataset_identity.json"
 SMOKE_LIMITS = {"train": 16, "val": 8, "test": 8}
-
-
-def _fingerprint(payload: Mapping[str, Any]) -> str:
-    """
-    Return the SHA-256 fingerprint of a normalized JSON-compatible payload.
-    """
-    return hashlib.sha256(_json_bytes(payload)).hexdigest()
 
 
 def _canonical_categories(coco: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -104,7 +96,7 @@ def canonical_coco_identity(source_dir: str | Path) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "canonical_source": canonical,
-        "source_fingerprint": _fingerprint(canonical),
+        "source_fingerprint": json_digest(canonical, allow_nan=False),
     }
 
 
@@ -270,7 +262,7 @@ def _yolo_split_images(
         or set(image_paths) != directory_images
     ):
         raise ValueError(f"YOLO {split} list membership differs from images")
-    return image_dir, sorted(image_paths), _file_hash(split_path)
+    return image_dir, sorted(image_paths), file_digest(split_path)
 
 
 def _read_yolo_labels(label_path: Path) -> list[tuple[int, float, float, float, float]]:
@@ -387,7 +379,7 @@ def validate_yolo_layout(
             expected_by_hash[image["sha256"]].append(image)
         actual_by_hash: dict[str, list[Path]] = defaultdict(list)
         for image_path in image_paths:
-            actual_by_hash[_file_hash(image_path)].append(image_path)
+            actual_by_hash[file_digest(image_path)].append(image_path)
         if Counter(
             {digest: len(paths) for digest, paths in actual_by_hash.items()}
         ) != Counter(image["sha256"] for image in expected_images):
@@ -430,7 +422,7 @@ def validate_yolo_layout(
                         "image_sha256": digest,
                         "label": label_path.relative_to(root).as_posix(),
                         "label_sha256": (
-                            _file_hash(label_path) if label_path.is_file() else None
+                            file_digest(label_path) if label_path.is_file() else None
                         ),
                         "boxes": matched_boxes,
                     }
@@ -450,7 +442,7 @@ def validate_yolo_layout(
             for index, category in enumerate(categories)
         },
         "class_names": expected_names,
-        "data_yaml_sha256": _file_hash(yaml_path),
+        "data_yaml_sha256": file_digest(yaml_path),
         "split_configuration": {
             split: _resolve_yaml_path(yaml_root, config["splits"][split])
             .relative_to(root)
@@ -464,7 +456,7 @@ def validate_yolo_layout(
     return {
         "source_fingerprint": source_identity["source_fingerprint"],
         "loader": loader,
-        "loader_fingerprint": _fingerprint(loader),
+        "loader_fingerprint": json_digest(loader, allow_nan=False),
     }
 
 
@@ -480,7 +472,7 @@ def validate_rfdetr_layout(
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Missing RF-DETR layout manifest: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = read_json(manifest_path)
     _validate_derived(root, manifest)
     mapping = manifest.get("category_mapping")
     if not isinstance(mapping, dict):
@@ -517,7 +509,7 @@ def validate_rfdetr_layout(
     payload_splits = {}
     for split, loader_split in SPLIT_NAMES.items():
         annotation_path = root / loader_split / "_annotations.coco.json"
-        derived = json.loads(annotation_path.read_text(encoding="utf-8"))
+        derived = read_json(annotation_path)
         if _canonical_categories(derived) != sorted(
             expected_categories, key=lambda item: item["id"]
         ):
@@ -568,11 +560,11 @@ def validate_rfdetr_layout(
         ):
             raise ValueError(f"RF-DETR {split} annotations differ from COCO")
         payload_splits[split] = {
-            "annotation_sha256": _file_hash(annotation_path),
+            "annotation_sha256": file_digest(annotation_path),
             "images": [
                 {
                     "file_name": image["file_name"],
-                    "sha256": _file_hash(root / loader_split / image["file_name"]),
+                    "sha256": file_digest(root / loader_split / image["file_name"]),
                 }
                 for image in source_images
             ],
@@ -586,7 +578,7 @@ def validate_rfdetr_layout(
     return {
         "source_fingerprint": source_identity["source_fingerprint"],
         "loader": loader,
-        "loader_fingerprint": _fingerprint(loader),
+        "loader_fingerprint": json_digest(loader, allow_nan=False),
     }
 
 
@@ -598,13 +590,13 @@ def capture_dataset_identity(
     Create an immutable dataset identity record or verify an existing equivalent one.
     """
     path = Path(identity_path).expanduser().resolve()
-    record = json.loads(_json_bytes(dict(identity)))
+    record = json_normalize(identity, allow_nan=False)
     if path.exists():
         return verify_dataset_identity(path, record)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
-        temporary.write_bytes(_json_bytes(record))
+        write_json(temporary, record, allow_nan=False)
         try:
             with temporary.open("rb") as stream:
                 os.fsync(stream.fileno())
@@ -631,8 +623,8 @@ def verify_dataset_identity(
     path = Path(identity_path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"Missing dataset identity record: {path}")
-    recorded = json.loads(path.read_text(encoding="utf-8"))
-    actual = json.loads(_json_bytes(dict(actual_identity)))
+    recorded = read_json(path)
+    actual = json_normalize(actual_identity, allow_nan=False)
     if recorded != actual:
         raise ValueError(
             f"Dataset identity mismatch at {path}; the original record was preserved"
@@ -720,9 +712,8 @@ def _write_coco_subset(
             )
         subset = _smoke_subset(coco, limits[split])
         selected_ids[split] = sorted(image["id"] for image in subset["images"])
-        (destination / "annotations" / f"instances_{split}.json").write_bytes(
-            _json_bytes(subset)
-        )
+        dst_file = destination / "annotations" / f"instances_{split}.json"
+        write_json(dst_file, subset, allow_nan=False)
         for image in subset["images"]:
             relative = Path(image["file_name"])
             _copy_or_link(
@@ -821,7 +812,7 @@ def prepare_smoke_layouts(
         # Roots are intentionally excluded from the content fingerprint.
         manifest["source_dir"] = str(destination / "coco")
         manifest["dataset_dir"] = str(destination / "rfdetr")
-        (staging / "rfdetr" / "manifest.json").write_bytes(_json_bytes(manifest))
+        write_json(staging / "rfdetr" / "manifest.json", manifest, allow_nan=False)
         staging.rename(destination)
         promoted = True
         subset_identity = canonical_coco_identity(destination / "coco")

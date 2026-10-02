@@ -2,11 +2,11 @@
 Exercise canonical source identities and framework-neutral smoke layouts.
 """
 
-import json
 import shutil
 from pathlib import Path
 
 import pytest
+from detection_common.utils.json_io import read_json, write_json
 from PIL import Image
 
 from dataset_builder.identity import (
@@ -63,22 +63,20 @@ def _source(
                 )
         annotation_path = root / "annotations" / f"instances_{split}.json"
         annotation_path.parent.mkdir(parents=True, exist_ok=True)
-        annotation_path.write_text(
-            json.dumps(
-                {
-                    "info": {"created": "not part of identity"},
-                    "categories": [
-                        {
-                            "id": 7,
-                            "name": class_name,
-                            "supercategory": "ball",
-                        }
-                    ],
-                    "images": images,
-                    "annotations": annotations,
-                }
-            ),
-            encoding="utf-8",
+        write_json(
+            annotation_path,
+            {
+                "info": {"created": "not part of identity"},
+                "categories": [
+                    {
+                        "id": 7,
+                        "name": class_name,
+                        "supercategory": "ball",
+                    }
+                ],
+                "images": images,
+                "annotations": annotations,
+            },
         )
     return root
 
@@ -87,9 +85,9 @@ def _edit_annotation(path: Path, edit) -> None:
     """
     Apply one test mutation to a COCO annotation document.
     """
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = read_json(path)
     edit(payload)
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    write_json(path, payload)
 
 
 def test_canonical_identity_is_relocation_independent_and_content_sensitive(
@@ -150,7 +148,7 @@ def test_smoke_layouts_are_deterministic_and_retain_negatives(
     destination = tmp_path / "processed" / f"{class_name}_smoke"
     record = prepare_smoke_layouts(source, destination, link_images=False)
 
-    manifest = json.loads((destination / "rfdetr" / "manifest.json").read_text())
+    manifest = read_json(destination / "rfdetr" / "manifest.json")
     assert manifest["category_mapping"]["class_names"] == [class_name]
     assert (
         canonical_coco_identity(source)["canonical_source"]["category_mapping"][0][
@@ -166,12 +164,8 @@ def test_smoke_layouts_are_deterministic_and_retain_negatives(
     assert record["smoke_limits"] == {"train": 16, "val": 8, "test": 8}
     assert (destination / IDENTITY_FILE_NAME).is_file()
     for split, count in {"train": 16, "val": 8, "test": 8}.items():
-        payload = json.loads(
-            (
-                destination / "coco" / "annotations" / f"instances_{split}.json"
-            ).read_text(
-                encoding="utf-8"
-            )
+        payload = read_json(
+            destination / "coco" / "annotations" / f"instances_{split}.json"
         )
         assert len(payload["images"]) == count
         assert any(not annotation for annotation in [
@@ -203,7 +197,7 @@ def test_linked_smoke_layouts_remain_valid_after_staging_promotion(
 
     validate_yolo_layout(destination / "coco", destination / "yolo")
     validate_rfdetr_layout(destination / "coco", destination / "rfdetr")
-    manifest = json.loads((destination / "rfdetr" / "manifest.json").read_text())
+    manifest = read_json(destination / "rfdetr" / "manifest.json")
     assert Path(manifest["source_dir"]) == destination / "coco"
     assert Path(manifest["dataset_dir"]) == destination / "rfdetr"
     # Reconstructing the manifest must agree with the promoted layout too.
@@ -368,14 +362,14 @@ def test_default_smoke_paths_preserve_subsets_of_previous_sources(
     old_root = identity.smoke_layout_directory(source)
     old_record = prepare_smoke_layouts(source)
     annotation = source / "annotations" / "instances_train.json"
-    payload = json.loads(annotation.read_text())
+    payload = read_json(annotation)
     payload["annotations"][0]["bbox"][0] += 1
-    annotation.write_text(json.dumps(payload))
+    write_json(annotation, payload)
     new_root = identity.smoke_layout_directory(source)
     assert new_root != old_root
     new_record = prepare_smoke_layouts(source)
     assert new_record["parent_source_fingerprint"] != old_record["parent_source_fingerprint"]
-    assert json.loads((old_root / IDENTITY_FILE_NAME).read_text()) == old_record
+    assert read_json(old_root / IDENTITY_FILE_NAME) == old_record
 
 
 @pytest.mark.parametrize("name", [None, "", "   ", 42])

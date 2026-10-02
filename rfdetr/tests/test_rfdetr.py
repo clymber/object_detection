@@ -12,9 +12,9 @@ from types import ModuleType, SimpleNamespace
 import pandas as pd
 import pytest
 import torch
+from detection_common.utils.digest import file_digest
 from detection_common.utils.json_io import read_json, write_json
 from detection_evaluation import (
-    file_sha256,
     finalize_training_attempt,
     read_bundle,
     read_training_record,
@@ -642,7 +642,7 @@ def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
         "load_best_model",
         lambda _path: (
             SimpleNamespace(model_config=SimpleNamespace(resolution=640)),
-            {"parameters": 1, "checkpoint_sha256": file_sha256(checkpoint)},
+            {"parameters": 1, "checkpoint_sha256": file_digest(checkpoint)},
         ),
     )
     monkeypatch.setattr(
@@ -674,10 +674,13 @@ def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
         Write a minimal shared prediction artifact for each recovered split.
         """
         annotation = tmp_path / f"{split}.json"
-        annotation.write_text(
-            '{"images":[{"id":1,"file_name":"image.jpg"}],'
-            '"annotations":[],"categories":[{"id":1,"name":"basketball"}]}',
-            encoding="utf-8",
+        write_json(
+            annotation,
+            {
+                "images": [{"id": 1, "file_name": "image.jpg"}],
+                "annotations": [],
+                "categories": [{"id": 1, "name": "basketball"}],
+            },
         )
         artifact = write_prediction_artifact(
             run_dir / f"{split}_predictions.json",
@@ -690,7 +693,7 @@ def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
                 "checkpoint": str(checkpoint),
                 "smoke_run": True,
                 "resolution": 640,
-                "checkpoint_sha256": file_sha256(checkpoint),
+                "checkpoint_sha256": file_digest(checkpoint),
                 "postprocessing": {
                     "score_floor": 0.001,
                     "precision": "float32",

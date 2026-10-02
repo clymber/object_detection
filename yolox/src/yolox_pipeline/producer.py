@@ -22,12 +22,12 @@ from dataset_builder import (
     validate_yolo_layout,
     verify_dataset_identity,
 )
+from detection_common.utils.digest import file_digest
 from detection_common.utils.json_io import read_json
 from detection_evaluation import (
     benchmark_predict,
     capture_training_hardware,
     create_run_protocol,
-    file_sha256,
     finalize_training_attempt,
     publish_bundle,
     read_run_protocol,
@@ -351,7 +351,7 @@ def _prediction_metadata(
         "model": protocol["model"],
         "run_dir": str(checkpoint.parent.parent),
         "checkpoint": str(checkpoint),
-        "checkpoint_sha256": file_sha256(checkpoint),
+        "checkpoint_sha256": file_digest(checkpoint),
         "resolution": settings.training.image_size,
         "smoke_run": protocol["smoke_run"],
         "framework_version": version("yolox"),

@@ -21,12 +21,13 @@ Evaluation on ONNX exports.
 # %aimport -onnx
 
 # %%
-import json
 import platform
+import sys
 from pathlib import Path
 
 import onnx
 import onnxruntime as ort
+from detection_common.utils.json_io import write_json
 
 from detection_evaluation.config import (
     # DATA_ROOT,
@@ -87,7 +88,7 @@ for opset in model.opset_import:
 # %%
 available_providers = ort.get_available_providers()
 print("Available providers:")
-print(json.dumps(available_providers, indent=4))
+write_json(sys.stdout, available_providers)
 
 # %%
 system = platform.system() # `Linux`, `Windows` or `Darwin`
@@ -104,7 +105,7 @@ session = ort.InferenceSession(
 )
 
 print("Registered execution providers:")
-print(json.dumps(session.get_providers(), indent=4))
+write_json(sys.stdout, session.get_providers())
 
 # %%
 for input in session.get_inputs():

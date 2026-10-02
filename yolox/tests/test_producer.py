@@ -2,13 +2,13 @@
 Mock-only tests for the YOLOX Stage 5 producer lifecycle.
 """
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 import torch
+from detection_common.utils.json_io import write_json
 from detection_evaluation import (
     read_bundle,
     read_training_record,
@@ -311,15 +311,13 @@ def test_recovery_republishes_without_training_after_a_failed_publication(
         destination = args[2]
         split = kwargs["metadata"]["split"]
         annotation = tmp_path / f"{split}.json"
-        annotation.write_text(
-            json.dumps(
-                {
-                    "images": [{"id": 1, "file_name": "image.jpg"}],
-                    "annotations": [],
-                    "categories": [{"id": 1, "name": class_name}],
-                }
-            ),
-            encoding="utf-8",
+        write_json(
+            annotation,
+            {
+                "images": [{"id": 1, "file_name": "image.jpg"}],
+                "annotations": [],
+                "categories": [{"id": 1, "name": class_name}],
+            },
         )
         exported.append(split)
         return write_prediction_artifact(destination, annotation, [], metadata=kwargs["metadata"])

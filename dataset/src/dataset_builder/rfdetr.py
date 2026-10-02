@@ -7,8 +7,6 @@ and image contents are never modified; derived caches are immutable once built.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 import shutil
 import tempfile
@@ -19,27 +17,12 @@ from copy import deepcopy
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from detection_common.utils.digest import bytes_digest, file_digest, json_digest
+from detection_common.utils.json_io import json_bytes, read_json, write_json
 from PIL import Image
 
 SPLIT_NAMES = {"train": "train", "val": "valid", "test": "test"}
 MANIFEST_NAME = "manifest.json"
-
-
-def _json_bytes(value: Any) -> bytes:
-    """
-    Serialize a manifest or annotation deterministically.
-    """
-    return (
-        json.dumps(value, sort_keys=True, indent=2, allow_nan=False) + "\n"
-    ).encode()
-
-
-def _file_hash(path: Path) -> str:
-    """
-    Hash the complete file without loading large image files into memory.
-    """
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _integer(value: Any, label: str, *, minimum: int = 0) -> int:
@@ -70,8 +53,7 @@ def _read_split(source_dir: Path, split: str) -> tuple[dict, list[dict]]:
     Validate image files, dimensions, categories, IDs, boxes, and references.
     """
     annotation_path = source_dir / "annotations" / f"instances_{split}.json"
-    with annotation_path.open(encoding="utf-8") as stream:
-        coco = json.load(stream)
+    coco = read_json(annotation_path)
     if not isinstance(coco, dict):
         raise ValueError(f"{annotation_path}: expected a COCO object")
     for key in ("images", "annotations", "categories"):
@@ -121,7 +103,7 @@ def _read_split(source_dir: Path, split: str) -> tuple[dict, list[dict]]:
             {
                 "image_id": image_id,
                 "file_name": file_name,
-                "sha256": _file_hash(image_path),
+                "sha256": file_digest(image_path),
                 "width": width,
                 "height": height,
             }
@@ -257,12 +239,12 @@ def _validate_derived(destination_dir: Path, manifest: dict) -> None:
         annotations = split_dir / "_annotations.coco.json"
         if (
             not annotations.is_file()
-            or _file_hash(annotations) != summary["derived_annotation_sha256"]
+            or file_digest(annotations) != summary["derived_annotation_sha256"]
         ):
             raise ValueError(f"Stale derived dataset: {split} annotations changed")
         for entry in summary["images_identity"]:
             image = split_dir / entry["file_name"]
-            if not image.is_file() or _file_hash(image) != entry["sha256"]:
+            if not image.is_file() or file_digest(image) != entry["sha256"]:
                 raise ValueError(f"Stale derived dataset: {split}/{entry['file_name']}")
 
 
@@ -381,14 +363,14 @@ def prepare_coco_dataset(
         for annotation in current["annotations"]:
             annotation["category_id"] = source_to_training[annotation["category_id"]]
         selected_ids = {entry["id"] for entry in current["images"]}
-        adapted[split] = _json_bytes(current)
+        adapted[split] = json_bytes(current, allow_nan=False)
         annotation_path = source_dir / "annotations" / f"instances_{split}.json"
         manifest["splits"][split] = {
             "loader_split": SPLIT_NAMES[split],
             **_counts(current),
             "source_counts": _counts(coco),
-            "source_annotation_sha256": _file_hash(annotation_path),
-            "derived_annotation_sha256": hashlib.sha256(adapted[split]).hexdigest(),
+            "source_annotation_sha256": file_digest(annotation_path),
+            "derived_annotation_sha256": bytes_digest(adapted[split]),
             "source_images_identity": source_identities[split],
             "images_identity": [
                 entry
@@ -401,7 +383,7 @@ def prepare_coco_dataset(
         for key, value in manifest.items()
         if key not in {"source_dir", "dataset_dir"}
     }
-    manifest["fingerprint"] = hashlib.sha256(_json_bytes(fingerprint_data)).hexdigest()
+    manifest["fingerprint"] = json_digest(fingerprint_data, allow_nan=False)
 
     if destination_dir.exists() or destination_dir.is_symlink():
         manifest_path = destination_dir / MANIFEST_NAME
@@ -409,8 +391,7 @@ def prepare_coco_dataset(
             raise FileExistsError(
                 f"Refusing to overwrite {destination_dir}: no dataset manifest"
             )
-        with manifest_path.open(encoding="utf-8") as stream:
-            previous = json.load(stream)
+        previous = read_json(manifest_path)
         if previous != manifest:
             raise ValueError(
                 f"Stale derived dataset at {destination_dir}: source data or "
@@ -437,7 +418,7 @@ def prepare_coco_dataset(
                         pass
                 shutil.copy2(source, target)
             (split_dir / "_annotations.coco.json").write_bytes(adapted[split])
-        (staging / MANIFEST_NAME).write_bytes(_json_bytes(manifest))
+        write_json(staging / MANIFEST_NAME, manifest, allow_nan=False)
         if destination_dir.exists() or destination_dir.is_symlink():
             raise FileExistsError(
                 f"Destination appeared during preparation: {destination_dir}"

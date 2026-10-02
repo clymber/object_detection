@@ -13,7 +13,6 @@ from .comparison import (
 from .metrics import (
     benchmark_predict,
     evaluate_predictions,
-    file_sha256,
     read_prediction_artifact,
     write_comparison,
     write_prediction_artifact,
@@ -44,7 +43,6 @@ __all__ = [
     "evaluate_predictions",
     "export_baseline",
     "export_predictions",
-    "file_sha256",
     "finalize_training_attempt",
     "latest_run_dir",
     "LOGICAL_DATASET",

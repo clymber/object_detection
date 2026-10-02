@@ -4,11 +4,11 @@ Verify framework-neutral run timing and immutable evaluation bundle publication.
 
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from detection_common.utils.digest import file_digest
 from detection_common.utils.json_io import read_json, write_json
 
 from detection_evaluation import (
@@ -372,15 +372,15 @@ def test_bundle_rejects_modified_or_mixed_artifacts(
     if tampering == "missing":
         (generation / "val_predictions.json").unlink()
     elif tampering == "modified":
-        (generation / "val_predictions.json").write_text("{}\n", encoding="utf-8")
+        write_json(generation / "val_predictions.json", {})
     else:
         mixed = read_json(generation / "val_predictions.json")
         write_json(generation / "test_predictions.json", mixed)
         manifest_path = bundle_dir / "manifest.json"
         replacement = read_json(manifest_path)
-        replacement["artifacts"]["test_predictions"]["sha256"] = hashlib.sha256(
-            (generation / "test_predictions.json").read_bytes()
-        ).hexdigest()
+        replacement["artifacts"]["test_predictions"]["sha256"] = file_digest(
+            generation / "test_predictions.json"
+        )
         write_json(manifest_path, replacement)
     with pytest.raises(ValueError):
         read_bundle(bundle_dir)

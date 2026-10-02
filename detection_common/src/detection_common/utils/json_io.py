@@ -1,5 +1,5 @@
 """
-Utilities for writing stable, human-readable JSON files.
+Utilities for stable, human-readable JSON serialization.
 """
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 
 def json_ready(value: Any) -> Any:
@@ -37,21 +37,57 @@ def json_ready(value: Any) -> Any:
     return value
 
 
-def write_json(path: Path | str, data: Mapping[str, Any]) -> int:
+def _json_text(data: Any, *, allow_nan: bool = True) -> str:
     """
-    Write sorted, indented JSON with a trailing newline.
+    Return data in the project's stable JSON text representation.
     """
-    return Path(path).write_text(
-        json.dumps(json_ready(data), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    return (
+        json.dumps(
+            json_ready(data),
+            allow_nan=allow_nan,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
     )
 
 
-def read_json(path: Path | str) -> dict[str, Any]:
+def json_bytes(data: Any, *, allow_nan: bool = True) -> bytes:
     """
-    Read a JSON object from disk.
+    Encode data in the project's stable UTF-8 JSON representation.
     """
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise TypeError(f"JSON file does not contain an object: {path}")
+    return _json_text(data, allow_nan=allow_nan).encode("utf-8")
+
+
+def json_normalize(data: Any, *, allow_nan: bool = True) -> Any:
+    """
+    Return an independent value containing only JSON-native types.
+    """
+    return json.loads(json_bytes(data, allow_nan=allow_nan))
+
+
+def write_json(
+    dst: Path | str | TextIO,
+    data: Any,
+    *,
+    allow_nan: bool = True,
+) -> int:
+    """
+    Write sorted, indented JSON with a trailing newline.
+    """
+    if isinstance(dst, (Path, str)):
+        return Path(dst).write_bytes(json_bytes(data, allow_nan=allow_nan))
+
+    return dst.write(_json_text(data, allow_nan=allow_nan))
+
+
+def read_json(src: Path | str | TextIO) -> Any:
+    """
+    Read a JSON value from a path or text stream.
+    """
+    if isinstance(src, (Path, str)):
+        data = json.loads(Path(src).read_text(encoding="utf-8"))
+    else:
+        data = json.load(src)
+
     return data

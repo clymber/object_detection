@@ -1,8 +1,6 @@
 """
 Utilities for working with images
 """
-import hashlib
-import struct
 from enum import StrEnum
 from io import BytesIO
 from pathlib import Path
@@ -13,7 +11,6 @@ from IPython.display import Image as IPyImage
 from IPython.display import display as ipy_display
 from matplotlib.figure import Figure
 from PIL import Image as PILImage
-from PIL import ImageOps
 
 
 class BBoxFormat(StrEnum):
@@ -52,31 +49,6 @@ def display(
         image.width = width
 
     ipy_display(image)
-
-def image_content_digest(
-    image: Path | str | PILImage.Image,
-    hash_alg: str = "sha256",
-) -> str:
-    """Hash and return a stable digest for an image's content.
-
-    - Normalizes EXIF orientation and converts the image to RGBA.
-    - Includes width and height before the pixel bytes.
-    - Makes equivalent images hash the same even if metadata or source format differs.
-    - Prevents collisions between images sharing pixels but with different dimensions.
-    """
-
-    if isinstance(image, (Path, str)):
-        with PILImage.open(image) as opened:
-            return image_content_digest(opened, hash_alg=hash_alg)
-
-    image = ImageOps.exif_transpose(image).convert("RGBA")
-
-    hasher = hashlib.new(hash_alg)
-    hasher.update(struct.pack(">II", image.width, image.height))
-    hasher.update(image.tobytes())
-
-    return hasher.hexdigest()
-
 
 def letterbox(
     image: np.ndarray,

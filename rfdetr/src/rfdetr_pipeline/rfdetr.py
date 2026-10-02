@@ -31,13 +31,13 @@ from dataset_builder import (
     verify_dataset_identity,
 )
 from detection_common import allocate_run_directory
+from detection_common.utils.digest import file_digest
 from detection_common.utils.json_io import read_json, write_json
 from detection_evaluation import (
     benchmark_predict,
     capture_training_hardware,
     create_run_protocol,
     evaluate_predictions,
-    file_sha256,
     finalize_training_attempt,
     publish_bundle,
     read_run_protocol,
@@ -760,7 +760,7 @@ def load_best_model(run_dir: Path) -> tuple[Any, dict]:
         )
     metadata = {
         "checkpoint": str(checkpoint),
-        "checkpoint_sha256": file_sha256(checkpoint),
+        "checkpoint_sha256": file_digest(checkpoint),
         "source_checkpoint": str(source_checkpoint),
         "best_epoch": best_epoch,
         "selected_weights": selection,

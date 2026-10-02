@@ -5,8 +5,6 @@ Persist framework-neutral training runs and atomically published evaluation bund
 from __future__ import annotations
 
 import fcntl
-import hashlib
-import json
 import math
 import os
 import platform
@@ -19,9 +17,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from detection_common.utils.json_io import json_ready, read_json
+from detection_common.utils.digest import file_digest, json_digest
+from detection_common.utils.json_io import json_bytes, json_normalize, read_json
 
-from .metrics import file_sha256, read_prediction_artifact
+from .metrics import read_prediction_artifact
 
 RUN_PROTOCOL_FILE_NAME = "run_protocol.json"
 TRAINING_FILE_NAME = "training.json"
@@ -30,22 +29,6 @@ RUN_PROTOCOL_SCHEMA_VERSION = 1
 BUNDLE_SCHEMA_VERSION = 1
 TIMING_PROTOCOL = "monotonic-synchronized-v1"
 _ATTEMPT_LOCKS: dict[str, int] = {}
-
-
-def _json_bytes(document: Mapping[str, Any]) -> bytes:
-    """
-    Encode a JSON-compatible document in the project's stable representation.
-    """
-    return (
-        json.dumps(json_ready(document), indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
-
-
-def _clone(document: Mapping[str, Any]) -> dict[str, Any]:
-    """
-    Make an independent JSON-compatible copy of a mapping.
-    """
-    return json.loads(_json_bytes(document))
 
 
 def _valid_sha256(value: Any) -> bool:
@@ -74,7 +57,7 @@ def _write_fsynced(path: Path, document: Mapping[str, Any] | bytes) -> None:
     """
     Write one file and synchronously flush its contents.
     """
-    payload = document if isinstance(document, bytes) else _json_bytes(document)
+    payload = document if isinstance(document, bytes) else json_bytes(document)
     with path.open("wb") as stream:
         stream.write(payload)
         stream.flush()
@@ -100,7 +83,7 @@ def _capture_immutable(path: Path, document: Mapping[str, Any]) -> dict[str, Any
     """
     Create a document once or verify that an existing copy is identical.
     """
-    expected = _clone(document)
+    expected = json_normalize(document)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
@@ -160,7 +143,7 @@ def _validate_dataset_identity(identity: Any) -> dict[str, Any]:
         raise ValueError("Canonical and loader source fingerprints differ")
     if not _valid_sha256(loader.get("loader_fingerprint")):
         raise ValueError("Loader dataset identity requires loader_fingerprint")
-    return _clone({"canonical": canonical, "loader": loader})
+    return json_normalize({"canonical": canonical, "loader": loader})
 
 
 def _validate_run_protocol(protocol: Any) -> dict[str, Any]:
@@ -195,7 +178,7 @@ def _validate_run_protocol(protocol: Any) -> dict[str, Any]:
             protocol["source_notebook"], "source_notebook"
         ),
         "original_utc": _utc_timestamp(protocol["original_utc"]),
-        "training_settings": _clone(protocol["training_settings"]),
+        "training_settings": json_normalize(protocol["training_settings"]),
         "smoke_run": protocol["smoke_run"],
         "dataset_identity": _validate_dataset_identity(protocol["dataset_identity"]),
     }
@@ -260,15 +243,8 @@ def capture_training_hardware(
         "platform": platform.platform(),
         "machine": platform.machine() or "unknown",
         "processor": platform.processor() or "unknown",
-        "details": _clone(details or {}),
+        "details": json_normalize(details or {}),
     }
-
-
-def _protocol_digest(protocol: Mapping[str, Any]) -> str:
-    """
-    Return the stable SHA256 identifier for immutable run provenance.
-    """
-    return hashlib.sha256(_json_bytes(protocol)).hexdigest()
 
 
 def _summary(attempts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -335,7 +311,7 @@ def _validate_attempt(attempt: Any) -> dict[str, Any]:
     hardware = attempt["training_hardware"]
     if not isinstance(hardware, Mapping) or not isinstance(hardware.get("device"), str):
         raise ValueError("Training attempt requires captured training hardware")
-    normalized = _clone(attempt)
+    normalized = json_normalize(attempt)
     if attempt["status"] != "running":
         duration = attempt["duration_seconds"]
         epochs = attempt["completed_epochs"]
@@ -367,7 +343,7 @@ def _validate_training_document(
         raise ValueError("Training metadata has missing or unsupported fields")
     if document["schema_version"] != RUN_PROTOCOL_SCHEMA_VERSION:
         raise ValueError("Unsupported training metadata schema")
-    if document["run_protocol_sha256"] != _protocol_digest(protocol):
+    if document["run_protocol_sha256"] != json_digest(protocol):
         raise ValueError("Training metadata belongs to different run provenance")
     if not isinstance(document["attempts"], list):
         raise ValueError("Training metadata requires an attempts list")
@@ -379,7 +355,7 @@ def _validate_training_document(
         raise ValueError("Training metadata summary does not match its attempts")
     return {
         "schema_version": RUN_PROTOCOL_SCHEMA_VERSION,
-        "run_protocol_sha256": _protocol_digest(protocol),
+        "run_protocol_sha256": json_digest(protocol),
         "attempts": attempts,
         "summary": summary,
     }
@@ -392,7 +368,7 @@ def _initial_training_document(protocol: Mapping[str, Any]) -> dict[str, Any]:
     attempts: list[dict[str, Any]] = []
     return {
         "schema_version": RUN_PROTOCOL_SCHEMA_VERSION,
-        "run_protocol_sha256": _protocol_digest(protocol),
+        "run_protocol_sha256": json_digest(protocol),
         "attempts": attempts,
         "summary": _summary(attempts),
     }
@@ -497,7 +473,7 @@ def _start_training_attempt(
             "kind": "resume" if resumed else "fresh",
             "started_monotonic_seconds": float(started),
             "timing_protocol": TIMING_PROTOCOL,
-            "training_hardware": _clone(training_hardware),
+            "training_hardware": json_normalize(training_hardware),
         }
     )
     state["summary"] = _summary(state["attempts"])
@@ -631,7 +607,7 @@ def _validate_bundle_inputs(
         raise ValueError("parameter_count must be a positive integer")
     if not checkpoint.is_file():
         raise FileNotFoundError(checkpoint)
-    checkpoint_digest = file_sha256(checkpoint)
+    checkpoint_digest = file_digest(checkpoint)
     for split, artifact in (("val", val_artifact), ("test", test_artifact)):
         metadata = artifact["metadata"]
         if metadata["split"] != split:
@@ -703,7 +679,7 @@ def _validate_bundle_manifest(manifest: Any) -> dict[str, Any]:
         expected = Path("generations") / generation / f"{name}.json"
         if relative.is_absolute() or relative != expected:
             raise ValueError("Bundle manifest artifact path escapes its generation")
-    return _clone(manifest)
+    return json_normalize(manifest)
 
 
 def publish_bundle(
@@ -783,7 +759,7 @@ def publish_bundle(
             "artifacts": {
                 name: {
                     "path": str(Path("generations") / generation / f"{name}.json"),
-                    "sha256": file_sha256(destination / f"{name}.json"),
+                    "sha256": file_digest(destination / f"{name}.json"),
                 }
                 for name in ("val_predictions", "test_predictions", "training")
             },
@@ -808,7 +784,7 @@ def read_bundle(
     documents: dict[str, dict[str, Any]] = {}
     for name, entry in manifest["artifacts"].items():
         path = root / entry["path"]
-        if not path.is_file() or file_sha256(path) != entry["sha256"]:
+        if not path.is_file() or file_digest(path) != entry["sha256"]:
             raise ValueError(f"Bundle artifact hash mismatch: {name}")
         documents[name] = read_json(path)
     provenance = manifest["provenance"]

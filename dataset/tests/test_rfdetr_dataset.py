@@ -2,12 +2,12 @@
 Exercise immutable RF-DETR dataset preparation without detector dependencies.
 """
 
-import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from detection_common.utils.json_io import read_json, write_json
 from PIL import Image
 
 from dataset_builder.rfdetr import prepare_coco_dataset, summarize_dataset
@@ -63,9 +63,7 @@ def _fixture(source: Path, *, extra_images: bool = False) -> Path:
                 }
             ],
         }
-        (source / "annotations" / f"instances_{split}.json").write_text(
-            json.dumps(coco), encoding="utf-8"
-        )
+        write_json(source / "annotations" / f"instances_{split}.json", coco)
     return source
 
 
@@ -74,9 +72,9 @@ def _edit_annotation(source: Path, split: str, edit) -> None:
     Apply a test mutation to an original annotation document.
     """
     path = source / "annotations" / f"instances_{split}.json"
-    coco = json.loads(path.read_text())
+    coco = read_json(path)
     edit(coco)
-    path.write_text(json.dumps(coco))
+    write_json(path, coco)
 
 
 @pytest.mark.parametrize("link_images", [True, False])
@@ -93,7 +91,7 @@ def test_preparation_preserves_negatives_ids_paths_and_boxes(
         source, destination, category_id=1, link_images=link_images
     )
 
-    coco = json.loads((destination / "valid" / "_annotations.coco.json").read_text())
+    coco = read_json(destination / "valid" / "_annotations.coco.json")
     assert coco["info"] == {"description": "unchanged fixture metadata"}
     assert [image["id"] for image in coco["images"]] == [11, 12]
     assert coco["annotations"][0] == {
@@ -195,7 +193,7 @@ def test_refuse_unknown_destination_and_changed_derived_annotation(
     assert (destination / "keep.txt").read_text() == "valuable"
     prepared = tmp_path / "prepared"
     prepare_coco_dataset(source, prepared)
-    (prepared / "test/_annotations.coco.json").write_text("{}")
+    write_json(prepared / "test/_annotations.coco.json", {})
     with pytest.raises(ValueError, match="test annotations changed"):
         prepare_coco_dataset(source, prepared)
 

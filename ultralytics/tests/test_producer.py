@@ -2,13 +2,13 @@
 Mock-only tests for the Ultralytics Stage 4 producer lifecycle.
 """
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from detection_common.utils.json_io import write_json
 from detection_evaluation import read_bundle, read_training_record
 
 from ultralytics_pipeline import producer
@@ -228,15 +228,13 @@ def test_recovery_publishes_bundle_without_training(
 
         annotation = tmp_path / f"{kwargs['metadata']['split']}.json"
         assert kwargs["category_ids"] == [item["id"] for item in categories]
-        annotation.write_text(
-            json.dumps(
-                {
-                    "images": [{"id": 1, "file_name": "image.jpg"}],
-                    "annotations": [],
-                    "categories": categories,
-                }
-            ),
-            encoding="utf-8",
+        write_json(
+            annotation,
+            {
+                "images": [{"id": 1, "file_name": "image.jpg"}],
+                "annotations": [],
+                "categories": categories,
+            },
         )
         artifacts[kwargs["metadata"]["split"]] = write_prediction_artifact(
             destination, annotation, [], metadata=kwargs["metadata"]

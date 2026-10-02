@@ -341,13 +341,13 @@ def _prediction_metadata(
     """
     Build shared artifact metadata from immutable run provenance.
     """
-    from detection_evaluation import file_sha256
+    from detection_common.utils.digest import file_digest
 
     return {
         "model": MODEL_NAME,
         "run_dir": str(checkpoint.parent.parent),
         "checkpoint": str(checkpoint),
-        "checkpoint_sha256": file_sha256(checkpoint),
+        "checkpoint_sha256": file_digest(checkpoint),
         "resolution": settings.resolution,
         "smoke_run": protocol["smoke_run"],
         "postprocessing": {

@@ -5,7 +5,6 @@ Shared COCO evaluation and portable prediction artifacts for detector comparison
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import io
 import math
 import platform
@@ -18,16 +17,9 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from detection_common.utils.digest import file_digest
 from detection_common.utils.json_io import read_json, write_json
 from PIL import Image
-
-
-def file_sha256(path: Path | str) -> str:
-    """
-    Hash a file without loading weights or images into memory all at once.
-    """
-    with Path(path).open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _predictions(
@@ -489,7 +481,7 @@ def write_prediction_artifact(
     destination.parent.mkdir(parents=True, exist_ok=True)
     checkpoint = Path(metadata["checkpoint"])
     checkpoint_sha256 = (
-        file_sha256(checkpoint)
+        file_digest(checkpoint)
         if checkpoint.is_file()
         else metadata.get("checkpoint_sha256")
     )
@@ -497,7 +489,7 @@ def write_prediction_artifact(
         raise ValueError("Prediction metadata requires the checkpoint SHA256")
     document = {
         "schema_version": 1,
-        "annotation_sha256": file_sha256(annotation_path),
+        "annotation_sha256": file_digest(annotation_path),
         "image_ids": sorted(image["id"] for image in ground_truth["images"]),
         "metadata": {
             **metadata,
@@ -543,7 +535,7 @@ def read_prediction_artifact(
         ground_truth = read_json(annotation_path)
         ids = sorted(image["id"] for image in ground_truth["images"])
         if (
-            artifact["annotation_sha256"] != file_sha256(annotation_path)
+            artifact["annotation_sha256"] != file_digest(annotation_path)
             or artifact["image_ids"] != ids
         ):
             raise ValueError("Prediction artifact belongs to a different dataset/split")
@@ -650,7 +642,7 @@ def write_comparison(
     write_json(
         destination / f"comparison_{split}.json",
         {
-            "annotation_sha256": file_sha256(annotation_path),
+            "annotation_sha256": file_digest(annotation_path),
             "split": split,
             "models": reports,
             "unavailable": [
@@ -809,7 +801,7 @@ def benchmark_predict(
         "host": platform.node(),
         "torch": version("torch"),
         "cuda_runtime": torch.version.cuda,
-        "image_sha256": [file_sha256(path) for path in image_paths[:sample_count]],
+        "image_sha256": [file_digest(path) for path in image_paths[:sample_count]],
         "gpu": torch.cuda.get_device_name(device)
         if device.startswith("cuda")
         else None,

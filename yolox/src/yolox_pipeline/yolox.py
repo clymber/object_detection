@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
 import math
 import os
 import random
@@ -60,7 +59,7 @@ import yolox.utils.boxes as yolox_boxes
 from yolox.utils import LRScheduler, ModelEMA, postprocess, replace_module
 
 from detection_common.utils.filepath import ensure_dir
-from detection_common.utils.json_io import read_json
+from detection_common.utils.json_io import read_json, write_json
 from detection_common.utils.urlhelper import cache_download
 
 from .config import OUTPUT_ROOT
@@ -880,7 +879,7 @@ def run_coco_eval(
             delete=False,
             encoding="utf-8",
         ) as tmp_file:
-            json.dump(detections, tmp_file)
+            write_json(tmp_file, detections)
             tmp_path = tmp_file.name
 
         with optional_stdout_suppression(verbose):

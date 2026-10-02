@@ -2,14 +2,14 @@
 Private helpers for composing the sport object dataset.
 """
 
-import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
 import datumaro as dm
 import pandas as pd
-from detection_common.utils.image import image_content_digest
+from detection_common.utils.digest import image_content_digest
+from detection_common.utils.json_io import read_json
 from PIL import Image
 
 from .datumaro import ExportFormat, prefer_hardlinked_datumaro_media
@@ -63,8 +63,7 @@ def _load_source(
                 f"Missing {source_dataset} {split} split. "
                 "Run its upstream dataset builder first."
             )
-        with annotation_path.open(encoding="utf-8") as file:
-            coco = json.load(file)
+        coco = read_json(annotation_path)
 
         categories = coco.get("categories", [])
         category_ids = {
@@ -174,8 +173,7 @@ def _validate_outputs(
         if expected_classes != set(CLASS_NAMES):
             raise ValueError(f"The {split} split does not contain both classes")
 
-        with _annotation_path(coco_root, split).open(encoding="utf-8") as file:
-            coco = json.load(file)
+        coco = read_json(_annotation_path(coco_root, split))
         if [category["name"] for category in coco["categories"]] != list(CLASS_NAMES):
             raise ValueError("Exported COCO category order is incorrect")
         image_by_id = {image["id"]: image for image in coco["images"]}

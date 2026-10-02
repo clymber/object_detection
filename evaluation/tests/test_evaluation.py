@@ -5,11 +5,11 @@ Verify shared detector metrics and portable artifact provenance on small COCO fi
 from pathlib import Path
 
 import pytest
+from detection_common.utils.digest import file_digest
 from detection_common.utils.json_io import read_json, write_json
 
 from detection_evaluation import (
     evaluate_predictions,
-    file_sha256,
     read_prediction_artifact,
     write_comparison,
     write_prediction_artifact,
@@ -243,8 +243,8 @@ def test_artifact_round_trip_preserves_empty_image_coverage(
     artifact = read_prediction_artifact(path, annotations)
     assert artifact["image_ids"] == [10, 20, 30]
     assert artifact["predictions"] == [prediction()]
-    assert artifact["annotation_sha256"] == file_sha256(annotations)
-    assert artifact["metadata"]["checkpoint_sha256"] == file_sha256(
+    assert artifact["annotation_sha256"] == file_digest(annotations)
+    assert artifact["metadata"]["checkpoint_sha256"] == file_digest(
         metadata["checkpoint"]
     )
     # Inference weights need not exist in the receiving environment.
