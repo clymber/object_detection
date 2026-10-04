@@ -29,6 +29,7 @@ import onnx
 import onnxruntime as ort
 from detection_common.utils.json_io import write_json
 
+from detection_evaluation import find_latest_path
 from detection_evaluation.config import (
     # DATA_ROOT,
     OUTPUT_ROOT,
@@ -47,15 +48,12 @@ print(f"IR version: {onnx.IR_VERSION}") # Intermediate representation version
 
 # %%
 RUN_ROOT = OUTPUT_ROOT / "runs"
-yolox_nano_sport_onnx: Path = (
-    RUN_ROOT / 
-    "sport_object"/
-    "yolox_nano_20260922T211805"/
-    "weights/best_ckpt.onnx"
-)
+onnx_path = find_latest_path(RUN_ROOT, "sport_object/yolox_nano*/**/*.onnx")
+if onnx_path is None:
+    raise FileNotFoundError("No YOLOX nano run contains a weights/*.onnx file")
 
+yolox_nano_sport_onnx: Path = onnx_path
 model = onnx.load(yolox_nano_sport_onnx)
-
 try:
     onnx.checker.check_model(model)
 except onnx.checker.ValidationError as err:

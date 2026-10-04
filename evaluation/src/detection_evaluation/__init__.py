@@ -2,7 +2,13 @@
 Framework-neutral evaluation and versioned prediction artifacts.
 """
 
-from .baseline import BaselineExport, export_baseline, latest_run_dir, prepare_baseline
+from .baseline import (
+    BaselineExport,
+    export_baseline,
+    find_latest_path,
+    latest_run_dir,
+    prepare_baseline,
+)
 from .comparison import (
     LOGICAL_DATASET,
     MODEL_NAMES,
@@ -44,6 +50,7 @@ __all__ = [
     "export_baseline",
     "export_predictions",
     "finalize_training_attempt",
+    "find_latest_path",
     "latest_run_dir",
     "LOGICAL_DATASET",
     "MODEL_NAMES",

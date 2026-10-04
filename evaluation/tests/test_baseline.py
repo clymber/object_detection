@@ -2,6 +2,7 @@
 Exercise the framework-neutral half of the split baseline exporters.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -11,10 +12,95 @@ from PIL import Image
 
 from detection_evaluation import (
     export_baseline,
+    find_latest_path,
     latest_run_dir,
     prepare_baseline,
     read_prediction_artifact,
 )
+
+
+@pytest.mark.parametrize("pattern", ["model_*/weights/*.onnx", "model_*/**/*.onnx"])
+def test_find_latest_path_skips_runs_without_exports(
+    tmp_path: Path, pattern: str
+) -> None:
+    """Find the newest export even when the newest run has no export yet."""
+    for name, timestamp in (("model_old", 1), ("model_ready", 2), ("model_new", 3)):
+        run_dir = tmp_path / name
+        weights = run_dir / "weights"
+        weights.mkdir(parents=True)
+        if name != "model_new":
+            export = weights / "best.onnx"
+            export.write_bytes(b"export")
+            os.utime(export, ns=(timestamp, timestamp))
+        os.utime(run_dir, ns=(timestamp, timestamp))
+    unrelated = tmp_path / "other_new"
+    unrelated.mkdir()
+    (unrelated / "model.onnx").write_bytes(b"export")
+    (tmp_path / "model_file").write_bytes(b"not a run directory")
+
+    assert find_latest_path(tmp_path, pattern) == (
+        tmp_path / "model_ready" / "weights" / "best.onnx"
+    )
+
+
+def test_find_latest_path_breaks_ties_deterministically(tmp_path: Path) -> None:
+    """Use lexical path order when matching files have equal timestamps."""
+    for name in ("model_a", "model_b"):
+        run_dir = tmp_path / name
+        run_dir.mkdir()
+        for filename in ("z.onnx", "a.onnx"):
+            export = run_dir / filename
+            export.write_bytes(b"export")
+            os.utime(export, ns=(1, 1))
+        os.utime(run_dir, ns=(1, 1))
+
+    assert find_latest_path(tmp_path, "model_*/*.onnx") == (
+        tmp_path / "model_b" / "z.onnx"
+    )
+
+
+@pytest.mark.parametrize("latest_kind", ["file", "directory"])
+def test_find_latest_path_accepts_files_and_directories(
+    tmp_path: Path, latest_kind: str
+) -> None:
+    """Compare files and directories together using their own timestamps."""
+    file_path = tmp_path / "artifact_file"
+    file_path.write_bytes(b"export")
+    directory_path = tmp_path / "artifact_directory"
+    directory_path.mkdir()
+    latest = file_path if latest_kind == "file" else directory_path
+    oldest = directory_path if latest_kind == "file" else file_path
+    os.utime(oldest, ns=(1, 1))
+    os.utime(latest, ns=(2, 2))
+
+    assert find_latest_path(tmp_path, "artifact_*") == latest
+
+
+def test_find_latest_path_uses_file_timestamp_instead_of_parent(tmp_path: Path) -> None:
+    """A newer export takes precedence over a newer parent directory."""
+    for name, file_time, dir_time in (("old_run", 2, 1), ("new_run", 1, 2)):
+        run_dir = tmp_path / name
+        run_dir.mkdir()
+        export = run_dir / "best.onnx"
+        export.write_bytes(b"export")
+        os.utime(export, ns=(file_time, file_time))
+        os.utime(run_dir, ns=(dir_time, dir_time))
+
+    assert find_latest_path(tmp_path, "*_run/*.onnx") == (
+        tmp_path / "old_run" / "best.onnx"
+    )
+
+
+@pytest.mark.parametrize("case", ["missing_root", "no_runs", "no_files"])
+def test_find_latest_path_returns_none(tmp_path: Path, case: str) -> None:
+    """Return None when the parent is missing or no path matches."""
+    runs_dir = tmp_path / "runs"
+    if case != "missing_root":
+        runs_dir.mkdir()
+    if case == "no_files":
+        (runs_dir / "model_empty").mkdir()
+
+    assert find_latest_path(runs_dir, "model_*/**/*.onnx") is None
 
 
 @pytest.fixture
