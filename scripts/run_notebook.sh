@@ -6,15 +6,44 @@ if [[ $# -ne 1 ]]; then
     printf 'Usage: %s <project>/notebooks/<file>.ipynb\n' "$0" >&2
     exit 2
 fi
+notebook="$1"
 
 workspace_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+subprojects=("dataset" "ultralytics" "yolox" "rfdetr" "evaluation")
 
-# Check if the notebook file exists relative to the workspace root.
-notebook="$1"
-if [[ ! -f "$workspace_root/$notebook" ]]; then
-    printf 'Notebook not found: %s\n' "$notebook" >&2
-    exit 2
+matches=()
+
+if [[ "${notebook}" =~ ^nb[[:digit:].]{5,}$ ]]; then
+    selector="$notebook"
+    shopt -s nullglob
+    for subproject in "${subprojects[@]}"; do
+        matches+=("${workspace_root}/${subproject}/notebooks/${selector}-"*.ipynb)
+    done
+    shopt -u nullglob
+else
+    matches+=($(realpath ${workspace_root}/${notebook}))
 fi
+
+case "${#matches[@]}" in
+    0)
+        printf 'Notebook not found: %s\n' "${notebook}" >&2
+        exit 2
+        ;;
+    1)
+        if [[ ! -f "${matches[0]}" ]]; then
+            printf "No such a file: %s\n" "${matches[0]}" >&2
+            exit 2
+        fi
+        notebook="${matches[0]#"$workspace_root/"}"
+        ;;
+    *)
+        printf 'Notebook selector is ambiguous: %s\n' "$selector" >&2
+        for match in "${matches[@]}"; do
+            printf '  %s\n' "${match#"$workspace_root/"}" >&2
+        done
+        exit 2
+        ;;
+esac
 
 # Determine the project based on the notebook path.
 case "$notebook" in
@@ -29,11 +58,8 @@ case "$notebook" in
         exit 2
         ;;
 esac
-case "$project" in
-    dataset|evaluation|rfdetr|ultralytics|yolox)
-        project_env="object-detection-$project"
-        ;;
-esac
+project_env="object-detection-$project"
+
 
 # Determine the conda binary based on the operating system.
 conda_bin="${CONDA_EXE:-$(type -P conda || true)}"
