@@ -90,20 +90,27 @@ write_json(sys.stdout, available_providers)
 
 # %%
 system = platform.system() # `Linux`, `Windows` or `Darwin`
-
 if system == "Linux" and "CUDAExecutionProvider" in available_providers:
     ort.preload_dlls(directory="")
+
+# CUDA or CoreML first if available, and fall back to CPU otherwise.
+common_providers = [
+    "CUDAExecutionProvider",
+    "CoreMLExecutionProvider",
+    "AzureExecutionProvider",
+    "CPUExecutionProvider",
+]
 
 session = ort.InferenceSession(
     yolox_nano_sport_onnx,
     providers=[
-        "CUDAExecutionProvider",    # Try NVDIA CUDA first
-        "CPUExecutionProvider",     # Fall back to CPU when needed
+        provider for provider in common_providers
+        if provider in available_providers
     ],
 )
 
 print("Registered execution providers:")
-write_json(sys.stdout, session.get_providers())
+_ = write_json(sys.stdout, session.get_providers())
 
 # %%
 for input in session.get_inputs():

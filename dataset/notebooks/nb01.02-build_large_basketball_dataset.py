@@ -31,7 +31,7 @@ configure_stdio_relative_path(WORKSPACE_ROOT)
 import hashlib
 import math
 from collections import defaultdict
-from itertools import islice
+from itertools import chain, islice
 from pathlib import Path
 
 import datumaro as dm
@@ -324,6 +324,8 @@ display(
 
 # %%
 background_ratio = 0.3
+# Datumaro subset discovery order varies by platform and filesystem.
+background_source_subset_order = ("test", "train", "valid")
 subset_statistics = image_statistics.drop(index="total")
 backgrounds_needed_by_subset = {}
 for subset, statistics in subset_statistics.iterrows():
@@ -341,7 +343,10 @@ if total_backgrounds_needed > len(backg_dm_dataset):
     raise ValueError("Not sufficient background images from tennis dataset.")
 
 background_records = []
-tennis_items = iter(backg_dm_dataset)
+tennis_items = chain.from_iterable(
+    backg_dm_dataset.get_subset(subset)
+    for subset in background_source_subset_order
+)
 for target_subset, count in backgrounds_needed_by_subset.items():
     for item in islice(tennis_items, count):
         background_records.append(
@@ -767,9 +772,9 @@ final_summary = pd.DataFrame(
             n_val,
             n_test,
             removed_duplicate_count,
-            str(coco_dataset_dir),
-            str(yolo_dataset_dir),
-            str(manifest_path),
+            str(coco_dataset_dir.relative_to(WORKSPACE_ROOT)),
+            str(yolo_dataset_dir.relative_to(WORKSPACE_ROOT)),
+            str(manifest_path.relative_to(WORKSPACE_ROOT)),
         ],
     }
 )
