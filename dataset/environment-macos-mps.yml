@@ -5,13 +5,23 @@ dependencies:
   - python=3.11
   - pip
   - pytest
-  - numpy<2.4
-  - pandas>=2.3,<3
-  - jinja2
-  - pillow
-  - scikit-learn
+
   - ipykernel
   - ipywidgets
+  - jinja2
+  - numpy<2.4
+  - pandas>=2.3,<3
+  - pillow
+  - scikit-learn
+
+  # Fiftyone
+  - fiftyone
+  - graphql-core=3.2.6
+  - pytorch=2.10
+  - starlette=0.40.0
+  - strawberry-graphql=0.257.0
+  - torchvision=0.25
+
   - pip:
       - datumaro==1.13.11
       - roboflow==1.4.2
