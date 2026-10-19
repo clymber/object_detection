@@ -5,6 +5,7 @@ Utilities for stable, human-readable JSON serialization.
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
@@ -79,6 +80,13 @@ def write_json(
         return Path(dst).write_bytes(json_bytes(data, allow_nan=allow_nan))
 
     return dst.write(_json_text(data, allow_nan=allow_nan))
+
+
+def print_json(data: Any, dst: Path | str | TextIO = sys.stdout) -> None:
+    """
+    Print a object in JSON format to a text IO stream (stdout by default).
+    """
+    _ = write_json(dst, data)
 
 
 def read_json(src: Path | str | TextIO) -> Any:

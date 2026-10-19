@@ -12,3 +12,7 @@ dependencies:
   - pycocotools
   - pyyaml
   - ipykernel
+  - opencv
+  - pip:
+      - onnx
+      - onnxruntime==1.30.0

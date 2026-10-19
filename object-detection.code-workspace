@@ -32,6 +32,18 @@
       "onNotebookDocumentSave": true,
       "onTextDocumentSave": true
     },
+    "[markdown]": {
+      "rewrap.wrappingColumn": 88,
+      "editor.rulers": [88]
+    },
+    "[python]": {
+      "rewrap.wrappingColumn": 88,
+      "editor.rulers": [88]
+    },
+    "[sh]": {
+      "rewrap.wrappingColumn": 80,
+      "editor.rulers": [80]
+    },
     "editor.minimap.enabled": false
   },
   "extensions": {
