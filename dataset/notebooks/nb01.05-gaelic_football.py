@@ -62,7 +62,18 @@ if index.neighbors_map:
 session = fo.launch_app(index.duplicates_view())
 
 # %%
-session.show()
+DUPLICATE_THRESHOLD = 0.8
+
+index.find_duplicates(thresh=DUPLICATE_THRESHOLD)
+
+duplicates_view = index.duplicates_view(
+    type_field="duplicate_type",
+    id_field="duplicate_group",
+    dist_field="duplicate_distance",
+)
+
+print(f"Potential duplicate images: {len(duplicates_view)}")
+session.view = duplicates_view
 
 # %%
 if session.selected:
@@ -74,8 +85,6 @@ if session.selected:
 
 
 # %%
-session.show()
-
 dataset.delete_samples(session.selected)
 session.clear_selected()
 session.refresh()
@@ -98,3 +107,6 @@ session.freeze()
 
 # %%
 print(dir_tree(CLEAN_PATH.parent))
+
+# %%
+session.show()

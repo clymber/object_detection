@@ -1,6 +1,8 @@
 name: object-detection-dataset
+
 channels:
   - conda-forge
+
 dependencies:
   - python=3.11
   - pip
@@ -14,14 +16,13 @@ dependencies:
   - pillow
   - scikit-learn
 
-  # Fiftyone
-  - fiftyone
-  - graphql-core=3.2.6
+  # PyTorch
   - pytorch=2.10
-  - starlette=0.40.0
-  - strawberry-graphql=0.257.0
   - torchvision=0.25
 
   - pip:
+      - fiftyone==1.22.1
+
+      # Dataset management
       - datumaro==1.13.11
       - roboflow==1.4.2
