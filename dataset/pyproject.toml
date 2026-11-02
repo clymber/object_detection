@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 full = [
     "datumaro",
+    "ImageHash>=4.3,<5",
     "roboflow",
     "scikit-learn",
 ]

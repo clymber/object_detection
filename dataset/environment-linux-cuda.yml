@@ -14,5 +14,6 @@ dependencies:
   - ipywidgets
   - pip:
       - datumaro==1.13.11
+      - ImageHash>=4.3,<5
       - roboflow==1.4.2
       - opencv-python-headless>=4.10,<5
