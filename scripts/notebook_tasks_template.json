@@ -1,0 +1,209 @@
+[
+  {
+    "env": {},
+    "path": "dataset/notebooks/nb01.01-build_small_basketball_dataset.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/dataset/nb01.01-build_small_basketball_dataset.log"
+  },
+  {
+    "env": {},
+    "path": "dataset/notebooks/nb01.02-build_large_basketball_dataset.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/dataset/nb01.02-build_large_basketball_dataset.log"
+  },
+  {
+    "env": {},
+    "path": "dataset/notebooks/nb01.03-build_football_dataset.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/dataset/nb01.03-build_football_dataset.log"
+  },
+  {
+    "env": {},
+    "path": "dataset/notebooks/nb01.04-build_sport_object_dataset.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/dataset/nb01.04-build_sport_object_dataset.log"
+  },
+  {
+    "env": {},
+    "path": "dataset/notebooks/nb01.05-gaelic_football.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/dataset/nb01.05-gaelic_football.log"
+  },
+  {
+    "env": {},
+    "path": "dataset/notebooks/smoke.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/dataset/smoke.log"
+  },
+  {
+    "env": {
+      "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+      "YOLO_OFFLINE": "true"
+    },
+    "path": "ultralytics/notebooks/nb02.01-ultralytics_yolo11n_on_basketball.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/ultralytics/nb02.01-ultralytics_yolo11n_on_basketball.log"
+  },
+  {
+    "env": {
+      "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+      "YOLO_OFFLINE": "true",
+      "ULTRALYTICS_WORKERS": "0",
+      "ULTRALYTICS_SMOKE": "0"
+    },
+    "path": "ultralytics/notebooks/nb02.02-ultra_yolo11n_large_basketball.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/ultralytics/nb02.02-ultra_yolo11n_large_basketball.log"
+  },
+  {
+    "env": {},
+    "path": "ultralytics/notebooks/smoke.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/ultralytics/smoke.log"
+  },
+  {
+    "env": {
+      "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+      "MPLCONFIGDIR": "/tmp/object_ctrl_matplotlib",
+      "YOLOX_TINY_SMOKE": "0",
+      "YOLOX_TINY_EPOCHS": "",
+      "YOLOX_TINY_BATCH_SIZE": "8",
+      "YOLOX_TINY_TRAIN_BATCH_LIMIT": "",
+      "YOLOX_TINY_IMAGE_SIZE": "640",
+      "YOLOX_TINY_SEED": "42",
+      "YOLOX_TINY_PROGRESS": "0",
+      "YOLOX_TINY_VERBOSE": "0"
+    },
+    "path": "yolox/notebooks/nb03.01-yolox_tiny_on_basketball.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/yolox/nb03.01-yolox_tiny_on_basketball.log"
+  },
+  {
+    "env": {
+      "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+      "MPLCONFIGDIR": "/tmp/object_ctrl_matplotlib",
+      "YOLOX_TINY_SMOKE": "0",
+      "YOLOX_TINY_EPOCHS": "",
+      "YOLOX_TINY_BATCH_SIZE": "8",
+      "YOLOX_TINY_TRAIN_BATCH_LIMIT": "",
+      "YOLOX_TINY_IMAGE_SIZE": "640",
+      "YOLOX_TINY_SEED": "42",
+      "YOLOX_TINY_VERBOSE": "0"
+    },
+    "path": "yolox/notebooks/nb03.02-yolox_tiny_large_basketball.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/yolox/nb03.02-yolox_tiny_large_basketball.log"
+  },
+  {
+    "env": {
+      "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+      "MPLCONFIGDIR": "/tmp/object_ctrl_matplotlib",
+      "YOLOX_NANO_SMOKE": "0",
+      "YOLOX_NANO_EPOCHS": "",
+      "YOLOX_NANO_BATCH_SIZE": "8",
+      "YOLOX_NANO_TRAIN_BATCH_LIMIT": "",
+      "YOLOX_NANO_IMAGE_SIZE": "640",
+      "YOLOX_NANO_SEED": "42",
+      "YOLOX_NANO_PROGRESS": "0",
+      "YOLOX_NANO_VERBOSE": "0"
+    },
+    "path": "yolox/notebooks/nb03.03-yolox_nano_large_basketball.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/yolox/nb03.03-yolox_nano_large_basketball.log"
+  },
+  {
+    "env": {
+      "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+      "MPLCONFIGDIR": "/tmp/object_ctrl_matplotlib",
+      "YOLOX_NANO_SPORT_SMOKE": "0",
+      "YOLOX_NANO_SPORT_EPOCHS": "",
+      "YOLOX_NANO_SPORT_BATCH_SIZE": "8",
+      "YOLOX_NANO_SPORT_TRAIN_BATCH_LIMIT": "",
+      "YOLOX_NANO_SPORT_IMAGE_SIZE": "640",
+      "YOLOX_NANO_SPORT_SEED": "42",
+      "YOLOX_NANO_SPORT_VERBOSE": "0"
+    },
+    "path": "yolox/notebooks/nb03.04-yolox_nano_sport_object.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/yolox/nb03.04-yolox_nano_sport_object.log"
+  },
+  {
+    "env": {
+      "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+      "MPLCONFIGDIR": "/tmp/object_ctrl_matplotlib",
+      "YOLOX_NANO_SMOKE": "0",
+      "YOLOX_NANO_EPOCHS": "",
+      "YOLOX_NANO_BATCH_SIZE": "8",
+      "YOLOX_NANO_TRAIN_BATCH_LIMIT": "",
+      "YOLOX_NANO_IMAGE_SIZE": "640",
+      "YOLOX_NANO_SEED": "42",
+      "YOLOX_NANO_PROGRESS": "0",
+      "YOLOX_NANO_VERBOSE": "0"
+    },
+    "path": "yolox/notebooks/nb03.05-yolox_nano_football.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/yolox/nb03.05-yolox_nano_football.log"
+  },
+  {
+    "env": {},
+    "path": "yolox/notebooks/smoke.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/yolox/smoke.log"
+  },
+  {
+    "env": {
+      "WORLD_SIZE": "1",
+      "RFDETR_MODE": "fresh",
+      "RFDETR_RUN_DIR": "",
+      "RFDETR_SMOKE": "0",
+      "RFDETR_EPOCHS": "100",
+      "RFDETR_BATCH_SIZE": "4",
+      "RFDETR_GRAD_ACCUM_STEPS": "1",
+      "RFDETR_RESOLUTION": "640",
+      "RFDETR_SEED": "42",
+      "RFDETR_NUM_WORKERS": "0",
+      "RFDETR_LR": "0.0001",
+      "RFDETR_LR_ENCODER": "0.00015",
+      "RFDETR_AMP": "1",
+      "RFDETR_GRADIENT_CHECKPOINTING": "0",
+      "RFDETR_EARLY_STOPPING": "1",
+      "RFDETR_EARLY_STOPPING_PATIENCE": "10",
+      "RFDETR_EARLY_STOPPING_MIN_DELTA": "0.001",
+      "RFDETR_EARLY_STOPPING_USE_EMA": "1",
+      "RFDETR_BENCHMARK": "1"
+    },
+    "path": "rfdetr/notebooks/nb04.02-rfdetr_small_large_basketball.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/rfdetr/nb04.02-rfdetr_small_large_basketball.log"
+  },
+  {
+    "env": {},
+    "path": "rfdetr/notebooks/smoke.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/rfdetr/smoke.log"
+  },
+  {
+    "env": {},
+    "path": "evaluation/notebooks/nb05.01-basketball_models_comparison.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/evaluation/nb05.01-basketball_models_comparison.log"
+  },
+  {
+    "env": {},
+    "path": "evaluation/notebooks/nb05.02-onnx_env_checkup.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/evaluation/nb05.02-onnx_env_checkup.log"
+  },
+  {
+    "env": {},
+    "path": "evaluation/notebooks/nb05.03-onnx_model_inference.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/evaluation/nb05.03-onnx_model_inference.log"
+  },
+  {
+    "env": {},
+    "path": "evaluation/notebooks/smoke.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/evaluation/smoke.log"
+  }
+]

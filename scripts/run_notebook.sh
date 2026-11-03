@@ -21,7 +21,7 @@ if [[ "${notebook}" =~ ^nb[[:digit:].]{5,}$ ]]; then
     done
     shopt -u nullglob
 else
-    matches+=($(realpath ${workspace_root}/${notebook}))
+    matches+=("$(realpath "$workspace_root/$notebook")")
 fi
 
 case "${#matches[@]}" in
@@ -74,12 +74,12 @@ fi
 
 conda_cmd() {
     env -u VIRTUAL_ENV -u PYTHONPATH -u PYTHONHOME -u PIP_PREFIX \
-        -u PIP_TARGET -u PIP_USER "$conda_bin" "$@"
+        -u PIP_TARGET -u PIP_USER PYTHONNOUSERSITE=1 "$conda_bin" "$@"
 }
 
 # Run the notebook using the determined project environment.
 JUPYTER_PATH="$workspace_root/.conda/envs/$project_env/share/jupyter" \
-    conda_cmd run -p "$workspace_root/.conda/envs/object-detection-notebooks" \
+    conda_cmd run --no-capture-output -p "$workspace_root/.conda/envs/object-detection-notebooks" \
     jupyter nbconvert "$workspace_root/$notebook" \
     --to notebook --execute --inplace \
     --ExecutePreprocessor.kernel_name="object-detection-$project" \
