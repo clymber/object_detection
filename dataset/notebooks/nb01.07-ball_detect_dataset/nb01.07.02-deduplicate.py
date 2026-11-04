@@ -26,6 +26,7 @@ from collections import defaultdict
 from typing import cast
 
 import fiftyone as fo
+from IPython.display import display
 
 MASTER_DATASET = "sports_objects_master"
 
@@ -36,9 +37,8 @@ MASTER_DATASET = "sports_objects_master"
 # subsequent analysis.
 # 2. **Compute and cache a separate perceptual_hash field**. Compare hashes using
 # Hamming distance, then display candidate pairs or groups for review.
-# 3. **Run embedding-based detection on those same exact-group representatives**. Keep
-#    unconfirmed perceptual matches in this search; they may help reveal additional
-#    relationships.
+# 3. **Run embedding-based detection on the remaining images**. Exclude samples
+#    with any tag matching `review*duplicate` before computing embeddings.
 # 4. **Record each method separately**, for example with `review:perceptual_duplicate`
 # and `review:embedding_duplicate` tags. Show references alongside candidates and retain
 # all samples during review.
@@ -482,8 +482,133 @@ else:
     print("Matched-pair distance range:", group.min_distance, "to", group.max_distance)
     session.view = perceptual_group_view
 
+# %%
+session.show()
+
 # %% [markdown]
-# ### 3.8 Summarize duplicate tags
+# ## 4. Detecting near duplicates (embedding similarity)
+#
+# Follow `nb01.05`: let FiftyOne compute embeddings with its default pretrained
+# model, compare distance thresholds on the same index, and review candidates.
+
+# %% [markdown]
+# ### 4.1 Select images without duplicate review tags
+#
+# Refresh the matching tag list from the master dataset, including any earlier
+# embedding-duplicate tags. Exclude each matching sample once. Snapshot the
+# excluded IDs so adding review tags does not change this run's comparison view.
+# Rerun this cell and the computation cell to refresh the selection.
+
+# %%
+embedding_excluded_tags = sorted(
+    tag for tag in cast(dict[str, int], master.count_sample_tags())
+    if fnmatchcase(tag, "review*duplicate")
+)
+embedding_excluded_ids = (
+    cast(list[str], master.match_tags(embedding_excluded_tags).values("id"))
+    if embedding_excluded_tags else []
+)
+embedding_view = master.exclude(embedding_excluded_ids)
+embedding_sample_count = embedding_view.count()
+
+print("Excluded tags:", embedding_excluded_tags)
+print("Already duplicate-tagged samples excluded:", len(embedding_excluded_ids))
+print("Images selected for embedding comparison:", embedding_sample_count)
+
+# %% [markdown]
+# ### 4.2 Compute near duplicates
+#
+# Compute embeddings only for the selected images. The first run may download
+# the default model. Rerunning this cell recomputes embeddings; use the following
+# threshold cells to explore results without repeating that work.
+# A distance threshold of 0.2 is a starting point for visual review.
+# If the kernel's working directory was removed, restore it before model loading.
+# Restart the kernel if an earlier attempt failed while importing PyTorch.
+
+# %%
+import os
+
+try:
+    os.getcwd()
+except FileNotFoundError:
+    os.chdir(WORKSPACE_ROOT)
+    print("Restored kernel working directory to:", WORKSPACE_ROOT)
+
+import fiftyone.brain as fob
+
+EMBEDDING_INITIAL_THRESHOLD = 0.2
+
+embedding_index = None
+if embedding_sample_count < 2:
+    print("At least two eligible images are required for duplicate comparison.")
+else:
+    embedding_index = fob.compute_near_duplicates(
+        embedding_view, threshold=EMBEDDING_INITIAL_THRESHOLD
+    )
+    print("Potential duplicate copies:", len(embedding_index.duplicate_ids or []))
+
+# %% [markdown]
+# ### 4.3 Compare distance thresholds
+#
+# Reuse the index to compare thresholds, as in `nb01.05`. Larger distances admit
+# less similar images. Counts refer to candidate extra copies, not all images
+# in duplicate groups. These candidates still require visual review.
+# Restore the initial threshold after the sweep.
+
+# %%
+EMBEDDING_THRESHOLDS = (0.02, 0.05, 0.10, 0.20)
+
+embedding_threshold_rows = []
+if embedding_index is not None:
+    for threshold in EMBEDDING_THRESHOLDS:
+        embedding_index.find_duplicates(thresh=threshold)
+        embedding_threshold_rows.append(
+            (threshold, len(embedding_index.duplicate_ids or []))
+        )
+    embedding_index.find_duplicates(thresh=EMBEDDING_INITIAL_THRESHOLD)
+
+embedding_threshold_summary = pd.DataFrame(
+    embedding_threshold_rows, columns=["distance_threshold", "candidate_copies"]
+)
+display(embedding_threshold_summary)
+
+# %% [markdown]
+# ### 4.4 Review candidates in FiftyOne
+#
+# Change the review threshold and rerun this cell to inspect another distance
+# range without recomputing embeddings. Show reference images alongside copies,
+# with group and distance fields available for inspection.
+# In the App, tag confirmed extra copies as `review:embedding_duplicate` and
+# leave their keepers untagged. Samples and source images are retained.
+# Rerun section 3.8 to refresh the combined duplicate-tag summary after review.
+
+# %%
+EMBEDDING_REVIEW_THRESHOLD = 0.02
+
+if embedding_index is None:
+    print("No embedding index. Check the eligible image count in section 4.1.")
+else:
+    embedding_index.find_duplicates(thresh=EMBEDDING_REVIEW_THRESHOLD)
+    print("Review distance threshold:", EMBEDDING_REVIEW_THRESHOLD)
+    print("Potential duplicate copies:", len(embedding_index.duplicate_ids or []))
+    embedding_review_view = embedding_index.duplicates_view(
+        type_field="embedding_duplicate_type",
+        id_field="embedding_duplicate_group",
+        dist_field="embedding_duplicate_distance",
+    )
+    if embedding_index.duplicate_ids:
+        session = fo.launch_app(view=embedding_review_view)
+    else:
+        print("No candidate duplicates at this threshold.")
+
+# %%
+session.freeze()
+
+
+# %% [markdown]
+# ## 5. Deduplicate results
+#
+# ### 5.1 Summarize duplicate tags
 #
 # Count sample tags matching `review:*duplicate`. The total counts each sample
 # once even when it has multiple matching tags. This summary does not change tags.
@@ -495,7 +620,7 @@ import pandas as pd
 
 duplicate_review_tag_counts = {
     tag: count
-    for tag, count in master.count_sample_tags().items()
+    for tag, count in cast(dict[str, int], master.count_sample_tags()).items()
     if fnmatchcase(tag, "review:*duplicate")
 }
 duplicate_tag_summary = pd.DataFrame(
@@ -517,8 +642,48 @@ print(
 )
 print("Samples without matching tags:", total_sample_count - duplicate_sample_count)
 
-# %%
-session.show()
-
 # %% [markdown]
-# ## 4. Detecting near duplicates (embedding similarity)
+# ### 5.2 Compare source datasets before and after deduplication
+#
+# Compare each source's imported image count with the count remaining after
+# excluding samples tagged `review:*duplicate`. Overlapping tags count once.
+# Include the overall reduction; samples and source images are retained.
+
+# %%
+source_original_counts = cast(
+    dict[str | None, int], master.count_values("source_dataset")
+)
+retained_view = (
+    master.match_tags(list(duplicate_review_tag_counts), bool=False)
+    if duplicate_review_tag_counts else master.view()
+)
+source_retained_counts = cast(
+    dict[str | None, int], retained_view.count_values("source_dataset")
+)
+source_deduplication_summary = pd.DataFrame(
+    [
+        (
+            source if source is not None else "(unknown)",
+            count,
+            source_retained_counts.get(source, 0),
+        )
+        for source, count in sorted(
+            source_original_counts.items(), key=lambda item: item[0] or ""
+        )
+    ],
+    columns=["source_dataset", "original_images", "after_deduplication"],
+)
+source_deduplication_summary.loc[len(source_deduplication_summary)] = (
+    "Total",
+    sum(source_original_counts.values()),
+    sum(source_retained_counts.values()),
+)
+source_deduplication_summary["duplicate_images"] = (
+    source_deduplication_summary["original_images"]
+    - source_deduplication_summary["after_deduplication"]
+)
+source_deduplication_summary["reduction_percent"] = (
+    100 * source_deduplication_summary["duplicate_images"]
+    / source_deduplication_summary["original_images"].replace(0, float("nan"))
+).fillna(0).round(2)
+display(source_deduplication_summary)
