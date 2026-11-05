@@ -14,8 +14,9 @@
 # # Compose sport datasets
 #
 # Run `nb01.07.01` to import sources and `nb01.07.02` to review duplicates first.
-# This notebook reads `sports_objects_master` and exports four versioned COCO
-# datasets. Samples tagged `review:*duplicate` are excluded; source annotations,
+# This notebook reads `sports_objects_master` and exports four sport datasets,
+# then combines the three ball datasets into `ball-v0.1`.
+# Samples tagged `review:*duplicate` are excluded; source annotations,
 # images, and review decisions remain unchanged.
 # Basketball and football keep only their ball class because auxiliary labels
 # are unevenly annotated across sources. Images without ball labels remain as
@@ -44,7 +45,7 @@ from IPython.display import display
 
 from dataset_builder import Dataset, prefer_hardlinked_datumaro_media
 from dataset_builder.config import DATA_ROOT, WORKSPACE_ROOT
-from dataset_builder.datumaro import ExportFormat
+from dataset_builder.datumaro import ExportFormat, ImportFormat
 
 configure_stdio_relative_path(WORKSPACE_ROOT)
 COMPOSED_ROOT = DATA_ROOT / "composed"
@@ -303,9 +304,79 @@ tennis = export_dataset(
 )
 
 # %% [markdown]
+# ## 6. Combined ball dataset — `ball-v0.1`
+#
+# Merge the existing COCO exports, preserving their splits and background images.
+# All three source categories become `ball`. Digest filenames stay unchanged;
+# repeated digest IDs stop the build, and COCO IDs are reindexed on export.
+#
+# | Input under `DATA_ROOT/composed/` | Category mapped to `ball` |
+# | --- | --- |
+# | `basketball-v0.1/coco/` | `basketball` |
+# | `football-v0.1/coco/` | `football` |
+# | `gaelic_football-v0.1/coco/` | `gaelic_football` |
+#
+# The result lives at `DATA_ROOT/composed/ball-v0.1/coco/`.
+
+# %%
+def export_ball_dataset(sources, name="ball-v0.1"):
+    """
+    Combine single-class COCO sources under the shared ball category.
+    """
+    root = COMPOSED_ROOT / name
+    if root.exists():
+        raise FileExistsError(f"Target already exists: {root}")
+    items, records, seen_digests = [], [], set()
+    for source_name, expected_label in sources.items():
+        source = dm.Dataset.import_from(
+            str(Dataset(COMPOSED_ROOT / source_name).coco),
+            format=ImportFormat.COCO_INSTANCES,
+        )
+        categories = cast(
+            dm.LabelCategories, source.categories()[dm.AnnotationType.label]
+        )
+        if [label.name for label in categories.items] != [expected_label]:
+            raise ValueError(f"Expected only {expected_label!r} in {source_name}")
+        for item in source:
+            if item.subset not in SPLITS:
+                raise ValueError(f"Unknown split in {source_name}: {item.subset!r}")
+            if item.id in seen_digests:
+                raise ValueError(f"Duplicate pixel_digest: {item.id}")
+            seen_digests.add(item.id)
+            items.append(item)
+            records.append({
+                "source": source_name, "split": item.subset, "images": 1,
+                "annotations": len(item.annotations),
+                "backgrounds": int(not item.annotations),
+            })
+    # Each source has label index 0; giving that index one name remaps all balls.
+    merged = dm.Dataset.from_iterable(items, categories=["ball"])
+    with TemporaryDirectory(prefix=f".{name}-", dir=COMPOSED_ROOT) as temporary:
+        staging = Path(temporary) / name
+        with prefer_hardlinked_datumaro_media():
+            merged.export(str(staging / "coco"), format=ExportFormat.COCO_INSTANCES,
+                          save_media=True, reindex=True)
+        staging.rename(root)
+    summary = pd.DataFrame(records).groupby(["source", "split"]).sum()
+    display(summary)
+    display(summary.groupby("split").sum().reindex(SPLITS))
+    result = Dataset(root)
+    print(f"COCO export: {result.coco}")
+    return result
+
+# %%
+ball = export_ball_dataset({
+    "basketball-v0.1": "basketball",
+    "football-v0.1": "football",
+    "gaelic_football-v0.1": "gaelic_football",
+})
+
+# %% [markdown]
 # ## Use an export
 #
 # Each returned object is a `dataset_builder.Dataset`. Use `football.coco` for
 # the canonical COCO path. Request `football.yolo` when YOLO is needed; the first
 # access converts COCO and subsequent accesses reuse the existing directory.
 # A YOLO training configuration is then at `football.yolo / "data.yaml"`.
+# The combined dataset works the same way: `ball.coco` and `ball.yolo` return
+# its format directories, and `ball.yolo / "data.yaml"` contains only class `ball`.

@@ -13,7 +13,7 @@ preferred over the `ROBOFLOW_API_KEY` environment variable. The notebooks in
 
 ## Versioned datasets
 
-`nb01.07.03-compose_datasets.py` composes the reviewed master dataset into
+`nb01.07.03-export_datasets.py` composes the reviewed master dataset into
 `DATA_ROOT/composed/<target-name>/coco/`. COCO is the canonical detection format;
 the matching Ultralytics YOLO export is generated when first requested:
 
@@ -31,6 +31,10 @@ Both properties return `pathlib.Path` objects. Conversion requires the dataset
 environment's Datumaro dependency and prefers hardlinked media, with a byte-copy
 fallback. Existing YOLO exports are reused. Keep each version's COCO content
 unchanged; compose a new version when its content changes.
+
+The notebook also combines the basketball, football, and Gaelic football COCO
+exports into `DATA_ROOT/composed/ball-v0.1/coco/`, with the single class `ball`.
+This merge preserves source splits, digest filenames, and background images.
 
 ## Platform environments
 
