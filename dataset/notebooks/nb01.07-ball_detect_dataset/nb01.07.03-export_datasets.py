@@ -17,6 +17,9 @@
 # This notebook reads `sports_objects_master` and exports four versioned COCO
 # datasets. Samples tagged `review:*duplicate` are excluded; source annotations,
 # images, and review decisions remain unchanged.
+# Basketball and football keep only their ball class because auxiliary labels
+# are unevenly annotated across sources. Images without ball labels remain as
+# background samples.
 #
 # Each export lives at `DATA_ROOT/composed/<target-name>/coco/`, with
 # `annotations/instances_{train,val,test}.json` and `images/{train,val,test}/`.
@@ -177,18 +180,17 @@ def export_dataset(
 # | Original labels | Target label |
 # | --- | --- |
 # | `ball`, `basketball` | `basketball` |
-# | `people`, `human` | `person` |
-# | `rim` | `rim` |
+# | `people`, `human`, `rim` | Remove annotation; keep image |
 
 # %%
 basketball_labels = {
     "ball": "basketball", "basketball": "basketball",
-    "people": "person", "human": "person", "rim": "rim",
+    "people": None, "human": None, "rim": None,
 }
 basketball = export_dataset(
     retained_view, "basketball-v0.1",
     {source: basketball_labels for source in ("basketball-lokg2", "basketball-xil7x")},
-    classes=["basketball", "person", "rim"],
+    classes=["basketball"],
 )
 
 # %% [markdown]
@@ -201,11 +203,11 @@ basketball = export_dataset(
 # | Source | Labels mapped to `football` | Other rules |
 # | --- | --- | --- |
 # | `football-2k4ty` | `football` | |
-# | `football-5beob` | `ball` | Keep `person` |
+# | `football-5beob` | `ball` | Remove `person` |
 # | `football-ablqb` | `football` | |
 # | `football-csdy0` | `football` | Exclude images with `otherball` |
 # | `football-detection-ftt4q` | `Football` | |
-# | `football-detection-gjrtq` | `Football`, `ball` | `Player`, `referee` → `person`; remove `big` |
+# | `football-detection-gjrtq` | `Football`, `ball` | Remove `Player`, `referee`, `big` |
 # | `football-gsgma` | `football`, `soccer`, `soccer ball`, `soccer_ball` | Remove `football2` |
 # | `football-rmhvy` | `Football`, `football_1` | Remove `Not football`, `hball` |
 # | `football-tnb17` | `football` | Exclude images with `other` |
@@ -216,13 +218,13 @@ basketball = export_dataset(
 # %%
 football_labels = {
     "football-2k4ty": {"football": "football"},
-    "football-5beob": {"ball": "football", "person": "person"},
+    "football-5beob": {"ball": "football", "person": None},
     "football-ablqb": {"football": "football"},
     "football-csdy0": {"football": "football"},
     "football-detection-ftt4q": {"Football": "football"},
     "football-detection-gjrtq": {
         "Football": "football", "ball": "football",
-        "Player": "person", "referee": "person", "big": None,
+        "Player": None, "referee": None, "big": None,
     },
     "football-gsgma": {
         "football": "football", "soccer": "football", "soccer ball": "football",
@@ -274,7 +276,7 @@ football_splits = {
 }
 football = export_dataset(
     retained_view, "football-v0.1", football_labels,
-    classes=["football", "person"], split_by_source=football_splits,
+    classes=["football"], split_by_source=football_splits,
     exclude_images={"football-csdy0": {"otherball"}, "football-tnb17": {"other"}},
 )
 
