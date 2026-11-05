@@ -7,6 +7,7 @@ from .coco import (
     summarize_coco_dataset,
     summarize_coco_datasets,
 )
+from .dataset import Dataset
 from .identity import (
     canonical_coco_identity,
     capture_dataset_identity,
@@ -32,6 +33,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "Dataset",
     "filter_coco_annotation_by_labels",
     "canonical_coco_identity",
     "capture_dataset_identity",
