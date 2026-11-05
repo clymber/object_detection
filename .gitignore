@@ -1,7 +1,6 @@
 # Ignore Jupyter notebooks, keep Jupytext notebooks instead.
 *.ipynb
-!/dataset/notebooks/nb01.07-ball_detect_dataset/nb01.07.01-sport_master_dataset.ipynb
-!/dataset/notebooks/nb01.07-ball_detect_dataset/nb01.07.02-deduplicate.ipynb
+!/dataset/notebooks/nb01.07-ball_detect_dataset/*.ipynb
 .notebook-stamps/
 
 /scripts/notebook_tasks.json*
@@ -174,3 +173,4 @@ cython_debug/
 /plans/*
 !/plans/nb05.01-basketball-models-comparison.md
 !/plans/plan_nb01.07.02-perceptual_hash.md
+!/plans/plan_nb01.07.03-compose_datasets.md
