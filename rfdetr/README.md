@@ -21,7 +21,17 @@ On Renku, the Linux profile uses CUDA 13.0 PyTorch wheels and
 headless OpenCV. Verify CUDA NMS and a synthetic RF-DETR Small
 prediction before training with real data.
 
-## Detached Runs and YOLO Comparison
+Training automatically enables `torch.compile` when CUDA is available. The first
+training steps include compilation overhead.
+
+## Training notebook and detached runs
+
+The notebook trains RF-DETR Small, displays training history, exports the selected
+checkpoint to ONNX, reviews prediction grids, and summarizes validation/test
+performance. Set `DATASET_NAME` in its experiment settings to select a dataset
+under `DATA_ROOT/composed/<DATASET_NAME>/coco/`. Image counts, category IDs, and
+class names come from the COCO annotations. Outputs stay in the run directory;
+the notebook does not publish a comparison bundle.
 
 Synchronize the project notebook, then run a bounded GPU smoke check through
 the RF-DETR Conda kernel:
@@ -44,16 +54,9 @@ conda run -p .conda/envs/object-detection-rfdetr python -m \
   rfdetr_pipeline.postprocess_cli --run-dir <run>
 ```
 
-Runs created before `run_protocol.json` cannot be recovered or converted; start
-a fresh experiment for shared comparison.
+Recovery requires a run with `run_protocol.json`; start a fresh training run
+when working with older outputs.
 
-For YOLO comparison, run `export-ultralytics-baseline` through
-`.conda/envs/object-detection-ultralytics` and
-`export-yolox-baseline --model tiny` / `--model nano` through
-`.conda/envs/object-detection-yolox`. Pass each command the same full `--dataset-dir` and
-`--output-dir`; the project READMEs show their arguments. Set
-`RFDETR_BASELINE_EXPORT_DIR` to that output directory when running this
-notebook. The exporters create the `<model>_<split>_predictions.json` files
-that its comparison cell reads. RF-DETR's ONNX worker is available as
+RF-DETR's ONNX worker is also available as
 `conda run -p .conda/envs/object-detection-rfdetr python -m
 rfdetr_pipeline.onnx_cli --run-dir <run>`.

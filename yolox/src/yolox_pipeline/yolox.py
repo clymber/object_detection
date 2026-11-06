@@ -672,6 +672,69 @@ def build_eval_dataset(
         )
 
 
+def verify_coco_loaders(
+    exp: YOLOXTinyExp, class_names: tuple[str, ...], *, source_dir: Path | None = None
+) -> dict:
+    """Check actual unaugmented loader membership, labels, boxes, and negatives."""
+    if source_dir is not None and Path(exp.data_dir).resolve() != source_dir.resolve():
+        raise ValueError(
+            "YOLOX experiment source differs from the recorded COCO source"
+        )
+    if exp.num_classes != len(class_names):
+        raise ValueError("YOLOX model class count differs from the recorded mapping")
+    report = {}
+    for split, spec in SPLITS.items():
+        if (
+            getattr(exp, f"{split}_ann") != spec.annotation_file
+            or getattr(exp, f"{split}_name") != spec.image_dir
+        ):
+            raise ValueError(
+                f"YOLOX {split} loader paths differ from the recorded COCO layout"
+            )
+        document = read_json(Path(exp.data_dir) / "annotations" / spec.annotation_file)
+        loader = build_eval_dataset(exp, split)
+        categories = sorted(document["categories"], key=lambda item: item["id"])
+        if tuple(item["name"] for item in categories) != class_names:
+            raise ValueError(f"YOLOX {split} class names differ from COCO")
+        if loader.class_ids != [item["id"] for item in categories]:
+            raise ValueError(f"YOLOX {split} category IDs differ from COCO")
+        images = {image["id"]: image for image in document["images"]}
+        if len(loader.ids) != len(images) or set(loader.ids) != set(images):
+            raise ValueError(f"YOLOX {split} image membership differs from COCO")
+        annotations = defaultdict(list)
+        for annotation in document["annotations"]:
+            annotations[annotation["image_id"]].append(annotation)
+        negatives = 0
+        for index, image_id in enumerate(loader.ids):
+            image = images[image_id]
+            scale = min(
+                exp.test_size[0] / image["height"], exp.test_size[1] / image["width"]
+            )
+            expected = []
+            for annotation in annotations[image_id]:
+                x, y, w, h = annotation["bbox"]
+                expected.append(
+                    (
+                        x * scale,
+                        y * scale,
+                        (x + w) * scale,
+                        (y + h) * scale,
+                        loader.class_ids.index(annotation["category_id"]),
+                    )
+                )
+            actual = sorted(tuple(row) for row in loader.load_anno(index))
+            if len(actual) != len(expected) or (
+                expected
+                and not np.allclose(actual, sorted(expected), rtol=1e-6, atol=1e-5)
+            ):
+                raise ValueError(f"YOLOX {split} targets differ for image {image_id}")
+            if loader.annotations[index][3] != image["file_name"]:
+                raise ValueError(f"YOLOX {split} image path differs for {image_id}")
+            negatives += not expected
+        report[split] = {"images": len(images), "backgrounds": negatives}
+    return report
+
+
 def build_eval_loader(
     exp: YOLOXTinyExp,
     split: str,
@@ -823,11 +886,7 @@ def compute_precision_recall(
     tp = 0
     fp = 0
     filtered_detections = sorted(
-        (
-            detection
-            for detection in detections
-            if detection["score"] >= conf_threshold
-        ),
+        (detection for detection in detections if detection["score"] >= conf_threshold),
         key=lambda detection: detection["score"],
         reverse=True,
     )
@@ -920,9 +979,7 @@ def evaluate_model(
     nms_time = 0.0
     image_count = 0
     iterable = (
-        tqdm(loader, desc=f"evaluate {split}", leave=False)
-        if progress
-        else loader
+        tqdm(loader, desc=f"evaluate {split}", leave=False) if progress else loader
     )
 
     for imgs, _, info_imgs, img_ids in iterable:
@@ -1032,9 +1089,7 @@ def save_checkpoint(
         "l1_enabled": l1_enabled,
         "validation_pending": validation_pending,
         "pending_train_metrics": (
-            dict(pending_train_metrics)
-            if pending_train_metrics is not None
-            else None
+            dict(pending_train_metrics) if pending_train_metrics is not None else None
         ),
         "training_config": {
             "iters_per_epoch": iters_per_epoch,
@@ -1184,9 +1239,7 @@ def restore_checkpoint(
         l1_enabled=bool(checkpoint["l1_enabled"]),
         validation_pending=validation_pending,
         pending_train_metrics=(
-            dict(pending_train_metrics)
-            if pending_train_metrics is not None
-            else None
+            dict(pending_train_metrics) if pending_train_metrics is not None else None
         ),
     )
 
@@ -1283,11 +1336,7 @@ def evaluate_losses(
     model.training = True
     model_head.training = True
 
-    iterable = (
-        tqdm(loader, desc=f"{split} loss", leave=False)
-        if progress
-        else loader
-    )
+    iterable = tqdm(loader, desc=f"{split} loss", leave=False) if progress else loader
     batch_count = 0
     try:
         for imgs, targets, _, _ in iterable:
@@ -2137,7 +2186,7 @@ def format_final_interpretation(
     final_row = history.iloc[-1]
 
     return f"""
-### YOLOX-Tiny training summary
+### YOLOX training summary
 
 The best validation checkpoint was selected at epoch
 **{int(best_row["epoch"])}**, with validation mAP50-95 of

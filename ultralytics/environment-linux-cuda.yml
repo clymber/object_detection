@@ -17,5 +17,6 @@ dependencies:
       - torch==2.10.0+cu130
       - torchvision==0.25.0+cu130
       - ultralytics-opencv-headless==8.4.138
+      - datumaro==1.13.11
       - opencv-python-headless>=4.10,<5
       - onnx>=1.12,<2

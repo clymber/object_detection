@@ -12,6 +12,7 @@ from types import ModuleType, SimpleNamespace
 import pandas as pd
 import pytest
 import torch
+from dataset_builder import Dataset as VersionedDataset
 from detection_common.utils.digest import file_digest
 from detection_common.utils.json_io import read_json, write_json
 from detection_evaluation import (
@@ -50,6 +51,71 @@ def _run_config(path: Path, settings: rfdetr.TrainingSettings) -> None:
     write_json(path / rfdetr.RUN_CONFIG, {"settings": values})
 
 
+@pytest.mark.parametrize("smoke_run", [False, True])
+def test_prepare_dataset_derives_inventory_and_classes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, smoke_run: bool
+) -> None:
+    """Prepare arbitrary split sizes and category IDs without experiment assertions."""
+    data_root = tmp_path / "data"
+    monkeypatch.setattr(rfdetr, "DATA_ROOT", data_root)
+    monkeypatch.setattr("dataset_builder.identity.DATA_ROOT", data_root)
+    dataset = VersionedDataset(data_root / "composed" / "widgets-v2")
+    (dataset.root / "coco/annotations").mkdir(parents=True)
+    counts = {"train": 17, "val": 9, "test": 10}
+    for split_index, (split, count) in enumerate(counts.items()):
+        images = []
+        image_dir = dataset.root / "coco/images" / split
+        image_dir.mkdir(parents=True)
+        for image_id in range(1, count + 1):
+            file_name = f"{image_id}.png"
+            Image.new("RGB", (16, 16), (split_index * 50, image_id, 30)).save(
+                image_dir / file_name
+            )
+            images.append(
+                {"id": image_id, "file_name": file_name, "width": 16, "height": 16}
+            )
+        write_json(
+            dataset.root / "coco/annotations" / f"instances_{split}.json",
+            {
+                "images": images,
+                "categories": [
+                    {"id": 7, "name": "widget"},
+                    {"id": 19, "name": "gizmo"},
+                ],
+                "annotations": [
+                    {
+                        "id": index,
+                        "image_id": 1,
+                        "category_id": category_id,
+                        "bbox": [index, index, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
+                        "segmentation": [],
+                    }
+                    for index, category_id in enumerate((7, 19), start=1)
+                ],
+            },
+        )
+
+    manifest, summary = rfdetr.prepare_dataset(
+        dataset, rfdetr.TrainingSettings(epochs=2, smoke_run=smoke_run)
+    )
+
+    assert summary["dataset_version"] == "widgets-v2"
+    assert summary["splits"] == {
+        split: {"images": count, "annotations": 2, "backgrounds": count - 1}
+        for split, count in counts.items()
+    }
+    assert manifest["category_mapping"]["class_names"] == ["widget", "gizmo"]
+    assert manifest["category_mapping"]["prediction_to_source"] == {"0": 7, "1": 19}
+    loader_counts = {"train": 16, "val": 8, "test": 8} if smoke_run else counts
+    for split, count in loader_counts.items():
+        assert manifest["splits"][split]["images"] == count
+        assert manifest["splits"][split]["annotations"] == 2
+        assert manifest["splits"][split]["negative_images"] == count - 1
+    assert not (dataset.root / "yolo").exists()
+
+
 def test_settings_support_smoke_and_removed_evaluate_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -74,7 +140,9 @@ def test_settings_support_smoke_and_removed_evaluate_mode(
         )
 
 
-def test_resume_of_a_preprotocol_run_requires_a_fresh_experiment(tmp_path: Path) -> None:
+def test_resume_of_a_preprotocol_run_requires_a_fresh_experiment(
+    tmp_path: Path,
+) -> None:
     """
     Reject historical runs rather than attempting an unsafe protocol conversion.
     """
@@ -165,6 +233,9 @@ def test_training_uses_supported_single_gpu_device_form(tmp_path: Path) -> None:
     assert kwargs["early_stopping_patience"] == 10
     assert kwargs["early_stopping_min_delta"] == 0.001
     assert kwargs["early_stopping_use_ema"] is True
+    assert kwargs["lr_scheduler_kwargs"] == {"lr_drop": 100}
+    assert "lr_drop" not in kwargs
+    assert "do_random_resize_via_padding" not in kwargs
 
 
 def test_resume_checkpoint_requires_full_state_and_remaining_budget(
@@ -213,22 +284,41 @@ def test_sparse_history_combines_training_and_validation_rows(tmp_path: Path) ->
     assert (tmp_path / "results.csv").is_file()
 
 
+@pytest.mark.parametrize(
+    ("total_prefix", "source_prefix"),
+    [("", ""), ("_orig_mod.", "_orig_mod."), ("_orig_mod.", ""), ("", "_orig_mod.")],
+)
 def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    total_prefix: str,
+    source_prefix: str,
 ) -> None:
     """
-    Verify selected weights and restore 640 pixels from the unstripped source.
+    Reload compiled or eager selected weights without changing the saved checkpoints.
     """
     settings = rfdetr.TrainingSettings()
     _run_config(tmp_path, settings)
-    weights = {"w": torch.tensor([1.0, 2.0])}
+    bias = torch.tensor([1.0, 2.0])
     total = tmp_path / rfdetr.BEST_CHECKPOINT
     source = tmp_path / "checkpoint_best_ema.pth"
-    torch.save({"model": weights, "args": {}, "best_total_source": "ema"}, total)
     torch.save(
-        {"model": weights, "epoch": 6, "model_config": {"resolution": 640}},
+        {
+            "model": {f"{total_prefix}class_embed.bias": bias},
+            "args": {"class_names": ["basketball"]},
+            "best_total_source": "ema",
+        },
+        total,
+    )
+    torch.save(
+        {
+            "model": {f"{source_prefix}class_embed.bias": bias},
+            "epoch": 6,
+            "model_config": {"resolution": 640},
+        },
         source,
     )
+    original_digests = {path: file_digest(path) for path in (total, source)}
     calls = []
 
     class FakeRFDETRSmall:
@@ -242,6 +332,10 @@ def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
             Return a one-class model while retaining the requested constructor values.
             """
             calls.append((path, kwargs))
+            state = torch.load(path, map_location="cpu", weights_only=False)
+            assert torch.equal(state["model"]["class_embed.bias"], bias)
+            assert state["args"]["class_names"] == ["basketball"]
+            assert state["best_total_source"] == "ema"
             return SimpleNamespace(
                 class_names=["basketball"],
                 model_config=SimpleNamespace(num_classes=1),
@@ -255,15 +349,23 @@ def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
     assert metadata["best_epoch"] == 7
     assert metadata["selected_weights"] == "ema"
     assert metadata["source_checkpoint"] == str(source)
-    assert calls[0][0] == total
+    assert metadata["checkpoint"] == str(total)
+    assert metadata["checkpoint_sha256"] == original_digests[total]
+    assert {path: file_digest(path) for path in (total, source)} == original_digests
+    if total_prefix:
+        assert calls[0][0] != total
+        assert not calls[0][0].exists()
+    else:
+        assert calls[0][0] == total
     assert calls[0][1]["resolution"] == 640
     assert calls[0][1]["positional_encoding_size"] == 40
     assert calls[0][1]["trust_checkpoint"] is True
     assert read_json(tmp_path / "best_checkpoint.json") == metadata
 
 
+@pytest.mark.parametrize("prefix", ["", "_orig_mod."])
 def test_best_checkpoint_rejects_a_mismatched_selected_source(
-    tmp_path: Path,
+    tmp_path: Path, prefix: str
 ) -> None:
     """
     Stop if the promoted total weights do not equal their named source checkpoint.
@@ -271,7 +373,7 @@ def test_best_checkpoint_rejects_a_mismatched_selected_source(
     _run_config(tmp_path, rfdetr.TrainingSettings())
     torch.save(
         {
-            "model": {"w": torch.tensor([1.0])},
+            "model": {f"{prefix}w": torch.tensor([1.0])},
             "args": {},
             "best_total_source": "regular",
         },
@@ -286,6 +388,31 @@ def test_best_checkpoint_rejects_a_mismatched_selected_source(
         tmp_path / "checkpoint_best_regular.pth",
     )
     with pytest.raises(ValueError, match="differ"):
+        rfdetr.load_best_model(tmp_path)
+
+
+@pytest.mark.parametrize("conflicting_checkpoint", ["total", "source"])
+def test_best_checkpoint_rejects_conflicting_compiled_weight_names(
+    tmp_path: Path, conflicting_checkpoint: str
+) -> None:
+    """Reject ambiguous names rather than silently replacing a trained tensor."""
+    _run_config(tmp_path, rfdetr.TrainingSettings())
+    states = {
+        "total": {
+            "model": {"w": torch.tensor([1.0])},
+            "best_total_source": "ema",
+        },
+        "source": {
+            "model": {"w": torch.tensor([1.0])},
+            "epoch": 0,
+            "model_config": {"resolution": 640},
+        },
+    }
+    states[conflicting_checkpoint]["model"]["_orig_mod.w"] = torch.tensor([2.0])
+    torch.save(states["total"], tmp_path / rfdetr.BEST_CHECKPOINT)
+    torch.save(states["source"], tmp_path / "checkpoint_best_ema.pth")
+
+    with pytest.raises(ValueError, match="conflicting compiled and uncompiled"):
         rfdetr.load_best_model(tmp_path)
 
 
@@ -611,11 +738,12 @@ def test_fit_closes_synchronized_timing_before_postprocessing(
     assert read_training_record(run_dir)["summary"]["total_seconds"] == 6.0
 
 
-def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("publish", [False, True])
+def test_postprocess_failure_recovers_with_optional_bundle_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publish: bool
 ) -> None:
     """
-    Recover a successful fit after postprocessing fails without another attempt.
+    Recover all run outputs without another fit, publishing only when requested.
     """
     run_dir, _settings = _completed_protocol_run(tmp_path, monkeypatch)
     checkpoint = run_dir / rfdetr.BEST_CHECKPOINT
@@ -631,7 +759,9 @@ def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
             """
             Path(path).touch()
 
-    monkeypatch.setattr(rfdetr, "plot_history", lambda _history: (FakeFigure(), FakeFigure()))
+    monkeypatch.setattr(
+        rfdetr, "plot_history", lambda _history: (FakeFigure(), FakeFigure())
+    )
     monkeypatch.setattr(
         rfdetr,
         "ensure_onnx_model_in_subprocess",
@@ -650,6 +780,13 @@ def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
         "fit_model",
         lambda *_args, **_kwargs: pytest.fail("postprocessing must not fit"),
     )
+    options = {"bundle_root": tmp_path / "bundle"} if publish else {"publish": False}
+    if not publish:
+        monkeypatch.setattr(
+            rfdetr,
+            "publish_bundle",
+            lambda *_args, **_kwargs: pytest.fail("notebook must not publish a bundle"),
+        )
 
     with pytest.raises(RuntimeError, match="postprocess failed"):
         monkeypatch.setattr(
@@ -659,7 +796,7 @@ def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
                 RuntimeError("postprocess failed")
             ),
         )
-        rfdetr.postprocess_run(run_dir, bundle_root=tmp_path / "bundle")
+        rfdetr.postprocess_run(run_dir, **options)
     assert len(read_training_record(run_dir)["attempts"]) == 1
 
     def fake_evaluate(
@@ -703,12 +840,21 @@ def test_postprocess_failure_recovers_and_republishes_smoke_bundle(
         return {}, artifact
 
     monkeypatch.setattr(rfdetr, "evaluate_split", fake_evaluate)
-    first = rfdetr.postprocess_run(run_dir, bundle_root=tmp_path / "bundle")
-    second = rfdetr.postprocess_run(run_dir, bundle_root=tmp_path / "bundle")
+    first = rfdetr.postprocess_run(run_dir, **options)
+    second = rfdetr.postprocess_run(run_dir, **options)
 
     assert len(read_training_record(run_dir)["attempts"]) == 1
-    assert first["bundle"]["provenance"]["smoke_run"] is True
-    assert read_bundle(tmp_path / "bundle", allow_smoke=True)["manifest"] == second["bundle"]
+    assert first["split_metrics"] == second["split_metrics"] == {"val": {}, "test": {}}
+    assert first["prediction_artifacts"] == second["prediction_artifacts"]
+    if publish:
+        assert first["bundle"]["provenance"]["smoke_run"] is True
+        assert (
+            read_bundle(tmp_path / "bundle", allow_smoke=True)["manifest"]
+            == second["bundle"]
+        )
+    else:
+        assert first["bundle"] is second["bundle"] is None
+        assert not (tmp_path / "bundle").exists()
 
 
 def test_multiclass_predictions_keep_second_class_and_skip_background() -> None:
@@ -724,8 +870,12 @@ def test_multiclass_predictions_keep_second_class_and_skip_background() -> None:
     assert all(row["image_id"] == 42 for row in rows)
 
 
-def test_multiclass_model_construction(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Build a two-output head without downloading pretrained weights."""
+@pytest.mark.parametrize("cuda_available", [False, True])
+def test_multiclass_model_construction(
+    monkeypatch: pytest.MonkeyPatch, cuda_available: bool
+) -> None:
+    """Build a two-output head and enable training compilation only with CUDA."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
     module = ModuleType("rfdetr")
     module.RFDETRSmall = lambda **kwargs: kwargs
     monkeypatch.setitem(sys.modules, "rfdetr", module)
@@ -733,6 +883,7 @@ def test_multiclass_model_construction(monkeypatch: pytest.MonkeyPatch) -> None:
         rfdetr.TrainingSettings(), class_names=["football", "basketball"]
     )
     assert model["num_classes"] == 2
+    assert model["compile"] is cuda_available
     kwargs = rfdetr.train_kwargs(
         rfdetr.TrainingSettings(),
         Path("dataset"),

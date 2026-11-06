@@ -8,14 +8,77 @@ from typing import Any
 
 import pytest
 import torch
-from detection_common.utils.json_io import write_json
+from detection_common.utils.json_io import read_json, write_json
 from detection_evaluation import (
     read_bundle,
     read_training_record,
     write_prediction_artifact,
 )
+from PIL import Image
 
 from yolox_pipeline import producer, yolox
+
+
+def test_direct_coco_loader_identity_and_resume_reject_changed_source(tmp_path):
+    """Verify native ball targets and reject drift without any YOLO export."""
+    source = tmp_path / "coco"
+    for split in ("train", "val", "test"):
+        images = []
+        for index in (1, 2):
+            path = source / "images" / split / f"{index}.png"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (40, 20), (index * 50, 20, 40)).save(path)
+            images.append(
+                {"id": index, "file_name": path.name, "width": 40, "height": 20}
+            )
+        path = source / "annotations" / f"instances_{split}.json"
+        path.parent.mkdir(exist_ok=True)
+        write_json(
+            path,
+            {
+                "images": images,
+                "categories": [{"id": 7, "name": "ball"}],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 7,
+                        "bbox": [4, 2, 20, 10],
+                        "area": 200,
+                        "iscrowd": 0,
+                    }
+                ],
+            },
+        )
+    paths = producer.resolve_dataset_paths(source, smoke_run=False)
+    identity = producer._dataset_identity(paths)
+    assert identity["loader"]["loader"]["format"] == "coco"
+    assert not (tmp_path / "yolo").exists()
+    exp = yolox.YOLOXNanoExp(
+        source, tmp_path / "runs", 2, 640, "ball", class_names=("ball",)
+    )
+    assert yolox.verify_coco_loaders(exp, ("ball",)) == {
+        split: {"images": 2, "backgrounds": 1} for split in ("train", "val", "test")
+    }
+    run_dir = tmp_path / "run"
+    model = producer.variant(
+        "nano",
+        logical_dataset="ball",
+        source_notebook="nb03.04-yolox_nano_sport_object.ipynb",
+    )
+    producer.prepare_run(
+        run_dir,
+        paths,
+        settings(),
+        model,
+        original_utc=datetime(2026, 11, 5, tzinfo=UTC),
+    )
+    path = source / "annotations/instances_train.json"
+    document = read_json(path)
+    document["annotations"][0]["bbox"][0] += 1
+    write_json(path, document)
+    with pytest.raises(ValueError, match="Dataset identity mismatch"):
+        producer.prepare_run(run_dir, paths, settings(), model)
 
 
 def identities(class_name: str = "basketball") -> dict[str, dict[str, Any]]:
@@ -34,7 +97,9 @@ def identities(class_name: str = "basketball") -> dict[str, dict[str, Any]]:
     }
 
 
-def settings(*, smoke_run: bool = False, benchmark: bool = False) -> producer.ProducerSettings:
+def settings(
+    *, smoke_run: bool = False, benchmark: bool = False
+) -> producer.ProducerSettings:
     """
     Build no-GPU native settings for producer lifecycle tests.
     """
@@ -64,7 +129,7 @@ def patch_identity(
     )
 
 
-@pytest.mark.parametrize("class_name", ["basketball", "football"])
+@pytest.mark.parametrize("class_name", ["basketball", "football", "ball"])
 @pytest.mark.parametrize("model_name", ["tiny", "nano"])
 def test_fresh_and_resumed_runs_append_timed_attempts(
     monkeypatch: pytest.MonkeyPatch,
@@ -95,7 +160,7 @@ def test_fresh_and_resumed_runs_append_timed_attempts(
     clock = iter((1.0, 4.0, 10.0, 16.0))
     common = {
         "run_dir": run_dir,
-        "paths": producer.DatasetPaths(tmp_path, tmp_path),
+        "paths": producer.DatasetPaths(tmp_path),
         "settings": settings(),
         "model": producer.variant(
             model_name, logical_dataset=class_name, source_notebook="training.ipynb"
@@ -149,7 +214,7 @@ def test_interrupted_fit_finalizes_without_publishing(
     with pytest.raises(RuntimeError, match="training failed"):
         producer.fit_run(
             run_dir,
-            producer.DatasetPaths(tmp_path, tmp_path),
+            producer.DatasetPaths(tmp_path),
             settings(),
             producer.variant(model_name),
             object(),
@@ -177,27 +242,30 @@ def test_smoke_paths_request_the_complete_stage_two_layout(
     captured: dict[str, Any] = {}
     smoke_root = tmp_path / "processed" / "coco_basketball_smoke"
 
-    def fake_prepare(source: Path, destination: Path) -> dict[str, Any]:
+    def fake_prepare(
+        source: Path, destination: Path, *, formats: tuple[str, ...]
+    ) -> dict[str, Any]:
         """
         Record the source and return the exact Stage 2 smoke record.
         """
         captured["source"] = source
         captured["destination"] = destination
+        captured["formats"] = formats
         return {"smoke_limits": {"train": 16, "val": 8, "test": 8}}
 
     monkeypatch.setattr(producer, "prepare_smoke_layouts", fake_prepare)
     monkeypatch.setattr(producer, "smoke_layout_directory", lambda _source: smoke_root)
     paths = producer.resolve_dataset_paths(
         tmp_path / "coco_basketball",
-        tmp_path / "yolo_basketball",
         smoke_run=True,
     )
 
     assert captured == {
         "source": (tmp_path / "coco_basketball").resolve(),
         "destination": smoke_root,
+        "formats": ("coco",),
     }
-    assert paths == producer.DatasetPaths(smoke_root / "coco", smoke_root / "yolo")
+    assert paths == producer.DatasetPaths(smoke_root / "coco")
 
 
 def test_smoke_settings_require_complete_layout_and_no_batch_limit() -> None:
@@ -234,7 +302,7 @@ def test_prepare_run_rejects_changed_identity(
     patch_identity(monkeypatch)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    paths = producer.DatasetPaths(tmp_path, tmp_path)
+    paths = producer.DatasetPaths(tmp_path)
     current = settings()
     producer.prepare_run(
         run_dir,
@@ -251,7 +319,7 @@ def test_prepare_run_rejects_changed_identity(
         producer.prepare_run(run_dir, paths, current, producer.variant("tiny"))
 
 
-@pytest.mark.parametrize("class_name", ["basketball", "football"])
+@pytest.mark.parametrize("class_name", ["basketball", "football", "ball"])
 def test_recovery_republishes_without_training_after_a_failed_publication(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, class_name: str
 ) -> None:
@@ -264,7 +332,7 @@ def test_recovery_republishes_without_training_after_a_failed_publication(
     checkpoint = run_dir / "weights" / "best_ckpt.pth"
     checkpoint.parent.mkdir()
     checkpoint.write_bytes(b"weights")
-    paths = producer.DatasetPaths(tmp_path, tmp_path)
+    paths = producer.DatasetPaths(tmp_path)
     current = settings(smoke_run=True)
     model = producer.variant(
         "nano",
@@ -320,7 +388,9 @@ def test_recovery_republishes_without_training_after_a_failed_publication(
             },
         )
         exported.append(split)
-        return write_prediction_artifact(destination, annotation, [], metadata=kwargs["metadata"])
+        return write_prediction_artifact(
+            destination, annotation, [], metadata=kwargs["metadata"]
+        )
 
     monkeypatch.setattr(producer.artifacts, "export_model_predictions", fake_export)
     monkeypatch.setattr(producer, "version", lambda _distribution: "test")
@@ -397,7 +467,7 @@ def test_recovery_uses_the_variant_experiment_and_best_checkpoint(
     checkpoint = run_dir / "weights" / "best_ckpt.pth"
     checkpoint.parent.mkdir()
     checkpoint.write_bytes(b"weights")
-    paths = producer.DatasetPaths(tmp_path, tmp_path)
+    paths = producer.DatasetPaths(tmp_path)
     current = settings()
     model = producer.variant(model_name)
     producer.prepare_run(
@@ -452,9 +522,12 @@ def test_recovery_uses_the_variant_experiment_and_best_checkpoint(
     assert captured["path"] == checkpoint
     assert captured["device"] == torch.device("cpu")
 
+
 @pytest.mark.parametrize("model_name", ["tiny", "nano"])
 def test_resume_settings_inherit_persisted_smoke_identity(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, model_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    model_name: str,
 ) -> None:
     """
     Resume either variant with its saved smoke controls and original epoch budget.
@@ -462,8 +535,11 @@ def test_resume_settings_inherit_persisted_smoke_identity(
     patch_identity(monkeypatch)
     saved = settings(smoke_run=True)
     producer.prepare_run(
-        tmp_path, producer.DatasetPaths(tmp_path, tmp_path), saved,
-        producer.variant(model_name), original_utc=datetime(2026, 9, 19, tzinfo=UTC),
+        tmp_path,
+        producer.DatasetPaths(tmp_path),
+        saved,
+        producer.variant(model_name),
+        original_utc=datetime(2026, 9, 19, tzinfo=UTC),
     )
     restored = producer.settings_from_run(tmp_path)
     assert restored.training.smoke_run is True

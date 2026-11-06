@@ -25,8 +25,13 @@ from typing import Any
 
 import pandas as pd
 from dataset_builder import (
+    Dataset as VersionedDataset,
+)
+from dataset_builder import (
     canonical_coco_identity,
     capture_dataset_identity,
+    prepare_smoke_layouts,
+    smoke_layout_directory,
     validate_rfdetr_layout,
     verify_dataset_identity,
 )
@@ -47,13 +52,15 @@ from detection_evaluation import (
 )
 from PIL import Image, ImageDraw
 
-from .config import OUTPUT_ROOT, SUBPROJECT_ROOT
+from .config import DATA_ROOT, OUTPUT_ROOT, SUBPROJECT_ROOT
 
-RFDETR_VERSION = "1.10.1"
+RFDETR_VERSION = "1.11.2"
 RUN_CONFIG = "run_config.json"
 BEST_CHECKPOINT = "checkpoint_best_total.pth"
 BEST_ONNX_MODEL = "checkpoint_best_total.onnx"
 RESUME_CHECKPOINT = "last.ckpt"
+
+
 class RunMode(StrEnum):
     """
     Identify whether an RF-DETR run is created or resumed.
@@ -160,7 +167,9 @@ class TrainingSettings:
         return self.batch_size * self.grad_accum_steps
 
 
-def _settings_from_protocol(protocol: Mapping[str, Any], run_dir: Path) -> TrainingSettings:
+def _settings_from_protocol(
+    protocol: Mapping[str, Any], run_dir: Path
+) -> TrainingSettings:
     """
     Reconstruct model settings from immutable provenance for a resumed run.
     """
@@ -195,7 +204,7 @@ def settings_from_env(*, overrides: dict[str, Any] | None = None) -> TrainingSet
             except FileNotFoundError as error:
                 raise ValueError(
                     "This RF-DETR run predates the shared protocol; start a fresh "
-                    "experiment for comparison."
+                    "experiment."
                 ) from error
             values = dict(protocol["training_settings"])
             values["smoke_run"] = protocol["smoke_run"]
@@ -221,11 +230,37 @@ def settings_from_env(*, overrides: dict[str, Any] | None = None) -> TrainingSet
             else:
                 values[field] = float(value) if field in float_fields else int(value)
     values.update(
-        {key: value for key, value in overrides.items() if key not in {"mode", "run_dir"}}
+        {
+            key: value
+            for key, value in overrides.items()
+            if key not in {"mode", "run_dir"}
+        }
     )
     if mode is RunMode.FRESH and values.get("smoke_run"):
         values.setdefault("epochs", 2)
     return TrainingSettings(**{**values, "mode": mode, "run_dir": run_dir})
+
+
+def prepare_dataset(
+    dataset: VersionedDataset,
+    settings: TrainingSettings,
+) -> tuple[dict, dict]:
+    """Prepare RF-DETR layouts using the selected dataset's inventory and classes."""
+    from dataset_builder.rfdetr import prepare_coco_dataset
+
+    summary = dataset.summary()
+    if settings.smoke_run:
+        root = smoke_layout_directory(dataset.coco)
+        prepare_smoke_layouts(dataset.coco, root, formats=("coco", "rfdetr"))
+        manifest = read_json(root / "rfdetr/manifest.json")
+    else:
+        manifest = prepare_coco_dataset(
+            dataset.coco,
+            DATA_ROOT / "processed/rfdetr" / dataset.root.name,
+            category_id=None,
+        )
+    summary.update(loader_dir=manifest["dataset_dir"], smoke_run=settings.smoke_run)
+    return manifest, summary
 
 
 def configure_caches(project_root: Path) -> dict[str, str]:
@@ -290,7 +325,7 @@ def train_kwargs(
     class_names: list[str] | tuple[str, ...] = ("basketball",),
 ) -> dict:
     """
-    Build the RF-DETR 1.10.1 training configuration with validation-only selection.
+    Build the RF-DETR training configuration with validation-only selection.
     """
     return {
         "dataset_dir": str(dataset_dir.resolve()),
@@ -312,11 +347,10 @@ def train_kwargs(
         "optimizer": "adamw",
         "weight_decay": 1e-4,
         "lr_scheduler": "step",
-        "lr_drop": settings.epochs,
+        "lr_scheduler_kwargs": {"lr_drop": settings.epochs},
         "multi_scale": False,
         "expanded_scales": False,
         "scale_jitter": False,
-        "do_random_resize_via_padding": False,
         "augmentation_backend": "torchvision",
         "use_ema": True,
         "best_model_metric": "map",
@@ -414,8 +448,7 @@ def prepare_run(settings: TrainingSettings, manifest: dict, runtime: dict) -> Pa
             protocol = read_run_protocol(run_dir)
         except FileNotFoundError as error:
             raise ValueError(
-                "This RF-DETR run predates the shared protocol; start a fresh "
-                "experiment for comparison."
+                "This RF-DETR run predates the shared protocol; start a fresh experiment."
             ) from error
         verify_dataset_identity(run_dir / "dataset_identity.json", dataset_identity)
         _verify_protocol(run_dir, dataset_identity, settings, protocol["original_utc"])
@@ -461,8 +494,10 @@ def build_model(
     class_names: list[str] | tuple[str, ...] = ("basketball",),
 ) -> Any:
     """
-    Initialize the Small model with one output per dataset class.
+    Initialize the Small model, enabling training compilation when CUDA is available.
     """
+    import torch
+
     from pytorch_lightning import seed_everything
     from rfdetr import RFDETRSmall
 
@@ -476,7 +511,7 @@ def build_model(
         positional_encoding_size=settings.resolution // 16,
         device="cuda:0",
         amp=settings.amp,
-        compile=False,
+        compile=torch.cuda.is_available(),
         gradient_checkpointing=settings.gradient_checkpointing,
     )
 
@@ -695,6 +730,18 @@ def plot_history(history: pd.DataFrame) -> tuple[Any, Any]:
     return losses, metrics
 
 
+def _normalize_checkpoint_weights(weights: dict[str, Any]) -> dict[str, Any]:
+    """Remove torch.compile's wrapper prefix without discarding conflicting weights."""
+    normalized = {
+        name.removeprefix("_orig_mod."): tensor for name, tensor in weights.items()
+    }
+    if len(normalized) != len(weights):
+        raise ValueError(
+            "Checkpoint has conflicting compiled and uncompiled weight names"
+        )
+    return normalized
+
+
 def load_best_model(run_dir: Path) -> tuple[Any, dict]:
     """
     Reload actual selected weights and record their epoch and EMA/regular provenance.
@@ -704,9 +751,9 @@ def load_best_model(run_dir: Path) -> tuple[Any, dict]:
     checkpoint = run_dir / BEST_CHECKPOINT
     if not checkpoint.is_file():
         raise FileNotFoundError(checkpoint)
-    # The selected total file is stripped in 1.10.1: epoch and model_config
-    # are lost. Recover provenance from its unstripped EMA/regular source and
-    # explicitly restore our resolution instead of silently using Small's 512.
+    # Recover provenance from the selected EMA/regular source, including older
+    # total checkpoints stripped of epoch and model_config. Restore our trained
+    # resolution instead of silently using Small's 512.
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)
     if not isinstance(state.get("model"), dict):
         raise ValueError("Best checkpoint is missing model weights")
@@ -723,29 +770,39 @@ def load_best_model(run_dir: Path) -> tuple[Any, dict]:
         raise ValueError("Selected source checkpoint is missing model configuration")
     if "epoch" not in source:
         raise ValueError("Selected source checkpoint is missing its epoch")
-    weights = state["model"]
-    if weights.keys() != source["model"].keys() or any(
-        not torch.equal(tensor, source["model"][key]) for key, tensor in weights.items()
+    weights = _normalize_checkpoint_weights(state["model"])
+    source_weights = _normalize_checkpoint_weights(source["model"])
+    if weights.keys() != source_weights.keys() or any(
+        not torch.equal(tensor, source_weights[key]) for key, tensor in weights.items()
     ):
         raise ValueError("Best checkpoint weights differ from its selected source")
     resolution = read_json(run_dir / RUN_CONFIG)["settings"]["resolution"]
     if source["model_config"]["resolution"] != resolution:
         raise ValueError("Best checkpoint resolution differs from the saved run")
     best_epoch = int(source["epoch"]) + 1
-    del state, source, weights
-    gc.collect()
     from rfdetr import RFDETRSmall
 
-    model = RFDETRSmall.from_checkpoint(
-        checkpoint,
-        trust_checkpoint=True,
-        device="cuda:0",
-        amp=False,
-        resolution=resolution,
-        positional_encoding_size=resolution // 16,
-        compile=False,
-        gradient_checkpointing=False,
-    )
+    with tempfile.TemporaryDirectory(prefix="rfdetr-checkpoint-") as temporary_dir:
+        reload_checkpoint = checkpoint
+        if weights.keys() != state["model"].keys():
+            # RF-DETR normalizes compiled Lightning state_dict keys, but not
+            # compiled EMA model keys. Stage a normalized copy for its loader;
+            # keep the original artifacts and provenance hashes intact.
+            reload_checkpoint = Path(temporary_dir) / checkpoint.name
+            state["model"] = weights
+            torch.save(state, reload_checkpoint)
+        del state, source, weights, source_weights
+        gc.collect()
+        model = RFDETRSmall.from_checkpoint(
+            reload_checkpoint,
+            trust_checkpoint=True,
+            device="cuda:0",
+            amp=False,
+            resolution=resolution,
+            positional_encoding_size=resolution // 16,
+            compile=False,
+            gradient_checkpointing=False,
+        )
     manifest_path = run_dir / "dataset_manifest.json"
     expected_names = (
         read_json(manifest_path)["category_mapping"]["class_names"]
@@ -863,7 +920,9 @@ def ensure_onnx_model_in_subprocess(project_root: Path, run_dir: Path) -> Path:
     return expected
 
 
-def _postprocess_state(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any], TrainingSettings]:
+def _postprocess_state(
+    run_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any], TrainingSettings]:
     """
     Read and verify the new-protocol provenance required for recovery output.
     """
@@ -872,14 +931,13 @@ def _postprocess_state(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any], T
         protocol = read_run_protocol(run_dir)
     except FileNotFoundError as error:
         raise ValueError(
-            "This RF-DETR run predates the shared protocol; start a fresh "
-            "experiment for comparison."
+            "This RF-DETR run predates the shared protocol; start a fresh experiment."
         ) from error
     manifest_path = run_dir / "dataset_manifest.json"
     if not manifest_path.is_file():
         raise ValueError(
             "This RF-DETR run has no persisted dataset manifest; start a fresh "
-            "experiment for comparison."
+            "experiment."
         )
     manifest = read_json(manifest_path)
     identity = _dataset_identity(manifest)
@@ -951,8 +1009,8 @@ def evaluate_split(
     derived_annotations = derived_dir / "_annotations.coco.json"
     if not derived_annotations.is_file():
         raise FileNotFoundError(derived_annotations)
-    # Smoke metrics use the explicitly bounded derived annotations. Full exports
-    # use byte-identical original ground truth for comparison to the YOLO artifacts.
+    # Smoke metrics use the subset annotations. Full runs use the original
+    # ground truth so exported predictions retain the source category IDs.
     annotation_path = (
         derived_annotations
         if manifest["mode"] == "smoke"
@@ -1039,10 +1097,11 @@ def evaluate_split(
 def postprocess_run(
     run_dir: Path,
     *,
+    publish: bool = True,
     bundle_root: Path | None = None,
 ) -> dict[str, Any]:
     """
-    Regenerate completed-run outputs and atomically publish both split artifacts.
+    Regenerate completed-run outputs, optionally publishing a comparison bundle.
     """
     run_dir = run_dir.expanduser().resolve()
     protocol, manifest, settings = _postprocess_state(run_dir)
@@ -1066,22 +1125,24 @@ def postprocess_run(
         )
         split_metrics[split] = metrics
         prediction_artifacts[split] = artifact
-    destination = bundle_root or (
-        OUTPUT_ROOT
-        / "evaluation"
-        / "basketball_large_dataset"
-        / MODEL_NAME
-        / run_dir.name
-    )
-    bundle = publish_bundle(
-        destination,
-        run_dir=run_dir,
-        val_predictions=prediction_artifacts["val"],
-        test_predictions=prediction_artifacts["test"],
-        selected_checkpoint=run_dir / BEST_CHECKPOINT,
-        resolution=settings.resolution,
-        parameter_count=best_metadata["parameters"],
-    )
+    bundle = None
+    if publish:
+        destination = bundle_root or (
+            OUTPUT_ROOT
+            / "evaluation"
+            / "basketball_large_dataset"
+            / MODEL_NAME
+            / run_dir.name
+        )
+        bundle = publish_bundle(
+            destination,
+            run_dir=run_dir,
+            val_predictions=prediction_artifacts["val"],
+            test_predictions=prediction_artifacts["test"],
+            selected_checkpoint=run_dir / BEST_CHECKPOINT,
+            resolution=settings.resolution,
+            parameter_count=best_metadata["parameters"],
+        )
     return {
         "history": history,
         "onnx_path": onnx_path,

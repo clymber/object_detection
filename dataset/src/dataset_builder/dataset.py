@@ -27,6 +27,35 @@ class Dataset:
             raise FileNotFoundError(f"COCO dataset not found: {path}")
         return path
 
+    def summary(self) -> dict:
+        """Report the validated COCO inventory for any dataset root and classes."""
+        from .identity import canonical_coco_identity
+
+        identity = canonical_coco_identity(self.coco)
+        categories = identity["canonical_source"]["category_mapping"]
+        splits = {}
+        for split, payload in identity["canonical_source"]["splits"].items():
+            positives = {item["image_id"] for item in payload["annotations"]}
+            splits[split] = {
+                "images": len(payload["images"]),
+                "annotations": len(payload["annotations"]),
+                "backgrounds": len(payload["images"]) - len(positives),
+            }
+        return {
+            "dataset_version": self.root.name,
+            "coco_dir": str(self.coco),
+            "source_fingerprint": identity["source_fingerprint"],
+            "category_mapping": [
+                {
+                    "source_id": category["id"],
+                    "model_index": index,
+                    "name": category["name"],
+                }
+                for index, category in enumerate(categories)
+            ],
+            "splits": splits,
+        }
+
     @property
     def yolo(self) -> Path:
         """
@@ -67,4 +96,3 @@ class Dataset:
                 format=ExportFormat.YOLO_ULTRALYTICS,
                 save_media=True,
             )
-

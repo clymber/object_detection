@@ -27,6 +27,36 @@ from detection_evaluation import (
 MODELS = ("yolo11n", "yolox_tiny", "yolox_nano", "rfdetr_small")
 
 
+def test_versioned_comparison_rejects_previous_annotation_export(tmp_path):
+    """Select a new-source bundle and evaluate only against that source's COCO."""
+    (tmp_path / "basketball-v0.1/coco/annotations").mkdir(parents=True)
+    (tmp_path / "coco_basketball/annotations").mkdir(parents=True)
+    annotations = {
+        split: _annotations(tmp_path / "basketball-v0.1/coco/annotations", split)
+        for split in ("val", "test")
+    }
+    old = {
+        split: _annotations(tmp_path / "coco_basketball/annotations", split)
+        for split in ("val", "test")
+    }
+    for path in old.values():
+        document = read_json(path)
+        document["info"] = {"dataset_version": "old"}
+        write_json(path, document)
+    output = tmp_path / "outputs"
+    _publish_bundle(
+        tmp_path, output, annotations, model="yolo11n", run_name="new-version", hour=12
+    )
+    selections = discover_bundles(
+        output, models=("yolo11n",), selections={"yolo11n": "new-version"}
+    )
+    assert set(
+        write_bundle_comparisons(selections, annotations, tmp_path / "reports/new")
+    ) == {"val", "test"}
+    with pytest.raises(ValueError, match="different dataset/split"):
+        write_bundle_comparisons(selections, old, tmp_path / "reports/old")
+
+
 def _annotations(root: Path, split: str) -> Path:
     """
     Write a compact basketball COCO split with one positive and one negative image.

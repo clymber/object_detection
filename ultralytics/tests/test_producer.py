@@ -14,6 +14,36 @@ from detection_evaluation import read_bundle, read_training_record
 from ultralytics_pipeline import producer
 
 
+def test_smoke_preparation_does_not_request_full_yolo_export(tmp_path, monkeypatch):
+    """Select the small native layout before evaluating the lazy full converter."""
+    from dataset_builder import Dataset
+
+    source = tmp_path / "basketball-v0.1/coco"
+    source.mkdir(parents=True)
+    monkeypatch.setattr(
+        Dataset,
+        "yolo",
+        property(
+            lambda self: (_ for _ in ()).throw(
+                AssertionError("Full conversion requested")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        producer, "smoke_layout_directory", lambda source: tmp_path / "smoke"
+    )
+
+    def prepare(source, destination, *, formats):
+        assert formats == ("coco", "yolo")
+        return {"smoke_limits": {"train": 16, "val": 8, "test": 8}}
+
+    monkeypatch.setattr(producer, "prepare_smoke_layouts", prepare)
+    result = producer.resolve_dataset_paths(Dataset(source.parent), smoke_run=True)
+    assert result == producer.DatasetPaths(
+        tmp_path / "smoke/coco", tmp_path / "smoke/yolo"
+    )
+
+
 class FakeModel:
     """
     Minimal model that records training kwargs and can fail before returning.
@@ -193,9 +223,7 @@ def test_recovery_publishes_bundle_without_training(
     checkpoint = run_dir / "weights" / "best.pt"
     checkpoint.parent.mkdir()
     checkpoint.write_bytes(b"weights")
-    settings = producer.TrainingSettings(
-        device="cpu", smoke_run=True, benchmark=False
-    )
+    settings = producer.TrainingSettings(device="cpu", smoke_run=True, benchmark=False)
     paths = producer.DatasetPaths(tmp_path, tmp_path)
     producer.prepare_run(
         run_dir, paths, settings, original_utc=datetime(2026, 9, 19, tzinfo=UTC)
@@ -258,8 +286,10 @@ def test_recovery_publishes_bundle_without_training(
     assert len(read_training_record(run_dir)["attempts"]) == 1
     assert read_bundle(tmp_path / "bundle", allow_smoke=True)["manifest"] == manifest
 
+
 def test_resume_settings_inherit_persisted_smoke_identity(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """
     Restore smoke controls without requiring the original shell environment.
@@ -267,7 +297,9 @@ def test_resume_settings_inherit_persisted_smoke_identity(
     patch_identity(monkeypatch)
     saved = producer.TrainingSettings(epochs=2, smoke_run=True, batch_size=3)
     producer.prepare_run(
-        tmp_path, producer.DatasetPaths(tmp_path, tmp_path), saved,
+        tmp_path,
+        producer.DatasetPaths(tmp_path, tmp_path),
+        saved,
         original_utc=datetime(2026, 9, 19, tzinfo=UTC),
     )
     assert producer.settings_from_run(tmp_path) == saved

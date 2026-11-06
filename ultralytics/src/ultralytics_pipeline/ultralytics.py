@@ -59,6 +59,7 @@ def reserved_run_callback(expected_dir: Path):
     """
     Build an Ultralytics callback that verifies its run directory before training.
     """
+
     def verify_run_directory(trainer: Any) -> None:
         """
         Verify the trainer's run directory before its first training batch.
@@ -227,3 +228,62 @@ def configure_privacy(
 
     settings.update(updates)
     return updates
+
+
+def read_training_history(results_csv):
+    """
+    Read an Ultralytics YOLO training results.csv file.
+    """
+    import pandas as pd
+
+    history = pd.read_csv(results_csv)
+    history.columns = history.columns.str.strip()
+    return history
+
+
+def plot_train_val_losses(history):
+    """
+    Plot train and validation YOLO losses.
+    """
+    import matplotlib.pyplot as plt
+
+    loss_names = ["box_loss", "cls_loss", "dfl_loss"]
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4), sharex=True)
+
+    for axis, loss_name in zip(axes, loss_names, strict=True):
+        axis.plot(history["epoch"], history[f"train/{loss_name}"], label="train")
+        axis.plot(history["epoch"], history[f"val/{loss_name}"], label="validation")
+        axis.set_title(loss_name)
+        axis.set_xlabel("epoch")
+        axis.set_ylabel("loss")
+        axis.grid(alpha=0.25)
+        axis.legend()
+
+    fig.tight_layout()
+    return fig, axes
+
+
+def plot_detection_metrics(history):
+    """
+    Plot YOLO validation detection metrics.
+    """
+    import matplotlib.pyplot as plt
+
+    metric_columns = [
+        ("precision", "metrics/precision(B)"),
+        ("recall", "metrics/recall(B)"),
+        ("mAP50", "metrics/mAP50(B)"),
+        ("mAP50-95", "metrics/mAP50-95(B)"),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
+
+    for axis, (metric_name, column) in zip(axes.ravel(), metric_columns, strict=True):
+        axis.plot(history["epoch"], history[column])
+        axis.set_title(metric_name)
+        axis.set_xlabel("epoch")
+        axis.set_ylabel("metric")
+        axis.set_ylim(0, 1)
+        axis.grid(alpha=0.25)
+
+    fig.tight_layout()
+    return fig, axes

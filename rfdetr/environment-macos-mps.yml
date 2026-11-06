@@ -17,4 +17,4 @@ dependencies:
   - ipywidgets
   - pip:
       - opencv-python-headless
-      - rfdetr[onnx,train]==1.10.1
+      - rfdetr[onnx,train]==1.11.2

@@ -5,6 +5,7 @@ Run provenance, timing, and bundle publication for YOLOX detection runs.
 from __future__ import annotations
 
 import csv
+import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -15,13 +16,17 @@ from typing import Any
 
 import torch
 from dataset_builder import (
+    Dataset as VersionedDataset,
+)
+from dataset_builder import (
     canonical_coco_identity,
     capture_dataset_identity,
     prepare_smoke_layouts,
     smoke_layout_directory,
-    validate_yolo_layout,
+    validate_coco_layout,
     verify_dataset_identity,
 )
+from detection_common import Device, allocate_run_directory
 from detection_common.utils.digest import file_digest
 from detection_common.utils.json_io import read_json
 from detection_evaluation import (
@@ -35,7 +40,7 @@ from detection_evaluation import (
 )
 
 from . import artifacts, yolox
-from .config import OUTPUT_ROOT
+from .config import OUTPUT_ROOT, WORKSPACE_ROOT
 
 BEST_CHECKPOINT = Path("weights/best_ckpt.pth")
 
@@ -72,11 +77,10 @@ VARIANTS = {
 @dataclass(frozen=True)
 class DatasetPaths:
     """
-    Canonical COCO source and the matching Stage 2 YOLO loader layout.
+    Canonical COCO source consumed directly by YOLOX.
     """
 
     source_dir: Path
-    yolo_dir: Path
 
 
 @dataclass(frozen=True)
@@ -106,8 +110,7 @@ class ProducerSettings:
         Reject smoke settings that would reduce the complete Stage 2 layout.
         """
         if self.training.smoke_run and (
-            self.training.epochs != 2
-            or self.training.train_batch_limit is not None
+            self.training.epochs != 2 or self.training.train_batch_limit is not None
         ):
             raise ValueError(
                 "YOLOX smoke runs require two epochs without train batch limits"
@@ -159,7 +162,6 @@ def settings_from_run(run_dir: Path) -> ProducerSettings:
 
 def resolve_dataset_paths(
     source_dir: Path,
-    yolo_dir: Path,
     *,
     smoke_run: bool,
 ) -> DatasetPaths:
@@ -167,24 +169,122 @@ def resolve_dataset_paths(
     Return full paths or materialize the complete deterministic smoke layouts.
     """
     source = source_dir.expanduser().resolve()
-    loader = yolo_dir.expanduser().resolve()
     if not smoke_run:
-        return DatasetPaths(source, loader)
+        return DatasetPaths(source)
     smoke_root = smoke_layout_directory(source)
-    record = prepare_smoke_layouts(source, smoke_root)
+    record = prepare_smoke_layouts(source, smoke_root, formats=("coco",))
     if record["smoke_limits"] != {"train": 16, "val": 8, "test": 8}:
         raise ValueError("Smoke dataset does not use the required 16/8/8 layout")
-    return DatasetPaths(smoke_root / "coco", smoke_root / "yolo")
+    return DatasetPaths(smoke_root / "coco")
 
 
 def _dataset_identity(paths: DatasetPaths) -> dict[str, dict[str, Any]]:
     """
-    Capture the canonical source and validated YOLO loader identities.
+    Capture the canonical source and the direct COCO loader identity.
     """
     return {
         "canonical": canonical_coco_identity(paths.source_dir),
-        "loader": validate_yolo_layout(paths.source_dir, paths.yolo_dir),
+        "loader": validate_coco_layout(paths.source_dir),
     }
+
+
+@dataclass(frozen=True)
+class PreparedExperiment:
+    """Resolved controls and paths for a notebook's existing producer calls."""
+
+    run_dir: Path
+    paths: DatasetPaths
+    settings: ProducerSettings
+    model: ModelVariant
+    device: torch.device
+    pretrained_path: Path
+    original_utc: datetime | None
+    summary: dict[str, Any]
+    class_names: tuple[str, ...]
+
+
+def evaluation_experiment(prepared: PreparedExperiment) -> yolox.YOLOXTinyExp:
+    """Construct a fresh experiment with the same class mapping for every phase."""
+    settings = prepared.settings.training
+    return prepared.model.experiment_class(
+        dataset_dir=prepared.paths.source_dir,
+        output_dir=prepared.run_dir.parent,
+        max_epoch=settings.epochs,
+        image_size=settings.image_size,
+        project_name=prepared.run_dir.name,
+        class_names=prepared.class_names,
+        seed=settings.seed,
+    )
+
+
+def prepare_experiment(
+    dataset: VersionedDataset,
+    *,
+    model_name: str,
+    class_names: tuple[str, ...],
+    logical_dataset: str,
+    source_notebook: str,
+    env_prefix: str,
+    resume_run_dir: str | None = None,
+) -> PreparedExperiment:
+    """Resolve training controls and paths for a versioned COCO dataset run."""
+    summary = dataset.summary()
+    key = f"{env_prefix}_RESUME_RUN"
+    if resume_run_dir is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = resume_run_dir
+    training = yolox.training_settings_from_env(
+        default_epochs=100, env_prefix=env_prefix
+    )
+    settings = (
+        settings_from_run(training.resolved_resume_run_dir)
+        if training.run_mode is yolox.RunMode.RESUME
+        else ProducerSettings(training)
+    )
+    training = settings.training
+    settings.validate()
+    paths = resolve_dataset_paths(dataset.coco, smoke_run=training.smoke_run)
+    model = variant(
+        model_name, logical_dataset=logical_dataset, source_notebook=source_notebook
+    )
+    original_utc = None
+    if training.run_mode is yolox.RunMode.FRESH:
+        allocation = allocate_run_directory(OUTPUT_ROOT, logical_dataset, model.name)
+        run_dir, original_utc = allocation.path, allocation.created_at
+    else:
+        run_dir = training.resolved_resume_run_dir
+        if not (run_dir / "weights/last_ckpt.pth").is_file():
+            raise FileNotFoundError(f"Resume checkpoint not found in {run_dir}")
+    prepare_run(run_dir, paths, settings, model, original_utc=original_utc)
+    device = torch.device(Device.auto_choose())
+    if device.type == "mps":
+        yolox.patch_mps_compatibility()
+    pretrained = WORKSPACE_ROOT / "models/pretrained/yolox" / f"{model.name}.pth"
+    pretrained = yolox.ensure_pretrained_checkpoint(
+        pretrained,
+        yolox.YOLOX_TINY_WEIGHTS_URL
+        if model_name == "tiny"
+        else yolox.YOLOX_NANO_WEIGHTS_URL,
+    )
+    summary.update(
+        loader_dir=str(paths.source_dir),
+        run_dir=str(run_dir),
+        device=str(device),
+        training=settings.protocol_settings(),
+        smoke_run=training.smoke_run,
+    )
+    return PreparedExperiment(
+        run_dir,
+        paths,
+        settings,
+        model,
+        device,
+        pretrained,
+        original_utc,
+        summary,
+        class_names,
+    )
 
 
 def prepare_run(
@@ -203,6 +303,11 @@ def prepare_run(
     identity = _dataset_identity(paths)
     identity_path = run_dir / "dataset_identity.json"
     if identity_path.exists():
+        saved = read_json(identity_path)
+        if saved.get("loader", {}).get("loader", {}).get("format") == "yolo":
+            raise ValueError(
+                "Legacy YOLOX loader identity uses YOLO format; start a fresh COCO run"
+            )
         verify_dataset_identity(identity_path, identity)
     else:
         capture_dataset_identity(identity_path, identity)
@@ -267,6 +372,17 @@ def fit_run(
         model,
         original_utc=original_utc,
     )
+    if fit is None:
+        yolox.verify_coco_loaders(
+            exp,
+            tuple(
+                category["name"]
+                for category in protocol["dataset_identity"]["canonical"][
+                    "canonical_source"
+                ]["category_mapping"]
+            ),
+            source_dir=paths.source_dir,
+        )
     before_epochs = _completed_epochs(run_dir)
     boundary = synchronize or (lambda: synchronize_cuda(device))
     attempt_id = start_training_attempt(
@@ -439,6 +555,17 @@ def recover_and_publish(
         ),
     )
     loaded_model = load_model(exp, checkpoint, device)
+    if load_model is yolox.load_trained_model:
+        yolox.verify_coco_loaders(
+            exp,
+            tuple(
+                category["name"]
+                for category in protocol["dataset_identity"]["canonical"][
+                    "canonical_source"
+                ]["category_mapping"]
+            ),
+            source_dir=paths.source_dir,
+        )
     metadata = _prediction_metadata(protocol, checkpoint, settings)
     category_ids = _category_ids(protocol)
     evaluation_dir = run_dir / "evaluation"
@@ -488,5 +615,7 @@ def recover_and_publish(
         test_predictions=prediction_paths["test"],
         selected_checkpoint=checkpoint,
         resolution=settings.training.image_size,
-        parameter_count=sum(parameter.numel() for parameter in loaded_model.parameters()),
+        parameter_count=sum(
+            parameter.numel() for parameter in loaded_model.parameters()
+        ),
     )

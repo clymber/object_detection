@@ -14,6 +14,7 @@ from dataset_builder.identity import (
     canonical_coco_identity,
     capture_dataset_identity,
     prepare_smoke_layouts,
+    validate_coco_layout,
     validate_rfdetr_layout,
     validate_yolo_layout,
     verify_dataset_identity,
@@ -204,6 +205,45 @@ def test_linked_smoke_layouts_remain_valid_after_staging_promotion(
     assert prepare_coco_dataset(
         destination / "coco", destination / "rfdetr", link_images=False
     ) == manifest
+
+@pytest.mark.parametrize(
+    "order", [("coco", "rfdetr", "yolo"), ("yolo", "rfdetr", "coco")]
+)
+def test_smoke_formats_are_independent_and_preserve_subset_identity(tmp_path, order):
+    """Build formats in either order without rewriting the shared COCO identity."""
+    source = _source(tmp_path / "source")
+    destination = tmp_path / "smoke"
+    first = prepare_smoke_layouts(source, destination, formats=(order[0],))
+    saved = (destination / IDENTITY_FILE_NAME).read_bytes()
+    for name in order[1:]:
+        assert prepare_smoke_layouts(source, destination, formats=(name,)) == first
+        assert (destination / IDENTITY_FILE_NAME).read_bytes() == saved
+    (destination / "yolo/data.yaml").write_text("invalid")
+    assert prepare_smoke_layouts(source, destination, formats=("coco",)) == first
+    assert prepare_smoke_layouts(source, destination, formats=("rfdetr",)) == first
+    with pytest.raises(ValueError):
+        prepare_smoke_layouts(source, destination, formats=("yolo",))
+
+
+def test_coco_only_smoke_avoids_converted_formats_and_tracks_loader_bytes(tmp_path):
+    """Direct COCO consumers need no other cache; file changes affect identity."""
+    source = _source(tmp_path / "source")
+    destination = tmp_path / "smoke"
+    record = prepare_smoke_layouts(source, destination, formats=("coco",))
+    assert not (destination / "yolo").exists()
+    assert not (destination / "rfdetr").exists()
+    before = validate_coco_layout(destination / "coco")
+    path = destination / "coco/annotations/instances_train.json"
+    document = read_json(path)
+    document["info"] = {"other": "informational metadata"}
+    write_json(path, document)
+    after = validate_coco_layout(destination / "coco")
+    assert (
+        before["source_fingerprint"]
+        == after["source_fingerprint"]
+        == record["subset_source_fingerprint"]
+    )
+    assert before["loader_fingerprint"] != after["loader_fingerprint"]
 
 
 def test_yolo_layout_accepts_image_lists_and_tracks_their_contents(

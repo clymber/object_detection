@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from dataset_builder import (
+    Dataset as VersionedDataset,
+)
 from dataset_builder import (
     canonical_coco_identity,
     capture_dataset_identity,
@@ -19,6 +22,7 @@ from dataset_builder import (
     validate_yolo_layout,
     verify_dataset_identity,
 )
+from detection_common import Device, allocate_run_directory
 from detection_common.utils.json_io import read_json
 from detection_evaluation import (
     benchmark_predict,
@@ -31,7 +35,7 @@ from detection_evaluation import (
 )
 
 from .artifacts import export_model_predictions, predict_image
-from .config import DATA_ROOT, OUTPUT_ROOT
+from .config import OUTPUT_ROOT, WORKSPACE_ROOT
 from .ultralytics import assert_run_directory, reserved_run_callback
 
 MODEL_NAME = "yolo11n"
@@ -165,23 +169,92 @@ def settings_from_run(run_dir: Path) -> TrainingSettings:
 
 
 def resolve_dataset_paths(
-    source_dir: Path,
-    yolo_dir: Path,
+    source_dir: Path | VersionedDataset,
+    yolo_dir: Path | None = None,
     *,
     smoke_run: bool,
 ) -> DatasetPaths:
     """
     Return the full layouts or materialize the complete deterministic smoke layouts.
     """
-    source = source_dir.expanduser().resolve()
-    loader = yolo_dir.expanduser().resolve()
+    source = (
+        source_dir.coco
+        if isinstance(source_dir, VersionedDataset)
+        else source_dir.expanduser().resolve()
+    )
     if not smoke_run:
+        loader = (
+            source_dir.yolo if isinstance(source_dir, VersionedDataset) else yolo_dir
+        )
+        if loader is None:
+            raise ValueError("Full Ultralytics training requires a YOLO layout")
         return DatasetPaths(source, loader)
     smoke_root = smoke_layout_directory(source)
-    record = prepare_smoke_layouts(source, smoke_root)
+    record = prepare_smoke_layouts(source, smoke_root, formats=("coco", "yolo"))
     if record["smoke_limits"] != {"train": 16, "val": 8, "test": 8}:
         raise ValueError("Smoke dataset does not use the required 16/8/8 layout")
     return DatasetPaths(smoke_root / "coco", smoke_root / "yolo")
+
+
+@dataclass(frozen=True)
+class PreparedExperiment:
+    """Notebook setup resolved before the existing training producer runs."""
+
+    run_dir: Path
+    paths: DatasetPaths
+    settings: TrainingSettings
+    model: Any
+    original_utc: datetime | None
+    resumed: bool
+    summary: dict[str, Any]
+
+
+def prepare_experiment(
+    dataset: VersionedDataset,
+    *,
+    resume_checkpoint: Path | None = None,
+) -> PreparedExperiment:
+    """Choose smoke/full paths and allocate or restore a versioned dataset run."""
+    import os
+
+    from ultralytics import YOLO
+
+    summary = dataset.summary()
+    workers = int(os.environ.get("ULTRALYTICS_WORKERS", "0"))
+    if workers < 0:
+        raise ValueError("ULTRALYTICS_WORKERS must be zero or greater")
+    if resume_checkpoint is None:
+        settings = replace(
+            settings_from_environment(workers=workers),
+            device=os.environ.get("ULTRALYTICS_DEVICE", Device.auto_choose()),
+        )
+        allocation = allocate_run_directory(OUTPUT_ROOT, LOGICAL_DATASET, MODEL_NAME)
+        run_dir, original_utc = allocation.path, allocation.created_at
+        checkpoint = WORKSPACE_ROOT / "models/pretrained/ultralytics/yolo11n.pt"
+    else:
+        checkpoint = Path(resume_checkpoint).expanduser().resolve()
+        if not checkpoint.is_file():
+            raise FileNotFoundError(checkpoint)
+        run_dir, original_utc = checkpoint.parent.parent, None
+        settings = settings_from_run(run_dir)
+    paths = resolve_dataset_paths(dataset, smoke_run=settings.smoke_run)
+    prepare_run(run_dir, paths, settings, original_utc=original_utc)
+    summary.update(
+        loader_dir=str(paths.yolo_dir),
+        run_dir=str(run_dir),
+        device=settings.device,
+        training=settings.protocol_settings(),
+        smoke_run=settings.smoke_run,
+    )
+    return PreparedExperiment(
+        run_dir,
+        paths,
+        settings,
+        YOLO(checkpoint),
+        original_utc,
+        resume_checkpoint is not None,
+        summary,
+    )
 
 
 def _dataset_identity(paths: DatasetPaths) -> dict[str, dict[str, Any]]:
@@ -285,9 +358,7 @@ def train_pinned_run(
 
     before_epochs = _completed_epochs(run_dir)
     clock = (
-        monotonic_clock
-        if monotonic_clock is not None
-        else __import__("time").monotonic
+        monotonic_clock if monotonic_clock is not None else __import__("time").monotonic
     )
     boundary = synchronize or (lambda: synchronize_cuda(settings.device))
     attempt_id = start_training_attempt(

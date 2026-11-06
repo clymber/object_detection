@@ -16,6 +16,59 @@ from dataset_builder import Dataset
 SPLITS = ("train", "val", "test")
 
 
+def test_summary_supports_arbitrary_versions_and_category_ids(tmp_path, monkeypatch):
+    """Keep inventory generic, multiclass, read-only, and independent of Datumaro."""
+    root = write_coco(tmp_path / "widgets-experimental")
+    for split in SPLITS:
+        path = root / "coco/annotations" / f"instances_{split}.json"
+        data = read_json(path)
+        data["categories"] = [{"id": 7, "name": "widget"}, {"id": 19, "name": "gizmo"}]
+        for annotation in data["annotations"]:
+            annotation["category_id"] = {1: 7, 2: 19}[annotation["category_id"]]
+        write_json(path, data)
+    before = {
+        path: path.read_bytes() for path in (root / "coco/annotations").glob("*.json")
+    }
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "datumaro" or name.startswith("datumaro."):
+            raise AssertionError("Inventory imported a format converter")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    summary = Dataset(root).summary()
+    assert summary["dataset_version"] == "widgets-experimental"
+    assert summary["category_mapping"] == [
+        {"source_id": 7, "model_index": 0, "name": "widget"},
+        {"source_id": 19, "model_index": 1, "name": "gizmo"},
+    ]
+    assert summary["splits"] == {
+        split: {"images": 2, "annotations": 2, "backgrounds": 1} for split in SPLITS
+    }
+    assert not (root / "yolo").exists()
+    assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_summary_accepts_empty_targets_and_zero_category_id(tmp_path):
+    """Report all-background splits without assuming a single COCO category ID."""
+    root = write_coco(tmp_path / "other-data")
+    for split in SPLITS:
+        path = root / "coco/annotations" / f"instances_{split}.json"
+        data = read_json(path)
+        data["annotations"] = []
+        data["categories"] = [{"id": 0, "name": "anything"}]
+        write_json(path, data)
+    summary = Dataset(root).summary()
+    assert summary["category_mapping"] == [
+        {"source_id": 0, "model_index": 0, "name": "anything"}
+    ]
+    assert all(
+        row == {"images": 2, "annotations": 0, "backgrounds": 2}
+        for row in summary["splits"].values()
+    )
+
+
 def write_coco(root: Path) -> Path:
     """
     Create positive and background images with digest filenames in every split.

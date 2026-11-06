@@ -254,9 +254,7 @@ def _yolo_split_images(
         if not image_path.is_file() or not image_path.is_relative_to(image_dir):
             raise ValueError(f"YOLO {split} list has an invalid image: {line}")
         image_paths.append(image_path)
-    directory_images = {
-        path for path in image_dir.rglob("*") if path.is_file()
-    }
+    directory_images = {path for path in image_dir.rglob("*") if path.is_file()}
     if (
         len(image_paths) != len(set(image_paths))
         or set(image_paths) != directory_images
@@ -348,9 +346,8 @@ def validate_yolo_layout(
     categories = source_identity["canonical_source"]["category_mapping"]
     expected_names = [category["name"] for category in categories]
     actual_names = [config["names"][index] for index in sorted(config["names"])]
-    if (
-        actual_names != expected_names
-        or list(config["names"]) != list(range(len(categories)))
+    if actual_names != expected_names or list(config["names"]) != list(
+        range(len(categories))
     ):
         raise ValueError("YOLO class names do not match the COCO category mapping")
     class_ids = {category["id"]: index for index, category in enumerate(categories)}
@@ -438,8 +435,7 @@ def validate_yolo_layout(
         "schema_version": 1,
         "format": "yolo",
         "category_mapping": {
-            str(index): category["id"]
-            for index, category in enumerate(categories)
+            str(index): category["id"] for index, category in enumerate(categories)
         },
         "class_names": expected_names,
         "data_yaml_sha256": file_digest(yaml_path),
@@ -733,6 +729,31 @@ def smoke_layout_directory(source_dir: str | Path) -> Path:
     return DATA_ROOT / "processed" / "smoke" / source.name / fingerprint
 
 
+def validate_coco_layout(source_dir: str | Path) -> dict[str, Any]:
+    """Capture the split files and media consumed by a direct COCO loader."""
+    source = Path(source_dir).expanduser().resolve()
+    identity = canonical_coco_identity(source)
+    loader = {
+        "schema_version": 1,
+        "format": "coco",
+        "category_mapping": identity["canonical_source"]["category_mapping"],
+        "splits": {
+            split: {
+                "annotation_sha256": file_digest(
+                    source / "annotations" / f"instances_{split}.json"
+                ),
+                "images": _source_images(identity, split),
+            }
+            for split in SPLIT_NAMES
+        },
+    }
+    return {
+        "source_fingerprint": identity["source_fingerprint"],
+        "loader": loader,
+        "loader_fingerprint": json_digest(loader, allow_nan=False),
+    }
+
+
 def prepare_smoke_layouts(
     source_dir: str | Path,
     destination_dir: str | Path | None = None,
@@ -740,16 +761,16 @@ def prepare_smoke_layouts(
     dataset_name: str | None = None,
     limits: Mapping[str, int] = SMOKE_LIMITS,
     link_images: bool = True,
+    formats: tuple[str, ...] = ("coco", "yolo", "rfdetr"),
 ) -> dict[str, Any]:
     """
-    Prepare equivalent 16/8/8 COCO, YOLO, and RF-DETR smoke layouts.
-
-    By default output is created below ``DATA_ROOT/processed``. Existing output
-    is never replaced: its identity record and all three layouts must still
-    validate before it can be reused.
+    Prepare one immutable COCO subset and independently requested loader caches.
     """
     if set(limits) != set(SPLIT_NAMES):
         raise ValueError("Smoke limits must specify train, val, and test")
+    requested = set(formats) | {"coco"}
+    if requested - {"coco", "yolo", "rfdetr"}:
+        raise ValueError("Unsupported smoke format")
     source = Path(source_dir).expanduser().resolve()
     target_name = dataset_name or f"{source.name}_smoke"
     destination = (
@@ -761,84 +782,57 @@ def prepare_smoke_layouts(
         if destination_dir is None
         else Path(destination_dir).expanduser().resolve()
     )
-    if destination.exists() or destination.is_symlink():
-        prepare_coco_dataset(
-            destination / "coco", destination / "rfdetr", link_images=False
+    parent_fingerprint = canonical_coco_identity(source)["source_fingerprint"]
+    if not destination.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".smoke-", dir=destination.parent))
+        try:
+            _write_coco_subset(source, staging / "coco", limits, link_images)
+            staging.rename(destination)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+    subset = canonical_coco_identity(destination / "coco")
+    record = {
+        "schema_version": 2,
+        "kind": "smoke_dataset",
+        "smoke_limits": dict(limits),
+        "parent_source_fingerprint": parent_fingerprint,
+        "selected_ids": {
+            split: [image["image_id"] for image in _source_images(subset, split)]
+            for split in SPLIT_NAMES
+        },
+        "subset_source_fingerprint": subset["source_fingerprint"],
+        "loader_fingerprints": {"coco": subset["source_fingerprint"]},
+    }
+    for split in SPLIT_NAMES:
+        coco, _ = _read_split(source, split)
+        expected = sorted(
+            image["id"] for image in _smoke_subset(coco, limits[split])["images"]
         )
-        coco_identity = canonical_coco_identity(destination / "coco")
-        yolo_identity = validate_yolo_layout(destination / "coco", destination / "yolo")
-        rfdetr_identity = validate_rfdetr_layout(
-            destination / "coco", destination / "rfdetr"
-        )
-        expected = {
-            "schema_version": 1,
-            "kind": "smoke_dataset",
-            "smoke_limits": dict(limits),
-            "parent_source_fingerprint": canonical_coco_identity(source)[
-                "source_fingerprint"
-            ],
-            "selected_ids": {
-                split: [
-                    image["image_id"]
-                    for image in _source_images(coco_identity, split)
-                ]
-                for split in SPLIT_NAMES
-            },
-            "subset_source_fingerprint": coco_identity["source_fingerprint"],
-            "loader_fingerprints": {
-                "coco": coco_identity["source_fingerprint"],
-                "yolo": yolo_identity["loader_fingerprint"],
-                "rfdetr": rfdetr_identity["loader_fingerprint"],
-            },
-        }
-        return verify_dataset_identity(destination / IDENTITY_FILE_NAME, expected)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".smoke-", dir=destination.parent))
-    promoted = False
-    try:
-        selected_ids = _write_coco_subset(source, staging / "coco", limits, link_images)
-        subset_identity = canonical_coco_identity(staging / "coco")
-        _write_yolo_subset(
-            subset_identity,
-            staging / "yolo",
-            source / "images",
-            destination / "yolo",
-            link_images,
-        )
-        manifest = prepare_coco_dataset(
-            staging / "coco", staging / "rfdetr", link_images=False
-        )
-        # The loader manifest survives promotion, so persist its final roots.
-        # Roots are intentionally excluded from the content fingerprint.
-        manifest["source_dir"] = str(destination / "coco")
-        manifest["dataset_dir"] = str(destination / "rfdetr")
-        write_json(staging / "rfdetr" / "manifest.json", manifest, allow_nan=False)
-        staging.rename(destination)
-        promoted = True
-        subset_identity = canonical_coco_identity(destination / "coco")
-        yolo_identity = validate_yolo_layout(destination / "coco", destination / "yolo")
-        rfdetr_identity = validate_rfdetr_layout(destination / "coco", destination / "rfdetr")
-        record = {
-            "schema_version": 1,
-            "kind": "smoke_dataset",
-            "smoke_limits": dict(limits),
-            "parent_source_fingerprint": canonical_coco_identity(source)[
-                "source_fingerprint"
-            ],
-            "selected_ids": selected_ids,
-            "subset_source_fingerprint": subset_identity["source_fingerprint"],
-            "loader_fingerprints": {
-                "coco": subset_identity["source_fingerprint"],
-                "yolo": yolo_identity["loader_fingerprint"],
-                "rfdetr": rfdetr_identity["loader_fingerprint"],
-            },
-        }
-        capture_dataset_identity(destination / IDENTITY_FILE_NAME, record)
-        return record
-    except Exception:
-        if promoted and destination.exists():
-            shutil.rmtree(destination)
-        raise
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+        if len(expected) != limits[split] or record["selected_ids"][split] != expected:
+            raise ValueError(f"Unexpected {split} smoke image membership")
+    capture_dataset_identity(destination / IDENTITY_FILE_NAME, record)
+    if "yolo" in requested:
+        target = destination / "yolo"
+        if not target.exists():
+            staging = Path(tempfile.mkdtemp(prefix=".yolo-", dir=destination))
+            try:
+                _write_yolo_subset(
+                    subset,
+                    staging / "yolo",
+                    destination / "coco/images",
+                    target,
+                    link_images,
+                )
+                (staging / "yolo").rename(target)
+            finally:
+                shutil.rmtree(staging)
+        identity = validate_yolo_layout(destination / "coco", target)
+        capture_dataset_identity(target / IDENTITY_FILE_NAME, identity)
+    if "rfdetr" in requested:
+        target = destination / "rfdetr"
+        prepare_coco_dataset(destination / "coco", target, link_images=link_images)
+        identity = validate_rfdetr_layout(destination / "coco", target)
+        capture_dataset_identity(target / IDENTITY_FILE_NAME, identity)
+    return record

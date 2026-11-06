@@ -11,182 +11,68 @@
 # ---
 
 # %% [markdown]
-# # YOLOX-Nano on the Large Basketball Dataset
+# # YOLOX-Nano on basketball-v0.1
 #
-# This notebook fine-tunes YOLOX-Nano on
-# `DATA_ROOT/composed/coco_basketball`.
-#
-# The run is designed to be comparable with `nb03.02-yolox_tiny_large_basketball.py`:
-# 640x640 input, 100 epochs by default, validation/test metrics, training plots, and
-# qualitative prediction grids. The YOLOX-specific training/evaluation machinery lives
-# in `yolox_pipeline.yolox` so the notebook stays readable.
+# Fine-tune the existing COCO-pretrained model at 640 x 640 for up to 100 epochs.
+# Reviewed basketball source splits and background images are preserved.
+# The producer validates the direct COCO loader, captures run provenance, and
+# publishes validation/test bundles. It does not require a YOLO-format export.
 
 # %%
-"""
-Fine-tune and evaluate YOLOX-Nano on the large basketball dataset.
-"""
-# %load_ext autoreload
-# %autoreload 2
-# %aimport -torch, -IPython
+from __future__ import annotations
 
-# %%
-from __future__ import annotations  # noqa: F404
-
-import os
-
-import torch
-from detection_common import (
-    Device,
-    aligned_print,
-    allocate_run_directory,
-    configure_stdio_relative_path,
-    ensure_dir,
-)
+from dataset_builder import Dataset as VersionedDataset
+from detection_common import aligned_print, configure_stdio_relative_path
 from detection_common.utils.image import display as display_img
 from IPython.display import Markdown, display
 
 from yolox_pipeline import producer
 from yolox_pipeline import yolox as yolox_platform
-from yolox_pipeline.config import (
-    DATA_ROOT,
-    OUTPUT_ROOT,
-    WORKSPACE_ROOT,
-)
+from yolox_pipeline.config import DATA_ROOT, WORKSPACE_ROOT
 
 configure_stdio_relative_path(WORKSPACE_ROOT)
 
-DEVICE = torch.device(Device.auto_choose())
-if DEVICE.type == "mps":
-    yolox_platform.patch_mps_compatibility()
-
 # %% [markdown]
-# ## Experiment Setup
+# ## Experiment settings
 #
-# The default run trains for 100 epochs. For a short smoke test, set
-# `YOLOX_NANO_SMOKE=1` before executing the notebook.
-#
-# Output is quiet by default. Set `YOLOX_NANO_PROGRESS=1` for progress bars or
-# `YOLOX_NANO_VERBOSE=1` for detailed dataset/eval messages and per-epoch logs.
-#
-# A fresh run is the default. To resume one in place, set `RESUME_RUN_DIR` below to its
-# run directory. Relative paths are resolved from `OUTPUT_ROOT`. The recoverable
-# `weights/last_ckpt.pth` checkpoint is restored before any further training.
+# Set `YOLOX_NANO_SMOKE=1` for two complete epochs on the shared 16/8/8
+# subset. `YOLOX_NANO_PROGRESS` and `YOLOX_NANO_VERBOSE` control output.
+# Set `RESUME_RUN_DIR` to an interrupted run; relative paths use `OUTPUT_ROOT`.
 
 # %%
-# Standard Python environment settings for this notebook.
-# Uncomment values to override the defaults before reading the settings.
-#
-# os.environ["YOLOX_NANO_VERBOSE"] = "1"
-# os.environ["YOLOX_NANO_PROGRESS"] = "1"
-# os.environ["YOLOX_NANO_SMOKE"] = "1"
-
+DATASET_NAME = "basketball-v0.1"
+CLASS_NAMES = ("basketball",)
 RESUME_RUN_DIR: str | None = None
-# RESUME_RUN_DIR = "runs/basketball/yolox_nano_20260920T181447"
-
-if RESUME_RUN_DIR is None:
-    os.environ.pop("YOLOX_NANO_RESUME_RUN", None)
-else:
-    os.environ["YOLOX_NANO_RESUME_RUN"] = RESUME_RUN_DIR
-
-
-# %%
-settings = yolox_platform.training_settings_from_env(
-    default_epochs=100,
+dataset = VersionedDataset(DATA_ROOT / "composed" / DATASET_NAME)
+experiment = producer.prepare_experiment(
+    dataset,
+    model_name="nano",
+    class_names=CLASS_NAMES,
+    logical_dataset="basketball",
+    source_notebook="nb03.03-yolox_nano_large_basketball.ipynb",
     env_prefix="YOLOX_NANO",
+    resume_run_dir=RESUME_RUN_DIR,
 )
+aligned_print(experiment.summary)
 
-PRETRAINED_PATH = (
-    ensure_dir(WORKSPACE_ROOT / "models" / "pretrained" / "yolox") / "yolox_nano.pth"
-)
-if settings.run_mode is yolox_platform.RunMode.RESUME:
-    producer_settings = producer.settings_from_run(settings.resolved_resume_run_dir)
-    settings = producer_settings.training
-else:
-    producer_settings = producer.ProducerSettings(settings)
-dataset_paths = producer.resolve_dataset_paths(
-    DATA_ROOT / "composed" / "coco_basketball",
-    DATA_ROOT / "composed" / "yolo_basketball",
-    smoke_run=settings.smoke_run,
-)
-DATASET_DIR = dataset_paths.source_dir
-model_variant = producer.variant("nano")
+# %% [markdown]
+# ## Dataset and model
+#
+# The displayed counts describe the full versioned source. Smoke mode uses the
+# deterministic subset. The pretrained classification head is replaced with
+# the single class above; backbone and detection features are retained.
 
+# %%
+display(experiment.summary["splits"])
+run_dir = experiment.run_dir
+dataset_paths = experiment.paths
+producer_settings = experiment.settings
+settings = producer_settings.training
 run_mode = settings.run_mode
-
-if run_mode is yolox_platform.RunMode.FRESH:
-    allocation = allocate_run_directory(OUTPUT_ROOT, "basketball", "yolox_nano")
-    run_dir = allocation.path
-    original_utc = allocation.created_at
-else:
-    run_dir = settings.resolved_resume_run_dir
-    original_utc = None
-    resume_checkpoint = run_dir / "weights" / "last_ckpt.pth"
-    if not run_dir.is_dir():
-        raise NotADirectoryError(f"Resume run directory not found: {run_dir}")
-    if not resume_checkpoint.is_file():
-        raise FileNotFoundError(f"Resume checkpoint not found: {resume_checkpoint}")
-project_space = run_dir.parent
-project_name = run_dir.name
-
-aligned_print(
-    {
-        "run_dir": run_dir,
-        "run_mode": run_mode,
-        "device": DEVICE,
-        "epochs": settings.epochs,
-        "batch_size": settings.batch_size,
-        "image_size": settings.image_size,
-        "train_batch_limit": settings.train_batch_limit,
-        "show_progress": settings.show_progress,
-        "verbose_output": settings.verbose_output,
-        "smoke_run": settings.smoke_run,
-    }
-)
-
-# %% [markdown]
-# ## Dataset Summary
-#
-# The dataset has one class, `basketball`, and uses independent basketball sources for
-# the train, validation, and test splits. It also includes tennis images as negative
-# examples to test whether the detector avoids false basketball predictions.
-
-# %%
-dataset_summary = yolox_platform.summarize_coco_dataset(DATASET_DIR)
-display(dataset_summary)
-
-# %% [markdown]
-# ## YOLOX Configuration
-#
-# The COCO-pretrained YOLOX-Nano checkpoint is cached under `models/pretrained/yolox`.
-# Its 80-class classification head is skipped when loading into this one-class
-# basketball model; the depthwise backbone and detection features are still initialized
-# from the pretrained checkpoint.
-
-# %%
-PRETRAINED_PATH = yolox_platform.ensure_pretrained_checkpoint(
-    PRETRAINED_PATH,
-    yolox_platform.YOLOX_NANO_WEIGHTS_URL,
-)
-exp = yolox_platform.YOLOXNanoExp(
-    dataset_dir=DATASET_DIR,
-    output_dir=project_space,
-    max_epoch=settings.epochs,
-    image_size=settings.image_size,
-    project_name=project_name,
-    seed=settings.seed,
-)
-
-aligned_print(
-    {
-        "checkpoint": PRETRAINED_PATH,
-        "experiment": exp.exp_name,
-        "classes": exp.num_classes,
-        "input_size": exp.input_size,
-        "test_size": exp.test_size,
-        "no_aug_epochs": exp.no_aug_epochs,
-        "dataset": DATASET_DIR,
-    }
-)
+model_variant = experiment.model
+DEVICE = experiment.device
+PRETRAINED_PATH = experiment.pretrained_path
+exp = producer.evaluation_experiment(experiment)
 
 # %% [markdown]
 # ## Fine-Tune YOLOX-Nano
@@ -205,7 +91,7 @@ history = producer.fit_run(
     PRETRAINED_PATH,
     DEVICE,
     WORKSPACE_ROOT,
-    original_utc=original_utc,
+    original_utc=experiment.original_utc,
     resumed=run_mode is yolox_platform.RunMode.RESUME,
 )
 
@@ -234,14 +120,7 @@ display_img(fig, close=True)
 
 # %%
 best_model_path = run_dir / "weights" / "best_ckpt.pth"
-eval_exp = yolox_platform.YOLOXNanoExp(
-    dataset_dir=DATASET_DIR,
-    output_dir=project_space,
-    max_epoch=settings.epochs,
-    image_size=settings.image_size,
-    project_name=project_name,
-    seed=settings.seed,
-)
+eval_exp = producer.evaluation_experiment(experiment)
 
 # %%
 onnx_model_path = yolox_platform.export_trained_model_to_onnx(
@@ -319,9 +198,6 @@ aligned_print(
     }
 )
 
-if settings.verbose_output:
-    print("\nCOCO test summary:")
-    print(test_metrics["summary"])
 
 # %% [markdown]
 # ## Qualitative Prediction Review

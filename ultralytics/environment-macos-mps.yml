@@ -17,5 +17,6 @@ dependencies:
   - ipywidgets
   - pip:
       - ultralytics
+      - datumaro==1.13.11
 variables:
   PYTORCH_ENABLE_MPS_FALLBACK: "1"
