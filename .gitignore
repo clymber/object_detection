@@ -1,6 +1,7 @@
 # Ignore Jupyter notebooks, keep Jupytext notebooks instead.
 *.ipynb
 !/dataset/notebooks/nb01.07-ball_detect_dataset/*.ipynb
+!/evaluation/notebooks/nb05.01-basketball_models_comparison.ipynb
 .notebook-stamps/
 
 /scripts/notebook_tasks.json*
