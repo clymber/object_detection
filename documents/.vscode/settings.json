@@ -1,0 +1,6 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/../.conda/envs/object-detection-notebooks/bin/python",
+  "python-envs.workspaceSearchPaths": ["../.conda/envs"],
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestEnabled": false
+}
