@@ -2,6 +2,7 @@
 *.ipynb
 !/dataset/notebooks/nb01.07-ball_detect_dataset/*.ipynb
 !/evaluation/notebooks/nb05.01-basketball_models_comparison.ipynb
+!/evaluation/notebooks/nb05.03-onnx_model_inference.ipynb
 .notebook-stamps/
 
 /scripts/notebook_tasks.json*
@@ -22,6 +23,9 @@ data/
 runs/
 **/notebooks/weights/
 /models/
+
+# ONNX Runtime telemetry session artifact
+:memory:.ses
 
 # outputs
 outputs/*
@@ -172,6 +176,4 @@ cython_debug/
 
 # Temporary project plans
 /plans/*
-!/plans/nb05.01-basketball-models-comparison.md
-!/plans/plan_nb01.07.02-perceptual_hash.md
-!/plans/plan_nb01.07.03-compose_datasets.md
+/documents/daily_*.md

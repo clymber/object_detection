@@ -15,10 +15,6 @@ dependencies = [
     "ipython",
 ]
 
-[project.optional-dependencies]
-opencv = ["opencv-python>=4.10,<6"]
-opencv-headless = ["opencv-python-headless>=4.10,<5"]
-
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -348,9 +348,21 @@ def test_provider_modes_report_missing_coreml(tmp_path: Path) -> None:
     assert "unavailable" in str(coreml.unavailable_reason)
 
 
-def test_benchmark_counts_calls_and_returns_latency() -> None:
+@pytest.mark.parametrize(
+    ("image_size", "expected_bbox"),
+    [
+        ((32, 32), (12, 12, 8, 8)),
+        ((64, 32), (24, 8, 16, 16)),
+        ((32, 64), (8, 24, 16, 16)),
+    ],
+    ids=["square", "landscape", "portrait"],
+)
+def test_benchmark_counts_calls_and_returns_latency(
+    image_size: tuple[int, int],
+    expected_bbox: tuple[float, float, float, float],
+) -> None:
     """
-    Execute correctness, warm-up, and timed end-to-end calls serially.
+    Benchmark source images serially and retain original-coordinate predictions.
     """
     raw = np.zeros((1, 5, 21), dtype=np.float32)
     raw[0, :4, 0] = (16, 16, 8, 8)
@@ -366,7 +378,7 @@ def test_benchmark_counts_calls_and_returns_latency() -> None:
     result = benchmark_session(
         session,
         spec,
-        Image.new("RGB", (32, 32)),
+        Image.new("RGB", image_size),
         [7],
         warmup=2,
         samples=3,
@@ -374,6 +386,7 @@ def test_benchmark_counts_calls_and_returns_latency() -> None:
 
     assert session.calls == 6
     assert len(result.predictions) == 1
+    assert result.predictions[0].bbox == pytest.approx(expected_bbox)
     assert result.latency_ms >= 0
 
 

@@ -82,11 +82,23 @@ def write_json(
     return dst.write(_json_text(data, allow_nan=allow_nan))
 
 
-def print_json(data: Any, dst: Path | str | TextIO = sys.stdout) -> None:
+def print_json(
+    data: Any,
+    dst: Path | str | TextIO | None = None,
+    title: str | None = None,
+) -> None:
     """
-    Print a object in JSON format to a text IO stream (stdout by default).
+    Write JSON with an optional title to a path or stream (current stdout by default).
     """
-    _ = write_json(dst, data)
+    text = _json_text(data)
+    if title is not None:
+        text = f"{title}\n{text}"
+
+    if isinstance(dst, (Path, str)):
+        Path(dst).write_text(text, encoding="utf-8")
+    else:
+        stream = sys.stdout if dst is None else dst
+        stream.write(text)
 
 
 def read_json(src: Path | str | TextIO) -> Any:
