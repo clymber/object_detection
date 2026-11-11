@@ -742,7 +742,7 @@ def _normalize_checkpoint_weights(weights: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def load_best_model(run_dir: Path) -> tuple[Any, dict]:
+def load_best_model(run_dir: Path, *, device: str = "cuda:0") -> tuple[Any, dict]:
     """
     Reload actual selected weights and record their epoch and EMA/regular provenance.
     """
@@ -796,7 +796,7 @@ def load_best_model(run_dir: Path) -> tuple[Any, dict]:
         model = RFDETRSmall.from_checkpoint(
             reload_checkpoint,
             trust_checkpoint=True,
-            device="cuda:0",
+            device=device,
             amp=False,
             resolution=resolution,
             positional_encoding_size=resolution // 16,

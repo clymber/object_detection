@@ -284,6 +284,7 @@ def test_sparse_history_combines_training_and_validation_rows(tmp_path: Path) ->
     assert (tmp_path / "results.csv").is_file()
 
 
+@pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 @pytest.mark.parametrize(
     ("total_prefix", "source_prefix"),
     [("", ""), ("_orig_mod.", "_orig_mod."), ("_orig_mod.", ""), ("", "_orig_mod.")],
@@ -293,6 +294,7 @@ def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
     monkeypatch: pytest.MonkeyPatch,
     total_prefix: str,
     source_prefix: str,
+    device: str,
 ) -> None:
     """
     Reload compiled or eager selected weights without changing the saved checkpoints.
@@ -345,7 +347,10 @@ def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
     module = ModuleType("rfdetr")
     module.RFDETRSmall = FakeRFDETRSmall
     monkeypatch.setitem(sys.modules, "rfdetr", module)
-    _, metadata = rfdetr.load_best_model(tmp_path)
+    if device == "cpu":
+        _, metadata = rfdetr.load_best_model(tmp_path, device=device)
+    else:
+        _, metadata = rfdetr.load_best_model(tmp_path)
     assert metadata["best_epoch"] == 7
     assert metadata["selected_weights"] == "ema"
     assert metadata["source_checkpoint"] == str(source)
@@ -360,6 +365,9 @@ def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
     assert calls[0][1]["resolution"] == 640
     assert calls[0][1]["positional_encoding_size"] == 40
     assert calls[0][1]["trust_checkpoint"] is True
+    assert calls[0][1]["device"] == device
+    assert calls[0][1]["amp"] is False
+    assert calls[0][1]["compile"] is False
     assert read_json(tmp_path / "best_checkpoint.json") == metadata
 
 

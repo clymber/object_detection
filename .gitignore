@@ -1,6 +1,7 @@
 # Ignore Jupyter notebooks, keep Jupytext notebooks instead.
 *.ipynb
 !/dataset/notebooks/nb01.07-ball_detect_dataset/*.ipynb
+!/rfdetr/notebooks/nb04.03-offline_video_inference.ipynb
 !/evaluation/notebooks/nb05.01-basketball_models_comparison.ipynb
 !/evaluation/notebooks/nb05.03-onnx_model_inference.ipynb
 .notebook-stamps/
