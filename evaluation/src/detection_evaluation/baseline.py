@@ -60,14 +60,19 @@ def latest_run_dir(runs_dir: Path, pattern: str, checkpoint: Path) -> Path:
     return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
 
 
-def find_latest_path(parent_dir: Path, pattern: str) -> Path | None:
+def find_latest_path(
+    parent_dir: Path,
+    pattern: str,
+    *,
+    predicate: Callable[[Path], bool] | None = None,
+) -> Path | None:
     """
-    Return the newest file or directory matching a parent-relative glob.
+    Return the newest glob match, optionally filtering candidates first.
     """
     candidates = (
         path
         for path in parent_dir.expanduser().resolve().glob(pattern)
-        if path.is_file() or path.is_dir()
+        if (path.is_file() or path.is_dir()) and (predicate is None or predicate(path))
     )
     return max(
         candidates,
