@@ -13,6 +13,11 @@
 .DS_Store
 ~$*
 
+# Xcode user settings and generated build data
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
 # Share portable folder settings, but not machine-specific VS Code state.
 **/.vscode/*
 !**/.vscode/settings.json
