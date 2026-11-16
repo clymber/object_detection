@@ -387,7 +387,7 @@ def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
         {
             "model": {f"{source_prefix}class_embed.bias": bias},
             "epoch": 6,
-            "model_config": {"resolution": 640},
+            "model_config": {"resolution": 640, "num_select": 125},
         },
         source,
     )
@@ -433,6 +433,7 @@ def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
         assert not calls[0][0].exists()
     else:
         assert calls[0][0] == total
+    assert calls[0][1]["num_select"] == 125
     assert calls[0][1]["resolution"] == 640
     assert calls[0][1]["positional_encoding_size"] == 40
     assert calls[0][1]["trust_checkpoint"] is True
@@ -566,7 +567,8 @@ def test_ensure_onnx_model_reuses_a_valid_artifact(
     """
     Avoid checkpoint loading and export when the existing graph validates.
     """
-    expected = tmp_path / rfdetr.BEST_ONNX_MODEL
+    expected = tmp_path / "weights" / rfdetr.BEST_ONNX_MODEL
+    expected.parent.mkdir(parents=True, exist_ok=True)
     expected.write_bytes(b"valid")
     validated = []
 
@@ -594,7 +596,8 @@ def test_ensure_onnx_model_atomically_replaces_an_invalid_artifact(
     """
     Keep the old path in place until a staged replacement passes validation.
     """
-    expected = tmp_path / rfdetr.BEST_ONNX_MODEL
+    expected = tmp_path / "weights" / rfdetr.BEST_ONNX_MODEL
+    expected.parent.mkdir(parents=True, exist_ok=True)
     expected.write_bytes(b"invalid")
     model = SimpleNamespace(model_config=SimpleNamespace(resolution=640))
     validated = []
@@ -637,7 +640,8 @@ def test_ensure_onnx_model_preserves_existing_file_after_staging_failure(
     """
     Leave an existing artifact untouched when its replacement fails validation.
     """
-    expected = tmp_path / rfdetr.BEST_ONNX_MODEL
+    expected = tmp_path / "weights" / rfdetr.BEST_ONNX_MODEL
+    expected.parent.mkdir(parents=True, exist_ok=True)
     expected.write_bytes(b"old")
     model = SimpleNamespace(model_config=SimpleNamespace(resolution=640))
 
@@ -684,12 +688,13 @@ def test_ensure_onnx_model_in_subprocess_uses_active_interpreter(
         Record the worker command and emulate its successful artifact creation.
         """
         calls.append((command, kwargs))
-        (run_dir / rfdetr.BEST_ONNX_MODEL).touch()
+        (run_dir / "weights").mkdir(exist_ok=True)
+        (run_dir / "weights" / rfdetr.BEST_ONNX_MODEL).touch()
 
     monkeypatch.setattr(rfdetr.subprocess, "run", fake_run)
 
     expected = rfdetr.ensure_onnx_model_in_subprocess(project_root, run_dir)
-    assert expected == run_dir / rfdetr.BEST_ONNX_MODEL
+    assert expected == run_dir / "weights" / rfdetr.BEST_ONNX_MODEL
     assert calls == [
         (
             [
@@ -855,7 +860,7 @@ def test_postprocess_failure_recovers_with_optional_bundle_publication(
     monkeypatch.setattr(
         rfdetr,
         "load_best_model",
-        lambda _path: (
+        lambda _path, **_kwargs: (
             SimpleNamespace(model_config=SimpleNamespace(resolution=640)),
             {"parameters": 1, "checkpoint_sha256": file_digest(checkpoint)},
         ),
@@ -982,3 +987,115 @@ def test_multiclass_model_construction(
         class_names=["football", "basketball"],
     )
     assert kwargs["class_names"] == ["football", "basketball"]
+
+
+def test_checkpoint_report_never_calls_exporter(tmp_path, monkeypatch):
+    """
+    Produce training checkpoint reports through a path with no export side effect.
+    """
+    settings = rfdetr.TrainingSettings(benchmark=False)
+    monkeypatch.setattr(rfdetr, "_postprocess_state",
+                        lambda _: ({}, {}, settings))
+    monkeypatch.setattr(rfdetr, "read_training_history", lambda _: "history")
+    figure = SimpleNamespace(savefig=lambda *a, **k: None)
+    monkeypatch.setattr(rfdetr, "plot_history", lambda _: (figure, figure))
+    monkeypatch.setattr(rfdetr, "load_best_model", lambda *a, **k: ("model", {}))
+    monkeypatch.setattr(rfdetr, "evaluate_split", lambda *a, **k: ({}, tmp_path))
+
+    def forbidden(*args, **kwargs):
+        """
+        Reject any attempt to fit or export from checkpoint reporting.
+        """
+        pytest.fail("Checkpoint reporting must not fit or export")
+
+    monkeypatch.setattr(rfdetr, "ensure_onnx_model_in_subprocess", forbidden)
+    monkeypatch.setattr(rfdetr, "export_onnx_model", forbidden)
+    monkeypatch.setattr(rfdetr, "fit_model", forbidden)
+    result = rfdetr.evaluate_checkpoint_run(tmp_path, device="cpu")
+    assert result["history"] == "history"
+    assert set(result["split_metrics"]) == {"val", "test"}
+    assert "onnx_path" not in result
+
+
+def test_archived_paths_resolve_locally_without_rewriting_provenance(
+        tmp_path, monkeypatch):
+    """
+    Recover an archived run's layout in memory and preserve its saved Linux paths.
+    """
+    from dataset_builder import rfdetr as dataset_rfdetr
+
+    run = tmp_path / "run"
+    run.mkdir()
+    settings = rfdetr.TrainingSettings()
+    original = datetime(2026, 11, 5, tzinfo=UTC)
+    protocol = rfdetr._verify_protocol(run, _identity(), settings, original)
+    write_json(run / "dataset_identity.json", _identity())
+    saved = {"source_dir": "/archived/linux/coco", "dataset_dir": "/archived/linux/rfdetr",
+             "mode": "full", "fingerprint": "same-layout"}
+    write_json(run / "dataset_manifest.json", saved)
+    local = tmp_path / "data/composed/basketball-v0.1/coco"
+    local.mkdir(parents=True)
+    monkeypatch.setattr(rfdetr, "DATA_ROOT", tmp_path / "data")
+    expected = {**saved, "source_dir": str(local), "dataset_dir": str(tmp_path / "derived")}
+    monkeypatch.setattr(dataset_rfdetr, "prepare_coco_dataset", lambda *a, **k: expected)
+    monkeypatch.setattr(rfdetr, "_dataset_identity", lambda manifest: _identity())
+    monkeypatch.setattr(rfdetr, "verify_dataset_identity", lambda *a: None)
+    monkeypatch.setattr(rfdetr, "read_training_record", lambda _: {
+        "attempts": [{"status": "completed"}]})
+    digest = file_digest(run / "dataset_manifest.json")
+    actual_protocol, manifest, actual_settings = rfdetr._postprocess_state(run)
+    assert actual_protocol == protocol and manifest == expected
+    assert actual_settings.model_size == "small"
+    assert file_digest(run / "dataset_manifest.json") == digest
+    assert read_json(run / "dataset_manifest.json")["source_dir"] == saved["source_dir"]
+
+
+def test_existing_root_onnx_moves_into_weights_without_reexport(tmp_path, monkeypatch):
+    """
+    Consolidate a legacy graph under weights without loading or exporting again.
+    """
+    legacy = tmp_path / rfdetr.BEST_ONNX_MODEL
+    legacy.write_bytes(b"valid historical graph")
+    monkeypatch.setattr(rfdetr, "validate_onnx_model", lambda path: path)
+    monkeypatch.setattr(rfdetr, "load_best_model",
+                        lambda *a: pytest.fail("valid legacy graph must not reload"))
+    path = rfdetr.ensure_onnx_model(tmp_path)
+    assert path == tmp_path / "weights" / rfdetr.BEST_ONNX_MODEL
+    assert path.read_bytes() == b"valid historical graph"
+    assert not legacy.exists()
+
+
+def test_onnx_recovery_replaces_link_target_without_duplicate(tmp_path, monkeypatch):
+    """
+    Repair the canonical artifact while preserving the uniform weights link.
+    """
+    canonical = tmp_path / "exports/onnx/checkpoint_best_total.onnx"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_bytes(b"invalid")
+    alias = tmp_path / "weights/checkpoint_best_total.onnx"
+    alias.parent.mkdir()
+    alias.symlink_to(canonical)
+    model = SimpleNamespace(model_config=SimpleNamespace(resolution=640))
+
+    def validate(path):
+        """
+        Accept only the staged replacement graph.
+        """
+        if path.read_bytes() != b"replacement":
+            raise ValueError("invalid graph")
+        return path
+
+    def export(_model, directory, resolution):
+        """
+        Write a replacement into the helper's temporary directory.
+        """
+        staged = directory / rfdetr.BEST_ONNX_MODEL
+        staged.write_bytes(b"replacement")
+        return staged
+
+    monkeypatch.setattr(rfdetr, "load_best_model", lambda _: (model, {}))
+    monkeypatch.setattr(rfdetr, "validate_onnx_model", validate)
+    monkeypatch.setattr(rfdetr, "export_onnx_model", export)
+    assert rfdetr.ensure_onnx_model(tmp_path) == alias
+    assert alias.is_symlink()
+    assert canonical.read_bytes() == b"replacement"

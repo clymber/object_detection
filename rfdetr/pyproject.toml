@@ -13,8 +13,11 @@ dependencies = [
     "detection-evaluation==0.1.0",
     "dataset-builder==0.1.0",
     "pandas",
+    "onnxruntime",
+    "coremltools>=8,<10; sys_platform == 'darwin'",
     "pillow",
     "rfdetr>=1.11.2,<1.12",
+    "rfdetr[coreml]==1.11.2; sys_platform == 'darwin'",
     "supervision==0.30.2",
 ]
 

@@ -142,7 +142,7 @@ def discover_video_models(
             if not path.is_file():
                 continue
             try:
-                run_dir = _run_directory(path.resolve(), runs_dir)
+                run_dir = _run_directory(path, runs_dir)
                 protocol = read_run_protocol(run_dir)
                 if (
                     protocol["model"] != name

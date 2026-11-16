@@ -67,7 +67,7 @@ VARIANTS = {
     ),
     "nano": ModelVariant(
         name="yolox_nano",
-        source_notebook="nb03.03-yolox_nano_large_basketball.ipynb",
+        source_notebook="nb03.03.01-yolox_nano-basketball.ipynb",
         experiment_class=yolox.YOLOXNanoExp,
         fit=yolox.fit_yolox_nano,
     ),
@@ -317,7 +317,11 @@ def prepare_run(
         run_dir,
         logical_dataset=model.logical_dataset,
         model=model.name,
-        source_notebook=model.source_notebook,
+        source_notebook=(
+            read_run_protocol(run_dir)["source_notebook"]
+            if (run_dir / "run_protocol.json").is_file()
+            else model.source_notebook
+        ),
         original_utc=original_utc,
         training_settings=settings.protocol_settings(),
         smoke_run=settings.training.smoke_run,

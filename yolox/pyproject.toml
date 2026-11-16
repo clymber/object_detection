@@ -14,6 +14,8 @@ dependencies = [
     "detection-evaluation==0.1.0",
     "numpy",
     "pandas",
+    "onnxruntime",
+    "coremltools>=8,<10; sys_platform == 'darwin'",
     "pycocotools",
     "torch>=2.0",
     "opencv-python; sys_platform == 'darwin'",

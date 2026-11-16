@@ -505,3 +505,21 @@ def test_stream_graph_failure_does_not_choose_an_older_export(
     assert summary["status"] == "partial"
     assert summary["onnx_path"] == video.portable_path(runtime.model.spec.path)
     assert runtime.session.calls == 0
+
+
+def test_discovery_keeps_run_provenance_for_export_links(tmp_path) -> None:
+    """
+    Discover a weights link while loading the single artifact outside runs/.
+    """
+    runs = tmp_path / "runs"
+    alias = _saved_export(runs)
+    run = alias.parent.parent
+    canonical = tmp_path / "models/exports/basketball/yolox_tiny" / run.name
+    canonical = canonical / "onnx/model.onnx"
+    canonical.parent.mkdir(parents=True)
+    alias.rename(canonical)
+    alias.symlink_to(canonical)
+    models, excluded = video.discover_video_models(runs, DECLARATIONS)
+    assert not excluded
+    assert models[0].run_dir == run
+    assert models[0].spec.path == canonical

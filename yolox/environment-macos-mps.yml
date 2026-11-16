@@ -28,3 +28,5 @@ dependencies:
       - ninja
       - onnx
       - onnxsim
+      - onnxruntime
+      - coremltools>=8,<10

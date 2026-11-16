@@ -545,3 +545,26 @@ def test_resume_settings_inherit_persisted_smoke_identity(
     assert restored.training.smoke_run is True
     assert restored.training.resolved_resume_run_dir == tmp_path
     assert restored.protocol_settings() == saved.protocol_settings()
+
+
+def test_renamed_notebook_preserves_historical_resume_protocol(tmp_path, monkeypatch):
+    """
+    Keep old notebook provenance immutable when recovering with the renamed variant.
+    """
+    from detection_common.utils.digest import file_digest
+
+    monkeypatch.setattr(producer, "_dataset_identity", lambda _: identities())
+    run = tmp_path / "historical"
+    paths = producer.DatasetPaths(tmp_path / "local-coco")
+    historical = producer.variant(
+        "nano", source_notebook="nb03.03-yolox_nano_large_basketball.ipynb")
+    original = producer.prepare_run(
+        run, paths, settings(), historical,
+        original_utc=datetime(2026, 11, 5, tzinfo=UTC))
+    digest = file_digest(run / "run_protocol.json")
+    recovered = producer.prepare_run(run, paths, settings(), producer.variant("nano"))
+    assert recovered == original
+    assert recovered["source_notebook"] == historical.source_notebook
+    assert file_digest(run / "run_protocol.json") == digest
+    assert producer.variant("nano").source_notebook == (
+        "nb03.03.01-yolox_nano-basketball.ipynb")

@@ -11,19 +11,14 @@
 # ---
 
 # %% [markdown]
-# # RF-DETR Nano on the Basketball-v0.1 Dataset
+# # RF-DETR Small on the Basketball-v0.1 Dataset
 #
-# Fine-tune COCO-pretrained **RF-DETR Nano**, display training history, export
-# the best validation checkpoint to ONNX, review predictions, and summarize
+# Fine-tune COCO-pretrained **RF-DETR Small**, display training history, review
+# selected-checkpoint predictions and summarize
 # validation and held-out test performance.
 #
-# Defaults match nb04.02: 640 x 640 input and up to 100 epochs on the same
-# `basketball-v0.1` dataset. Split sizes, category IDs, and class names are
-# read from the selected dataset.
-#
-# Run with the `object-detection-rfdetr` kernel in a Renku CUDA session.
-# [Nano supports custom resolutions](https://rfdetr.roboflow.com/latest/reference/nano/);
-# 640 keeps the input size consistent with the Small experiment.
+# Defaults are 640 x 640 input and up to 100 epochs. Split sizes, category IDs,
+# and class names are read from the selected dataset.
 
 # %%
 from __future__ import annotations
@@ -50,21 +45,19 @@ aligned_print(runtime)
 # %% [markdown]
 # ## Experiment settings
 #
-# Keep `model_size="nano"` to select Nano. Other settings use the defaults or
-# `RFDETR_*` variables from the active shell. Overrides take precedence without
-# changing the kernel environment. Set `smoke_run` to train for two epochs on
-# a small subset. Resume only a Nano run with its saved configuration.
+# Leave `RUN_OVERRIDES` empty to use the defaults or `RFDETR_*` variables from
+# the active shell. Its values take precedence without changing the kernel
+# environment. Set `smoke_run` to train for two epochs on a small subset.
 
 # %%
 DATASET_NAME = "basketball-v0.1"
 RUN_OVERRIDES = {
-    "model_size": "nano",
     # "smoke_run": True,
     # "batch_size": 4,
     # "gradient_checkpointing": True,
     # "early_stopping_patience": 10,
     # "mode": "resume",
-    # "run_dir": "outputs/runs/basketball/rfdetr_nano_20260919T190000",
+    # "run_dir": "outputs/runs/basketball/rfdetr_small_20260919T190000",
 }
 settings = rfdetr_platform.settings_from_env(overrides=RUN_OVERRIDES)
 dataset = VersionedDataset(DATA_ROOT / "composed" / DATASET_NAME)
@@ -83,7 +76,7 @@ display(pd.DataFrame(summarize_dataset(manifest)))
 print(f"Dataset fingerprint: {manifest['fingerprint']}")
 
 # %% [markdown]
-# ## Initialize and fine-tune RF-DETR Nano
+# ## Initialize and fine-tune RF-DETR Small
 #
 # Each fresh run gets a directory under `outputs/runs/basketball/`. Resume an
 # interrupted run with `mode="resume"` and its `run_dir`; keep the full run
@@ -113,35 +106,32 @@ gc.collect()
 torch.cuda.empty_cache()
 
 # %% [markdown]
-# ## Training history and ONNX export
+# ## Training history and checkpoint evaluation
 #
 # Display native training/validation losses and regular/EMA validation AP.
-# Reload the checkpoint selected by validation AP50:95, export it to ONNX, and
+# Reload the checkpoint selected by validation AP50:95, and
 # evaluate validation and test images to create metrics and prediction grids.
 #
 # | File in the run directory | Purpose |
 # | --- | --- |
 # | `last.ckpt` | Full state for recovery after the last completed epoch |
 # | `checkpoint_best_total.pth` | Selected inference weights (regular or EMA) |
-# | `checkpoint_best_total.onnx` | Static batch-one ONNX export of selected weights |
 # | `checkpoint_best_regular.pth`, `checkpoint_best_ema.pth` | Best regular/EMA weights and metadata |
 # | `run_config.json`, `resolved_config.json` | Requested and resolved settings |
 # | `dataset_manifest.json`, `loader_check.json` | Dataset and loader checks |
-#
-# The ONNX graph exposes RF-DETR's raw boxes and logits. Consumers must apply
-# the detector's decoding and postprocessing to obtain final detections.
 #
 # The helper recovers the selected epoch and trained resolution from the source
 # checkpoint. Outputs are saved in the run directory.
 
 # %%
-postprocess = rfdetr_platform.postprocess_run(run_dir, publish=False)
+postprocess = rfdetr_platform.evaluate_checkpoint_run(
+    run_dir, device=settings.device, publish=False
+)
 history = postprocess["history"]
 best_metadata = postprocess["best_metadata"]
 split_metrics = postprocess["split_metrics"]
 display_img(run_dir / "training_losses.png", width=1000)
 display_img(run_dir / "validation_metrics.png", width=1000)
-print(f"ONNX model: {postprocess['onnx_path']}")
 aligned_print(best_metadata)
 
 # %% [markdown]
@@ -195,9 +185,13 @@ display(
 # %%
 test = split_metrics["test"]
 display(Markdown(
-    f"RF-DETR Nano selected **epoch {best_metadata['best_epoch']}** "
+    f"RF-DETR Small selected **epoch {best_metadata['best_epoch']}** "
     f"({best_metadata['selected_weights']} weights) using validation AP50:95. "
     f"Held-out test AP50:95 is **{test['ap50_95']:.4f}**, precision is "
     f"**{test['precision']:.4f}**, and recall is **{test['recall']:.4f}**. "
     f"Artifacts are saved in `{run_dir}`."
 ))
+
+# %% [markdown]
+# Export and runtime validation:
+# [open the export notebook](nb04.02.02-rfdetr_small-basketball-export.py).

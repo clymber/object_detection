@@ -48,6 +48,7 @@ Replace the "notebook file path" in the final command as needed.
 | `nb05.02` | Validate model runtime environment setup. | YOLOX Nano ONNX export. |
 | `nb05.03` | Compare four exports on one test image and benchmark CPU and CoreML-first inference. | Canonical basketball dataset and all four ONNX exports. |
 | `nb05.04` | Full-video ONNX inference, timing, and annotated previews. | Dribbling WebM and four full-run exports; writes MP4, JSONL, summaries, selection metadata, and comparison CSV. |
+| `nb05.05` | Compare PyTorch, ONNX and native Core ML for RF-DETR Small/Nano and YOLOX Nano from recorded exports. | Complete dataset and saved export manifests; no model frameworks or inference. |
 | `smoke` | Check evaluation imports and shared workspace paths. | None. |
 
 `nb05.01` includes accuracy and training results when a model's inference benchmark
@@ -95,3 +96,27 @@ The setup command selects environment-macos-mps.yml on Apple Silicon and
 environment-linux-cuda.yml on Renku Linux. Both profiles use the checkout-local
 `.conda/envs/object-detection-evaluation` prefix; on Renku, bootstrap Miniforge first
 from the workspace root with bash scripts/install_miniforge_renku.sh.
+
+## Saved runtime comparison
+
+[nb05.05](notebooks/nb05.05-basketball_runtime_comparison.py) uses
+`detection_evaluation.runtime_comparison.compare_runtime_results`. Empty
+`RUN_SELECTIONS` and `EXPORT_SELECTIONS` select each model's latest completed run
+and then `<run>/export_validation/model_manifest.json`. A latest run without
+validation results stays unavailable; a failed current export remains visible.
+The canonical manifest is at
+`outputs/exports/basketball/<model>/<run>/model_manifest.json`; the run path is a
+relative link to that single report set. Exact export pins derive their source run and
+must agree with any run pin. Invalid explicit selections raise without fallback.
+
+The consumer validates provenance, checkpoint, package, prediction and annotation
+hashes, then recomputes validation/test accuracy using the shared evaluator. It
+shows accuracy deltas from each model's checkpoint reference and preserves
+failed/incomplete/parity-failed rows as diagnostic. Host latency comparisons require
+matching host identity, pixel sequence, warmup/repetition settings and timing
+boundaries. Different configurations receive separate timing groups.
+
+CSV, JSON and Markdown reports, including exact selections, are saved below
+`outputs/comparisons/basketball_runtime/`; reruns replace the three report files. These are host
+measurements and are separate from the frozen mobile protocol and legacy FP32
+checkpoint benchmark schema. Existing `nb05.01` bundles remain usable.

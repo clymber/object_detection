@@ -49,3 +49,39 @@ and `producer.resolve_dataset_paths(...)`. The saved settings restore smoke
 identity for recovery/resume without repeating shell flags. Smoke layouts are
 shared below `DATA_ROOT/processed/smoke/<source-name>/<source-fingerprint>/`.
 The full-only baseline CLI above does not publish comparison bundles.
+
+## Basketball Nano training and runtime exports
+
+[nb03.03.01](notebooks/nb03.03.01-yolox_nano-basketball.py) trains Nano, selects
+its checkpoint using validation metrics, and retains checkpoint reports and
+published shared prediction bundles. It does not export ONNX.
+
+Run [nb03.03.02](notebooks/nb03.03.02-yolox_nano-basketball-export.py) in a fresh
+YOLOX kernel after training. It uses
+`yolox_pipeline.export_validation.export_and_validate`, restores saved resolution,
+category mapping and NMS IoU, and prefers selected EMA weights. Loading does not
+initialize training, download pretrained replacement weights or update provenance.
+
+`RUNS_DIR` defaults to `OUTPUT_ROOT/runs/basketball`. `RUN_DIR=None` selects the
+latest completed matching run by modification time; an absolute override selects
+that exact run or raises. Supply `DATASET_DIR` for local copies of archived Linux
+runs. Default checkpoint/ONNX inference is CPU/FP32. macOS also exports a fixed
+batch-one traced Core ML graph with FP16 and `all` compute units. Both exported
+graphs retain raw grids and use external decoding and the saved NMS policy.
+
+The single export set lives at
+`models/exports/basketball/yolox_nano/<run>/{onnx,coreml}/`, with no attempt-ID
+subdirectory. `weights/best_ckpt.{onnx,mlpackage}` in the run are relative links to
+those artifacts. Reruns replace that set and remove obsolete attempt folders.
+The current report set is updated at
+`outputs/exports/basketball/yolox_nano/<run>/`, also available through the run's
+`export_validation` link. It includes development parity, complete
+validation/test prediction artifacts and metrics, qualitative overlays, and host
+timing with 30 warmups, 300 fixed test IDs and three repetitions. Failed formats
+and parity failures remain diagnostic and cause the final cell to raise after all
+available results are saved. Training checkpoints, provenance and existing
+evaluation bundles remain unchanged. Compare saved results with
+[nb05.05](../evaluation/notebooks/nb05.05-basketball_runtime_comparison.py).
+
+`CPU_THREADS` defaults to four for PyTorch and ONNX Runtime; the actual policy is
+recorded with each configuration. Change it explicitly for a separate host test.

@@ -18,5 +18,7 @@ dependencies:
   - pip:
       # This macOS wheel omits libavdevice, avoiding PyAV's AVFoundation clash.
       - opencv-python-headless==4.11.0.86
-      - rfdetr[onnx,train]==1.11.2
+      - rfdetr[onnx,train,coreml]==1.11.2
       - supervision==0.30.2
+      - onnxruntime
+      - coremltools>=8,<10

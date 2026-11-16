@@ -49,7 +49,7 @@ experiment = producer.prepare_experiment(
     model_name="nano",
     class_names=CLASS_NAMES,
     logical_dataset="basketball",
-    source_notebook="nb03.03-yolox_nano_large_basketball.ipynb",
+    source_notebook="nb03.03.01-yolox_nano-basketball.ipynb",
     env_prefix="YOLOX_NANO",
     resume_run_dir=RESUME_RUN_DIR,
 )
@@ -112,31 +112,14 @@ fig, axes = yolox_platform.plot_detection_metrics(history)
 display_img(fig, close=True)
 
 # %% [markdown]
-# ## Export the Best Checkpoint to ONNX
-#
-# Export the selected EMA weights through a fresh CPU model. The ONNX graph uses
-# a fixed batch-one input at the experiment test size and leaves YOLOX decoding
-# and non-maximum suppression to the deployment runtime.
-
-# %%
-best_model_path = run_dir / "weights" / "best_ckpt.pth"
-eval_exp = producer.evaluation_experiment(experiment)
-
-# %%
-onnx_model_path = yolox_platform.export_trained_model_to_onnx(
-    eval_exp,
-    best_model_path,
-    run_dir / "weights" / "best_ckpt.onnx",
-)
-print(f"Exported ONNX model: {onnx_model_path}")
-
-# %% [markdown]
 # ## Validation and Test Metrics
 #
 # Reload the best checkpoint and evaluate it on both validation and held-out
 # test splits.
 
 # %%
+best_model_path = run_dir / "weights" / "best_ckpt.pth"
+eval_exp = producer.evaluation_experiment(experiment)
 best_model = yolox_platform.load_trained_model(eval_exp, best_model_path, DEVICE)
 
 # %% [markdown]
@@ -241,3 +224,7 @@ display_img(test_preds_path, width=900)
 
 # %%
 display(Markdown(yolox_platform.format_final_interpretation(history, test_metrics)))
+
+# %% [markdown]
+# Export and runtime validation:
+# [open the export notebook](nb03.03.02-yolox_nano-basketball-export.py).

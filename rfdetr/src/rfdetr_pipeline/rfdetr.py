@@ -392,8 +392,8 @@ def train_kwargs(
 
 LOGICAL_DATASET = "basketball"
 SOURCE_NOTEBOOKS = {
-    "rfdetr_small": "nb04.02-rfdetr_small-basketball.ipynb",
-    "rfdetr_nano": "nb04.04-rfdetr_nano-basketball.ipynb",
+    "rfdetr_small": "nb04.02.01-rfdetr_small-basketball.ipynb",
+    "rfdetr_nano": "nb04.04.01-rfdetr_nano-basketball.ipynb",
 }
 
 
@@ -771,7 +771,9 @@ def _normalize_checkpoint_weights(weights: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def load_best_model(run_dir: Path, *, device: str = "cuda:0") -> tuple[Any, dict]:
+def load_best_model(
+    run_dir: Path, *, device: str = "cuda:0", write_metadata: bool = True
+) -> tuple[Any, dict]:
     """
     Reload actual selected weights and record their epoch and EMA/regular provenance.
     """
@@ -810,6 +812,10 @@ def load_best_model(run_dir: Path, *, device: str = "cuda:0") -> tuple[Any, dict
     if source["model_config"]["resolution"] != resolution:
         raise ValueError("Best checkpoint resolution differs from the saved run")
     best_epoch = int(source["epoch"]) + 1
+    inference_overrides = {
+        key: source["model_config"][key]
+        for key in ("num_select",) if key in source["model_config"]
+    }
 
     with tempfile.TemporaryDirectory(prefix="rfdetr-checkpoint-") as temporary_dir:
         reload_checkpoint = checkpoint
@@ -831,6 +837,7 @@ def load_best_model(run_dir: Path, *, device: str = "cuda:0") -> tuple[Any, dict
             positional_encoding_size=resolution // 16,
             compile=False,
             gradient_checkpointing=False,
+            **inference_overrides,
         )
     manifest_path = run_dir / "dataset_manifest.json"
     expected_names = (
@@ -855,7 +862,8 @@ def load_best_model(run_dir: Path, *, device: str = "cuda:0") -> tuple[Any, dict
             parameter.numel() for parameter in model.model.model.parameters()
         ),
     }
-    write_json(run_dir / "best_checkpoint.json", metadata)
+    if write_metadata:
+        write_json(run_dir / "best_checkpoint.json", metadata)
     return model, metadata
 
 
@@ -903,10 +911,22 @@ def ensure_onnx_model(run_dir: Path) -> Path:
     run_dir = run_dir.resolve()
     if not run_dir.is_dir():
         raise FileNotFoundError(run_dir)
-    expected = run_dir / BEST_ONNX_MODEL
+    expected = run_dir / "weights" / BEST_ONNX_MODEL
+    destination = expected.resolve() if expected.is_symlink() else expected
+    legacy = run_dir / BEST_ONNX_MODEL
+    if not expected.is_file() and legacy.is_file():
+        try:
+            validate_onnx_model(legacy)
+        except Exception:
+            pass
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(legacy, destination)
     if expected.is_file():
         try:
-            return validate_onnx_model(expected)
+            validate_onnx_model(expected)
+            legacy.unlink(missing_ok=True)
+            return expected
         except Exception as error:
             print(f"Replacing invalid ONNX model {expected}: {error}", flush=True)
 
@@ -917,7 +937,9 @@ def ensure_onnx_model(run_dir: Path) -> Path:
     ) as temporary_dir:
         staged = export_onnx_model(model, Path(temporary_dir), resolution)
         validate_onnx_model(staged)
-        os.replace(staged, expected)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(staged, destination)
+        legacy.unlink(missing_ok=True)
     return expected
 
 
@@ -941,7 +963,7 @@ def ensure_onnx_model_in_subprocess(project_root: Path, run_dir: Path) -> Path:
         cwd=project_root,
         check=True,
     )
-    expected = run_dir / BEST_ONNX_MODEL
+    expected = run_dir / "weights" / BEST_ONNX_MODEL
     if not expected.is_file():
         raise FileNotFoundError(
             f"RF-DETR export worker did not produce the ONNX model: {expected}"
@@ -969,6 +991,33 @@ def _postprocess_state(
             "experiment."
         )
     manifest = read_json(manifest_path)
+    if (
+        manifest.get("source_dir")
+        and "mode" in manifest
+        and not Path(manifest["source_dir"]).is_dir()
+    ):
+        from dataset_builder.rfdetr import prepare_coco_dataset
+
+        local_source = DATA_ROOT / "composed/basketball-v0.1/coco"
+        if not local_source.is_dir():
+            raise FileNotFoundError(
+                "Archived dataset is unavailable; configure OBJECT_DETECTION_DATA_ROOT "
+                "with composed/basketball-v0.1/coco"
+            )
+        if manifest["mode"] == "smoke":
+            root = smoke_layout_directory(local_source)
+            prepare_smoke_layouts(local_source, root, formats=("coco", "rfdetr"))
+            local_manifest = read_json(root / "rfdetr/manifest.json")
+        else:
+            local_manifest = prepare_coco_dataset(
+                local_source, DATA_ROOT / "processed/rfdetr/basketball-v0.1",
+                category_id=None,
+                allow_cross_split_duplicates=manifest.get(
+                    "allow_cross_split_duplicates", False),
+            )
+        if local_manifest["fingerprint"] != manifest["fingerprint"]:
+            raise ValueError("Local RF-DETR layout differs from archived dataset")
+        manifest = local_manifest
     identity = _dataset_identity(manifest)
     verify_dataset_identity(run_dir / "dataset_identity.json", identity)
     if protocol["dataset_identity"] != identity:
@@ -1028,12 +1077,14 @@ def evaluate_split(
     *,
     settings: TrainingSettings,
     protocol: Mapping[str, Any],
+    inference_device: str | None = None,
 ) -> tuple[dict, Path]:
     """
     Evaluate an explicit frozen split and save native metrics and portable predictions.
     """
     if split not in {"val", "test"}:
         raise ValueError("Only val and test can be evaluated")
+    inference_device = inference_device or settings.device
     summary = manifest["splits"][split]
     derived_dir = Path(manifest["dataset_dir"]) / summary["loader_split"]
     derived_annotations = derived_dir / "_annotations.coco.json"
@@ -1070,7 +1121,7 @@ def evaluate_split(
         dataset_file="roboflow",
         split=split,
         # Match the supported scalar form used by train_kwargs for RF-DETR 1.10.1.
-        device="cuda",
+        device=inference_device.split(":")[0],
         devices=1,
         num_workers=0,
         batch_size=1,
@@ -1112,7 +1163,7 @@ def evaluate_split(
         metadata["benchmark"] = benchmark_predict(
             predict_one,
             [derived_dir / image["file_name"] for image in ground_truth["images"]],
-            device=settings.device,
+            device=inference_device,
         )
     artifact = write_prediction_artifact(
         run_dir / f"{split}_predictions.json",
@@ -1124,14 +1175,15 @@ def evaluate_split(
     return metrics, artifact
 
 
-def postprocess_run(
+def evaluate_checkpoint_run(
     run_dir: Path,
     *,
-    publish: bool = True,
+    device: str,
+    publish: bool = False,
     bundle_root: Path | None = None,
 ) -> dict[str, Any]:
     """
-    Regenerate completed-run outputs, optionally publishing a comparison bundle.
+    Evaluate a selected checkpoint and history without invoking exporters.
     """
     run_dir = run_dir.expanduser().resolve()
     protocol, manifest, settings = _postprocess_state(run_dir)
@@ -1139,8 +1191,7 @@ def postprocess_run(
     loss_figure, metric_figure = plot_history(history)
     loss_figure.savefig(run_dir / "training_losses.png", bbox_inches="tight")
     metric_figure.savefig(run_dir / "validation_metrics.png", bbox_inches="tight")
-    onnx_path = ensure_onnx_model_in_subprocess(SUBPROJECT_ROOT, run_dir)
-    best_model, best_metadata = load_best_model(run_dir)
+    best_model, best_metadata = load_best_model(run_dir, device=device)
     split_metrics = {}
     prediction_artifacts = {}
     for split in ("val", "test"):
@@ -1152,6 +1203,7 @@ def postprocess_run(
             best_metadata,
             settings=settings,
             protocol=protocol,
+            inference_device=device,
         )
         split_metrics[split] = metrics
         prediction_artifacts[split] = artifact
@@ -1175,12 +1227,29 @@ def postprocess_run(
         )
     return {
         "history": history,
-        "onnx_path": onnx_path,
         "best_metadata": best_metadata,
         "split_metrics": split_metrics,
         "prediction_artifacts": prediction_artifacts,
         "bundle": bundle,
     }
+
+
+def postprocess_run(
+    run_dir: Path,
+    *,
+    publish: bool = True,
+    bundle_root: Path | None = None,
+) -> dict[str, Any]:
+    """
+    Retain legacy recovery with ONNX export and the separated checkpoint report.
+    """
+    run_dir = Path(run_dir).expanduser().resolve()
+    _postprocess_state(run_dir)
+    onnx_path = ensure_onnx_model_in_subprocess(SUBPROJECT_ROOT, run_dir)
+    result = evaluate_checkpoint_run(
+        run_dir, device="cuda:0", publish=publish, bundle_root=bundle_root
+    )
+    return {**result, "onnx_path": onnx_path}
 
 
 def save_prediction_grids(

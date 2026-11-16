@@ -22,3 +22,4 @@ dependencies:
       - supervision==0.30.2
       - datumaro==1.13.11
       - roboflow==1.4.2
+      - onnxruntime

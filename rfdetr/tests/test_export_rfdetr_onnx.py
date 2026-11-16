@@ -20,7 +20,7 @@ def test_main_ensures_and_reports_the_selected_run(
     Resolve the CLI run directory and report its validated ONNX artifact.
     """
     run_dir = tmp_path / "run"
-    expected = run_dir / "checkpoint_best_total.onnx"
+    expected = run_dir / "weights/checkpoint_best_total.onnx"
     calls = []
 
     def fake_ensure(path: Path) -> Path:
