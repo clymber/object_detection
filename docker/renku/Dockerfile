@@ -8,6 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -s /usr/bin/vim.tiny /usr/bin/vim \
     && rm -rf /var/lib/apt/lists/*
 
+# Enable mouse scrolling, selection, and terminal clipboard integration in tmux.
+RUN printf '%s\n' \
+    'set -g mouse on' \
+    'set -s set-clipboard on' \
+    > /etc/tmux.conf
+
 # Switch back to the vscode user for subsequent operations
 USER vscode
 
