@@ -6,6 +6,7 @@
     { "name": "YOLOX", "path": "yolox" },
     { "name": "RF-DETR", "path": "rfdetr" },
     { "name": "Evaluation", "path": "evaluation" },
+    { "name": "iOS", "path": "ios"},
     { "name": "Detection Common", "path": "detection_common" },
     { "name": "Notebook Tools", "path": "notebook-tools" },
     { "name": "Docker", "path": "docker" },
@@ -14,13 +15,7 @@
   "settings": {
     "python.useEnvironmentsExtension": true,
     "python-envs.workspaceSearchPaths": [".conda/envs"],
-    "jupyter.kernels.excludePythonEnvironments": [
-      "~/.conda/envs/dataset-dev",
-      "~/.conda/envs/evaluation-dev",
-      "~/.conda/envs/rfdetr-dev",
-      "~/.conda/envs/ultralytics-dev",
-      "~/.conda/envs/yolox-dev"
-    ],
+    "jupyter.kernels.excludePythonEnvironments": [],
     "files.exclude": {
       "**/__pycache__": true,
       "**/.pytest_cache": true,

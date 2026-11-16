@@ -107,9 +107,15 @@
       "YOLOX_NANO_PROGRESS": "0",
       "YOLOX_NANO_VERBOSE": "0"
     },
-    "path": "yolox/notebooks/nb03.03-yolox_nano_large_basketball.py",
+    "path": "yolox/notebooks/nb03.03.01-yolox_nano-basketball.py",
     "status": "inactivated",
-    "log": "outputs/notebook_logs/yolox/nb03.03-yolox_nano_large_basketball.log"
+    "log": "outputs/notebook_logs/yolox/nb03.03.01-yolox_nano-basketball.log"
+  },
+  {
+    "env": {},
+    "path": "yolox/notebooks/nb03.03.02-yolox_nano-basketball-export.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/yolox/nb03.03.02-yolox_nano-basketball-export.log"
   },
   {
     "env": {
@@ -173,9 +179,15 @@
       "RFDETR_EARLY_STOPPING_USE_EMA": "1",
       "RFDETR_BENCHMARK": "1"
     },
-    "path": "rfdetr/notebooks/nb04.02-rfdetr_small-basketball.py",
+    "path": "rfdetr/notebooks/nb04.02.01-rfdetr_small-basketball.py",
     "status": "inactivated",
-    "log": "outputs/notebook_logs/rfdetr/nb04.02-rfdetr_small-basketball.log"
+    "log": "outputs/notebook_logs/rfdetr/nb04.02.01-rfdetr_small-basketball.log"
+  },
+  {
+    "env": {},
+    "path": "rfdetr/notebooks/nb04.02.02-rfdetr_small-basketball-export.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/rfdetr/nb04.02.02-rfdetr_small-basketball-export.log"
   },
   {
     "env": {
@@ -200,9 +212,15 @@
       "RFDETR_EARLY_STOPPING_USE_EMA": "1",
       "RFDETR_BENCHMARK": "1"
     },
-    "path": "rfdetr/notebooks/nb04.04-rfdetr_nano-basketball.py",
+    "path": "rfdetr/notebooks/nb04.04.01-rfdetr_nano-basketball.py",
     "status": "inactivated",
-    "log": "outputs/notebook_logs/rfdetr/nb04.04-rfdetr_nano-basketball.log"
+    "log": "outputs/notebook_logs/rfdetr/nb04.04.01-rfdetr_nano-basketball.log"
+  },
+  {
+    "env": {},
+    "path": "rfdetr/notebooks/nb04.04.02-rfdetr_nano-basketball-export.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/rfdetr/nb04.04.02-rfdetr_nano-basketball-export.log"
   },
   {
     "env": {},
@@ -233,5 +251,11 @@
     "path": "evaluation/notebooks/smoke.py",
     "status": "inactivated",
     "log": "outputs/notebook_logs/evaluation/smoke.log"
+  },
+  {
+    "env": {},
+    "path": "evaluation/notebooks/nb05.05-basketball_runtime_comparison.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/evaluation/nb05.05-basketball_runtime_comparison.log"
   }
 ]
