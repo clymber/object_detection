@@ -154,8 +154,9 @@ def test_resume_of_a_preprotocol_run_requires_a_fresh_experiment(
         )
 
 
+@pytest.mark.parametrize("model_size", ["small", "nano"])
 def test_fresh_run_uses_configured_output_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model_size: str
 ) -> None:
     """
     Place new RF-DETR runs below OUTPUT_ROOT, including mounted overrides.
@@ -163,12 +164,74 @@ def test_fresh_run_uses_configured_output_root(
     output_root = tmp_path / "mounted-output"
     monkeypatch.setattr(rfdetr, "OUTPUT_ROOT", output_root)
     monkeypatch.setattr(rfdetr, "_dataset_identity", lambda _manifest: _identity())
-    settings = rfdetr.TrainingSettings(epochs=2, smoke_run=True)
+    settings = rfdetr.TrainingSettings(epochs=2, smoke_run=True, model_size=model_size)
     manifest = {"fingerprint": "fixture", "source_dir": "fixture"}
     run_dir = rfdetr.prepare_run(settings, manifest, {})
     assert run_dir.parent == output_root / "runs" / "basketball"
+    assert run_dir.name.startswith(f"rfdetr_{model_size}_")
+    assert read_json(run_dir / rfdetr.RUN_CONFIG)["model"] == settings.model_name
     protocol = read_json(run_dir / "run_protocol.json")
     assert protocol["smoke_run"] is True
+    assert protocol["model"] == settings.model_name
+    assert protocol["source_notebook"] == rfdetr.SOURCE_NOTEBOOKS[settings.model_name]
+    resumed = rfdetr.settings_from_env(
+        overrides={"mode": "resume", "run_dir": str(run_dir)}
+    )
+    assert resumed.model_size == model_size
+    assert resumed.smoke_run is True
+    assert rfdetr._protocol_settings(resumed) == protocol["training_settings"]
+
+
+def test_model_size_environment_and_notebook_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Parse a variant from the shell while allowing the Nano notebook to pin it.
+    """
+    monkeypatch.setenv("RFDETR_MODEL_SIZE", "small")
+    assert rfdetr.settings_from_env().model_size == "small"
+    nano = rfdetr.settings_from_env(overrides={"model_size": "nano"})
+    assert nano.model_size == "nano"
+    monkeypatch.setenv("RFDETR_MODEL_SIZE", "nano")
+    assert rfdetr.settings_from_env().model_size == "nano"
+
+
+def test_existing_small_protocol_preserves_original_notebook_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Keep historical Small protocols resumable after adding the Nano variant.
+    """
+    monkeypatch.setattr(
+        rfdetr,
+        "SOURCE_NOTEBOOKS",
+        {
+            **rfdetr.SOURCE_NOTEBOOKS,
+            "rfdetr_small": "nb04.02-rfdetr_small_large_basketball.ipynb",
+        },
+    )
+    settings = rfdetr.TrainingSettings()
+    original_utc = datetime(2026, 9, 19, tzinfo=UTC)
+    original = rfdetr._verify_protocol(tmp_path, _identity(), settings, original_utc)
+    assert "model_size" not in original["training_settings"]
+    monkeypatch.setattr(
+        rfdetr,
+        "SOURCE_NOTEBOOKS",
+        {
+            **rfdetr.SOURCE_NOTEBOOKS,
+            "rfdetr_small": "nb04.02-rfdetr_small-basketball.ipynb",
+        },
+    )
+    assert rfdetr._verify_protocol(tmp_path, _identity(), settings, original_utc) == original
+    recovered = rfdetr._settings_from_protocol(original, tmp_path)
+    assert recovered.model_size == "small"
+    with pytest.raises(ValueError, match="Immutable protocol differs"):
+        rfdetr._verify_protocol(
+            tmp_path,
+            _identity(),
+            rfdetr.TrainingSettings(model_size="nano"),
+            original_utc,
+        )
 
 
 def test_prepare_run_rejects_changed_dataset_identity(
@@ -210,6 +273,7 @@ def test_prepare_run_rejects_changed_dataset_identity(
         {"early_stopping_patience": 0},
         {"early_stopping_min_delta": -0.001},
         {"mode": "invalid"},
+        {"model_size": "large"},
     ],
 )
 def test_settings_reject_ambiguous_or_invalid_values(override: dict) -> None:
@@ -284,6 +348,7 @@ def test_sparse_history_combines_training_and_validation_rows(tmp_path: Path) ->
     assert (tmp_path / "results.csv").is_file()
 
 
+@pytest.mark.parametrize("model_size", ["small", "nano"])
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 @pytest.mark.parametrize(
     ("total_prefix", "source_prefix"),
@@ -295,12 +360,18 @@ def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
     total_prefix: str,
     source_prefix: str,
     device: str,
+    model_size: str,
 ) -> None:
     """
     Reload compiled or eager selected weights without changing the saved checkpoints.
     """
-    settings = rfdetr.TrainingSettings()
+    settings = rfdetr.TrainingSettings(model_size=model_size)
     _run_config(tmp_path, settings)
+    if model_size == "small":
+        # Existing run configs predate the explicit variant setting.
+        saved = read_json(tmp_path / rfdetr.RUN_CONFIG)
+        saved["settings"].pop("model_size")
+        write_json(tmp_path / rfdetr.RUN_CONFIG, saved)
     bias = torch.tensor([1.0, 2.0])
     total = tmp_path / rfdetr.BEST_CHECKPOINT
     source = tmp_path / "checkpoint_best_ema.pth"
@@ -345,7 +416,7 @@ def test_best_checkpoint_recovers_stripped_metadata_and_resolution(
             )
 
     module = ModuleType("rfdetr")
-    module.RFDETRSmall = FakeRFDETRSmall
+    setattr(module, f"RFDETR{model_size.capitalize()}", FakeRFDETRSmall)
     monkeypatch.setitem(sys.modules, "rfdetr", module)
     if device == "cpu":
         _, metadata = rfdetr.load_best_model(tmp_path, device=device)
@@ -657,14 +728,16 @@ def test_predictions_skip_background_and_convert_xyxy_to_coco() -> None:
 
 
 def _completed_protocol_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, model_size: str = "small"
 ) -> tuple[Path, rfdetr.TrainingSettings]:
     """
     Create a completed smoke run with mockable model-owned postprocessing inputs.
     """
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    settings = rfdetr.TrainingSettings(epochs=2, smoke_run=True, benchmark=False)
+    settings = rfdetr.TrainingSettings(
+        epochs=2, smoke_run=True, benchmark=False, model_size=model_size
+    )
     monkeypatch.setattr(rfdetr, "_dataset_identity", lambda _manifest: _identity())
     write_json(run_dir / "dataset_manifest.json", {"source_dir": "source"})
     rfdetr.capture_dataset_identity(run_dir / "dataset_identity.json", _identity())
@@ -746,14 +819,18 @@ def test_fit_closes_synchronized_timing_before_postprocessing(
     assert read_training_record(run_dir)["summary"]["total_seconds"] == 6.0
 
 
+@pytest.mark.parametrize("model_size", ["small", "nano"])
 @pytest.mark.parametrize("publish", [False, True])
 def test_postprocess_failure_recovers_with_optional_bundle_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publish: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publish: bool, model_size: str
 ) -> None:
     """
     Recover all run outputs without another fit, publishing only when requested.
     """
-    run_dir, _settings = _completed_protocol_run(tmp_path, monkeypatch)
+    run_dir, settings = _completed_protocol_run(
+        tmp_path, monkeypatch, model_size=model_size
+    )
+    assert rfdetr._postprocess_state(run_dir)[2].model_size == model_size
     checkpoint = run_dir / rfdetr.BEST_CHECKPOINT
 
     class FakeFigure:
@@ -832,7 +909,7 @@ def test_postprocess_failure_recovers_with_optional_bundle_publication(
             annotation,
             [],
             metadata={
-                "model": rfdetr.MODEL_NAME,
+                "model": settings.model_name,
                 "split": split,
                 "run_dir": str(run_dir),
                 "checkpoint": str(checkpoint),
@@ -878,20 +955,26 @@ def test_multiclass_predictions_keep_second_class_and_skip_background() -> None:
     assert all(row["image_id"] == 42 for row in rows)
 
 
+@pytest.mark.parametrize("model_size", ["small", "nano"])
 @pytest.mark.parametrize("cuda_available", [False, True])
 def test_multiclass_model_construction(
-    monkeypatch: pytest.MonkeyPatch, cuda_available: bool
+    monkeypatch: pytest.MonkeyPatch, cuda_available: bool, model_size: str
 ) -> None:
-    """Build a two-output head and enable training compilation only with CUDA."""
+    """
+    Build the selected variant's class head and enable compilation only with CUDA.
+    """
     monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
     module = ModuleType("rfdetr")
-    module.RFDETRSmall = lambda **kwargs: kwargs
+    setattr(module, f"RFDETR{model_size.capitalize()}", lambda **kwargs: kwargs)
     monkeypatch.setitem(sys.modules, "rfdetr", module)
     model = rfdetr.build_model(
-        rfdetr.TrainingSettings(), class_names=["football", "basketball"]
+        rfdetr.TrainingSettings(model_size=model_size),
+        class_names=["football", "basketball"],
     )
     assert model["num_classes"] == 2
     assert model["compile"] is cuda_available
+    assert model["resolution"] == 640
+    assert model["positional_encoding_size"] == 40
     kwargs = rfdetr.train_kwargs(
         rfdetr.TrainingSettings(),
         Path("dataset"),

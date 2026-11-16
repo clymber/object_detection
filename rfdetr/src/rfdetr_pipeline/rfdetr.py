@@ -1,5 +1,5 @@
 """
-RF-DETR Small training, recovery, and reporting for the Renku basketball experiment.
+RF-DETR training, recovery, and reporting for the Renku basketball experiments.
 
 Detector imports are lazy so data/evaluation helpers work outside its GPU environment.
 """
@@ -111,11 +111,14 @@ class TrainingSettings:
     smoke_run: bool = False
     mode: RunMode = RunMode.FRESH
     run_dir: str | None = None
+    model_size: str = "small"
 
     def __post_init__(self) -> None:
         """
         Reject unsupported resolutions, run modes, and invalid numeric settings.
         """
+        if self.model_size not in ("small", "nano"):
+            raise ValueError("RF-DETR model_size must be small or nano")
         for name in (
             "epochs",
             "batch_size",
@@ -127,7 +130,7 @@ class TrainingSettings:
             if type(value) is not int or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
         if self.resolution % 32:
-            raise ValueError("RF-DETR Small resolution must be a multiple of 32")
+            raise ValueError("RF-DETR resolution must be a multiple of 32")
         for name in ("num_workers", "seed"):
             if type(getattr(self, name)) is not int or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be a nonnegative integer")
@@ -166,6 +169,13 @@ class TrainingSettings:
         """
         return self.batch_size * self.grad_accum_steps
 
+    @property
+    def model_name(self) -> str:
+        """
+        Return the model identifier used by run directories and shared artifacts.
+        """
+        return f"rfdetr_{self.model_size}"
+
 
 def _settings_from_protocol(
     protocol: Mapping[str, Any], run_dir: Path
@@ -175,6 +185,7 @@ def _settings_from_protocol(
     """
     return TrainingSettings(
         **dict(protocol["training_settings"]),
+        model_size=protocol["model"].removeprefix("rfdetr_"),
         smoke_run=protocol["smoke_run"],
         mode=RunMode.RESUME,
         run_dir=str(run_dir),
@@ -207,6 +218,7 @@ def settings_from_env(*, overrides: dict[str, Any] | None = None) -> TrainingSet
                     "experiment."
                 ) from error
             values = dict(protocol["training_settings"])
+            values["model_size"] = protocol["model"].removeprefix("rfdetr_")
             values["smoke_run"] = protocol["smoke_run"]
     boolean_fields = {
         "amp",
@@ -227,6 +239,8 @@ def settings_from_env(*, overrides: dict[str, Any] | None = None) -> TrainingSet
                 if value not in {"0", "1"}:
                     raise ValueError(f"{key} must be 0 or 1")
                 values[field] = value == "1"
+            elif field == "model_size":
+                values[field] = value
             else:
                 values[field] = float(value) if field in float_fields else int(value)
     values.update(
@@ -377,8 +391,10 @@ def train_kwargs(
 
 
 LOGICAL_DATASET = "basketball"
-MODEL_NAME = "rfdetr_small"
-SOURCE_NOTEBOOK = "nb04.02-rfdetr_small_large_basketball.ipynb"
+SOURCE_NOTEBOOKS = {
+    "rfdetr_small": "nb04.02-rfdetr_small-basketball.ipynb",
+    "rfdetr_nano": "nb04.04-rfdetr_nano-basketball.ipynb",
+}
 
 
 def _dataset_identity(manifest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -401,6 +417,8 @@ def _protocol_settings(settings: TrainingSettings) -> dict[str, Any]:
     values.pop("mode")
     values.pop("run_dir")
     values.pop("smoke_run")
+    # Model identity lives in protocol.model, preserving existing Small protocols.
+    values.pop("model_size")
     return values
 
 
@@ -413,11 +431,15 @@ def _verify_protocol(
     """
     Persist or verify immutable shared provenance for one RF-DETR run.
     """
+    source_notebook = SOURCE_NOTEBOOKS[settings.model_name]
+    if (run_dir / "run_protocol.json").is_file():
+        # Preserve provenance for Small runs created before the notebook rename.
+        source_notebook = read_run_protocol(run_dir)["source_notebook"]
     return create_run_protocol(
         run_dir,
         logical_dataset=LOGICAL_DATASET,
-        model=MODEL_NAME,
-        source_notebook=SOURCE_NOTEBOOK,
+        model=settings.model_name,
+        source_notebook=source_notebook,
         original_utc=original_utc,
         training_settings=_protocol_settings(settings),
         smoke_run=settings.smoke_run,
@@ -439,7 +461,7 @@ def prepare_run(settings: TrainingSettings, manifest: dict, runtime: dict) -> Pa
         "rfdetr_version": RFDETR_VERSION,
         "settings": experiment,
         "dataset_fingerprint": manifest["fingerprint"],
-        "model": "rfdetr_small",
+        "model": settings.model_name,
         "source_dataset": manifest["source_dir"],
     }
     if settings.mode is not RunMode.FRESH:
@@ -459,7 +481,7 @@ def prepare_run(settings: TrainingSettings, manifest: dict, runtime: dict) -> Pa
             )
         validate_resume_checkpoint(run_dir / checkpoint, settings.epochs)
         return run_dir
-    allocation = allocate_run_directory(OUTPUT_ROOT, "basketball", "rfdetr_small")
+    allocation = allocate_run_directory(OUTPUT_ROOT, LOGICAL_DATASET, settings.model_name)
     run_dir = allocation.path
     identity["created_at"] = allocation.created_at.isoformat()
     write_json(run_dir / RUN_CONFIG, {**identity, "runtime": runtime})
@@ -494,18 +516,16 @@ def build_model(
     class_names: list[str] | tuple[str, ...] = ("basketball",),
 ) -> Any:
     """
-    Initialize the Small model, enabling training compilation when CUDA is available.
+    Initialize the selected model, enabling compilation when CUDA is available.
     """
     import torch
-
     from pytorch_lightning import seed_everything
-    from rfdetr import RFDETRSmall
 
     # Upstream seeds on_fit_start, after creating the random detection head.
     if not class_names or len(set(class_names)) != len(class_names):
         raise ValueError("Expected nonempty unique class names")
     seed_everything(settings.seed, workers=True)
-    return RFDETRSmall(
+    return _model_class(settings.model_size)(
         num_classes=len(class_names),
         resolution=settings.resolution,
         positional_encoding_size=settings.resolution // 16,
@@ -514,6 +534,15 @@ def build_model(
         compile=torch.cuda.is_available(),
         gradient_checkpointing=settings.gradient_checkpointing,
     )
+
+
+def _model_class(model_size: str) -> Any:
+    """
+    Resolve the selected RF-DETR constructor without eager framework imports.
+    """
+    import rfdetr
+
+    return getattr(rfdetr, f"RFDETR{model_size.capitalize()}")
 
 
 def verify_loader(model: Any, settings: TrainingSettings, manifest: dict) -> dict:
@@ -753,7 +782,7 @@ def load_best_model(run_dir: Path, *, device: str = "cuda:0") -> tuple[Any, dict
         raise FileNotFoundError(checkpoint)
     # Recover provenance from the selected EMA/regular source, including older
     # total checkpoints stripped of epoch and model_config. Restore our trained
-    # resolution instead of silently using Small's 512.
+    # resolution instead of silently using the variant's default.
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)
     if not isinstance(state.get("model"), dict):
         raise ValueError("Best checkpoint is missing model weights")
@@ -776,11 +805,11 @@ def load_best_model(run_dir: Path, *, device: str = "cuda:0") -> tuple[Any, dict
         not torch.equal(tensor, source_weights[key]) for key, tensor in weights.items()
     ):
         raise ValueError("Best checkpoint weights differ from its selected source")
-    resolution = read_json(run_dir / RUN_CONFIG)["settings"]["resolution"]
+    settings = TrainingSettings(**read_json(run_dir / RUN_CONFIG)["settings"])
+    resolution = settings.resolution
     if source["model_config"]["resolution"] != resolution:
         raise ValueError("Best checkpoint resolution differs from the saved run")
     best_epoch = int(source["epoch"]) + 1
-    from rfdetr import RFDETRSmall
 
     with tempfile.TemporaryDirectory(prefix="rfdetr-checkpoint-") as temporary_dir:
         reload_checkpoint = checkpoint
@@ -793,7 +822,7 @@ def load_best_model(run_dir: Path, *, device: str = "cuda:0") -> tuple[Any, dict
             torch.save(state, reload_checkpoint)
         del state, source, weights, source_weights
         gc.collect()
-        model = RFDETRSmall.from_checkpoint(
+        model = _model_class(settings.model_size).from_checkpoint(
             reload_checkpoint,
             trust_checkpoint=True,
             device=device,
@@ -946,6 +975,7 @@ def _postprocess_state(
         raise ValueError("Run protocol dataset identity differs from the saved run")
     settings = TrainingSettings(
         **dict(protocol["training_settings"]),
+        model_size=protocol["model"].removeprefix("rfdetr_"),
         smoke_run=protocol["smoke_run"],
     )
     if _protocol_settings(settings) != protocol["training_settings"]:
@@ -1051,7 +1081,7 @@ def evaluate_split(
     write_json(run_dir / f"native_{split}_metrics.json", native)
     write_json(run_dir / f"{split}_metrics.json", metrics)
     metadata = {
-        "model": MODEL_NAME,
+        "model": settings.model_name,
         "split": split,
         "run_dir": str(run_dir),
         **best_metadata,
@@ -1131,7 +1161,7 @@ def postprocess_run(
             OUTPUT_ROOT
             / "evaluation"
             / "basketball_large_dataset"
-            / MODEL_NAME
+            / settings.model_name
             / run_dir.name
         )
         bundle = publish_bundle(

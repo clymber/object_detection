@@ -153,6 +153,7 @@
   {
     "env": {
       "WORLD_SIZE": "1",
+      "RFDETR_MODEL_SIZE": "small",
       "RFDETR_MODE": "fresh",
       "RFDETR_RUN_DIR": "",
       "RFDETR_SMOKE": "0",
@@ -172,9 +173,36 @@
       "RFDETR_EARLY_STOPPING_USE_EMA": "1",
       "RFDETR_BENCHMARK": "1"
     },
-    "path": "rfdetr/notebooks/nb04.02-rfdetr_small_large_basketball.py",
+    "path": "rfdetr/notebooks/nb04.02-rfdetr_small-basketball.py",
     "status": "inactivated",
-    "log": "outputs/notebook_logs/rfdetr/nb04.02-rfdetr_small_large_basketball.log"
+    "log": "outputs/notebook_logs/rfdetr/nb04.02-rfdetr_small-basketball.log"
+  },
+  {
+    "env": {
+      "WORLD_SIZE": "1",
+      "RFDETR_MODEL_SIZE": "nano",
+      "RFDETR_MODE": "fresh",
+      "RFDETR_RUN_DIR": "",
+      "RFDETR_SMOKE": "0",
+      "RFDETR_EPOCHS": "100",
+      "RFDETR_BATCH_SIZE": "4",
+      "RFDETR_GRAD_ACCUM_STEPS": "1",
+      "RFDETR_RESOLUTION": "640",
+      "RFDETR_SEED": "42",
+      "RFDETR_NUM_WORKERS": "0",
+      "RFDETR_LR": "0.0001",
+      "RFDETR_LR_ENCODER": "0.00015",
+      "RFDETR_AMP": "1",
+      "RFDETR_GRADIENT_CHECKPOINTING": "0",
+      "RFDETR_EARLY_STOPPING": "1",
+      "RFDETR_EARLY_STOPPING_PATIENCE": "10",
+      "RFDETR_EARLY_STOPPING_MIN_DELTA": "0.001",
+      "RFDETR_EARLY_STOPPING_USE_EMA": "1",
+      "RFDETR_BENCHMARK": "1"
+    },
+    "path": "rfdetr/notebooks/nb04.04-rfdetr_nano-basketball.py",
+    "status": "inactivated",
+    "log": "outputs/notebook_logs/rfdetr/nb04.04-rfdetr_nano-basketball.log"
   },
   {
     "env": {},

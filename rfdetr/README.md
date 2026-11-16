@@ -24,30 +24,39 @@ prediction before training with real data.
 Training automatically enables `torch.compile` when CUDA is available. The first
 training steps include compilation overhead.
 
-## Training notebook and detached runs
+## Training notebooks and detached runs
 
-The notebook trains RF-DETR Small, displays training history, exports the selected
-checkpoint to ONNX, reviews prediction grids, and summarizes validation/test
-performance. Set `DATASET_NAME` in its experiment settings to select a dataset
+The training notebooks fine-tune COCO-pretrained RF-DETR on `basketball-v0.1`:
+
+- `notebooks/nb04.02-rfdetr_small-basketball.py` trains RF-DETR Small.
+- `notebooks/nb04.04-rfdetr_nano-basketball.py` trains RF-DETR Nano.
+
+Both default to 640 x 640 inputs and up to 100 epochs, display training history,
+export the selected checkpoint to ONNX, review prediction grids, and summarize
+validation/test performance. Training requires a Renku CUDA session. Set
+`DATASET_NAME` in the experiment settings to select a dataset
 under `DATA_ROOT/composed/<DATASET_NAME>/coco/`. Image counts, category IDs, and
 class names come from the COCO annotations. Outputs stay in the run directory;
 the notebook does not publish a comparison bundle.
 
-Synchronize the project notebook, then run a bounded GPU smoke check through
+Synchronize the project notebooks, then run a bounded Nano GPU smoke check through
 the RF-DETR Conda kernel:
 
 ```bash
 make sync-notebooks
 RFDETR_MODE=fresh RFDETR_SMOKE=1 bash scripts/run_notebook_tmux.sh run \
-  --file rfdetr/notebooks/nb04.02-rfdetr_small_large_basketball.ipynb \
-  --session rfdetr-small-smoke
-bash scripts/run_notebook_tmux.sh check --session rfdetr-small-smoke
+  --file rfdetr/notebooks/nb04.04-rfdetr_nano-basketball.ipynb \
+  --session rfdetr-nano-smoke
+bash scripts/run_notebook_tmux.sh check --session rfdetr-nano-smoke
 ```
 
 For a full run, set `RFDETR_SMOKE=0` and use a new session name. To continue
 an interrupted run, set `RFDETR_MODE=resume` and `RFDETR_RUN_DIR` to the exact
-recorded run directory. After a completed new-protocol run, regenerate outputs
-and safely republish its bundle without training:
+recorded run directory in the matching model notebook. The Nano notebook pins
+`model_size="nano"`; shared helpers also accept `RFDETR_MODEL_SIZE=small|nano`.
+Run directories and prediction artifacts identify the selected variant, and
+resume rejects changes to the model identity. After a completed new-protocol run,
+regenerate outputs and safely republish its bundle without training:
 
 ```bash
 conda run -p .conda/envs/object-detection-rfdetr python -m \

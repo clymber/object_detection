@@ -2,6 +2,8 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from detection_common import allocate_run_directory
 from detection_common.utils.filepath import increment_path
 
@@ -36,8 +38,9 @@ def test_increment_path_skips_occupied_suffixes(tmp_path: Path) -> None:
     assert increment_path(tmp_path / "experiment") == tmp_path / "experiment-4"
 
 
+@pytest.mark.parametrize("model", ["rfdetr_small", "rfdetr_nano"])
 def test_allocate_run_directory_uses_utc_timestamp_and_reserves_path(
-    tmp_path: Path,
+    tmp_path: Path, model: str
 ) -> None:
     """
     Create the required timestamped path without overwriting an existing run.
@@ -47,13 +50,13 @@ def test_allocate_run_directory_uses_utc_timestamp_and_reserves_path(
     allocation = allocate_run_directory(
         tmp_path,
         "basketball",
-        "rfdetr_small",
+        model,
         clock=lambda: created_at,
     )
 
     assert allocation.created_at == created_at
     assert allocation.path == (
-        tmp_path / "runs" / "basketball" / "rfdetr_small_20260919T190000"
+        tmp_path / "runs" / "basketball" / f"{model}_20260919T190000"
     )
     assert allocation.path.is_dir()
 
