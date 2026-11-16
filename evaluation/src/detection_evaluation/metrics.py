@@ -555,9 +555,10 @@ def write_comparison(
     *,
     split: str,
     training_summaries: Mapping[str, Mapping[str, Any] | None] | None = None,
+    omit_incompatible_timings: bool = False,
 ) -> pd.DataFrame:
     """
-    Re-evaluate all available exports with the same policy and save comparison reports.
+    Re-evaluate exports, optionally omitting timings that differ from the first benchmark.
     """
     summaries = training_summaries or {}
     unknown_summaries = set(summaries) - set(artifacts)
@@ -598,10 +599,13 @@ def write_comparison(
                     for name, value in signature.items()
                     if value != benchmark_reference[1][name]
                 ]
-                raise ValueError(
+                reason = (
                     f"Incomparable benchmarks for {benchmark_reference[0]} and "
                     f"{model}: {', '.join(differences)} differ"
                 )
+                if not omit_incompatible_timings:
+                    raise ValueError(reason)
+                timing = {**_benchmark_columns(None), "timing_unavailable_reason": reason}
         reports[model] = {
             "metadata": metadata,
             "metrics": metrics,
@@ -682,6 +686,7 @@ def write_comparison(
             "latency_ms_median",
             "latency_ms_mean",
             "batch_one_images_per_second",
+            "timing_unavailable_reason",
         ],
     )
     _write_report_view(
@@ -742,12 +747,14 @@ def write_comparison(
             ),
             (
                 "Batch-1 images/s is 1000 divided by median latency and is not "
-                "batched throughput. A dash means that artifact was not benchmarked."
+                "batched throughput. A dash means timing is unavailable; see the "
+                "inference report for any benchmark incompatibility."
             ),
             (
                 "Displayed timings share the protocol, warm-up, image sequence, "
-                "precision, batch size, host, and accelerator; incompatible "
-                "benchmarks are rejected. Historical timings remain separate."
+                "precision, batch size, host, and accelerator of the first benchmark. "
+                "Incompatible timings are omitted when requested; otherwise they "
+                "are rejected. Original benchmarks remain in artifact metadata."
             ),
         ]
     )

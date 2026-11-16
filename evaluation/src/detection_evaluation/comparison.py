@@ -16,7 +16,7 @@ from detection_common.utils.json_io import write_json
 from .metrics import write_comparison
 from .run_protocol import BUNDLE_MANIFEST_FILE_NAME, read_bundle
 
-MODEL_NAMES = ("yolo11n", "yolox_tiny", "yolox_nano", "rfdetr_small")
+MODEL_NAMES = ("yolo11n", "yolox_tiny", "yolox_nano", "rfdetr_small", "rfdetr_nano")
 LOGICAL_DATASET = "basketball"
 
 
@@ -286,9 +286,11 @@ def write_bundle_comparisons(
     selections: Mapping[str, BundleSelection],
     annotations: Mapping[str, Path | str],
     output_dir: Path | str,
+    *,
+    omit_incompatible_timings: bool = False,
 ) -> dict[str, pd.DataFrame]:
     """
-    Re-evaluate selected bundle snapshots and write comparison plus provenance reports.
+    Re-evaluate bundles, optionally omitting incompatible timings from the reports.
     """
     if set(annotations) != {"val", "test"}:
         raise ValueError("Comparison annotations must contain exactly val and test")
@@ -307,6 +309,7 @@ def write_bundle_comparisons(
             destination,
             split=split,
             training_summaries=summaries,
+            omit_incompatible_timings=omit_incompatible_timings,
         )
     _write_selection_report(selections, destination)
     return reports

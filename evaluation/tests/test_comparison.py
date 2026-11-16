@@ -24,7 +24,7 @@ from detection_evaluation import (
     write_prediction_artifact,
 )
 
-MODELS = ("yolo11n", "yolox_tiny", "yolox_nano", "rfdetr_small")
+MODELS = ("yolo11n", "yolox_tiny", "yolox_nano", "rfdetr_small", "rfdetr_nano")
 
 
 def test_versioned_comparison_rejects_previous_annotation_export(tmp_path):
@@ -234,7 +234,7 @@ def test_discovery_orders_explicitly_selects_and_writes_full_reports(
     comparison_inputs: tuple[Path, dict[str, Path]],
 ) -> None:
     """
-    Select four full bundles by immutable time and report known metrics and timing.
+    Select five full bundles by immutable time and report known metrics and timing.
     """
     output_root, annotations = comparison_inputs
     _publish_bundle(
@@ -267,6 +267,8 @@ def test_discovery_orders_explicitly_selects_and_writes_full_reports(
             median=10.0 * index,
         )
     selections = discover_bundles(output_root)
+    assert tuple(selections) == MODELS
+    assert all(selection.available for selection in selections.values())
     assert selections["yolo11n"].bundle_dir == latest
     reports = write_bundle_comparisons(
         selections,
@@ -277,6 +279,11 @@ def test_discovery_orders_explicitly_selects_and_writes_full_reports(
     assert test.loc["yolo11n", "ap50_95"] == pytest.approx(1)
     assert test.loc["yolox_nano", "ap50_95"] == pytest.approx(0)
     assert test.loc["rfdetr_small", "latency_ms_median"] == 30
+    for split_report in reports.values():
+        nano = split_report.set_index("model").loc["rfdetr_nano"]
+        assert nano["ap50_95"] == pytest.approx(1)
+        assert nano["latency_ms_median"] == 40
+        assert nano["training_total_hours"] == pytest.approx(600 / 3600)
     assert test.loc["yolo11n", "training_total_hours"] == pytest.approx(600 / 3600)
     report_dir = output_root / "comparisons" / "basketball_large_dataset"
     for split in ("val", "test"):
@@ -289,6 +296,10 @@ def test_discovery_orders_explicitly_selects_and_writes_full_reports(
     assert selection["training"]["attempts"][0]["timing_protocol"] == "monotonic-synchronized-v1"
     explicit = discover_bundles(output_root, selections={"yolo11n": "older"})
     assert explicit["yolo11n"].bundle_dir.name == "older"
+    explicit_nano = discover_bundles(
+        output_root, selections={"rfdetr_nano": "run-rfdetr_nano"}
+    )
+    assert explicit_nano["rfdetr_nano"].bundle_dir.name == "run-rfdetr_nano"
 
 
 def test_discovery_marks_missing_and_skips_smoke_or_truncated_candidates(
@@ -317,7 +328,9 @@ def test_discovery_marks_missing_and_skips_smoke_or_truncated_candidates(
         hour=10,
         train_batch_limit=1,
     )
-    selections = discover_bundles(output_root, models=("yolo11n", "yolox_tiny"))
+    selections = discover_bundles(output_root)
+    assert not selections["rfdetr_nano"].available
+    assert "No published bundle" in selections["rfdetr_nano"].unavailable_reason
     assert not selections["yolo11n"].available
     assert "recover" in selections["yolo11n"].unavailable_reason
     assert not selections["yolox_tiny"].available
@@ -444,6 +457,18 @@ def test_selected_snapshot_survives_republication_and_rejects_mixed_benchmarks(
     all_models = discover_bundles(output_root, models=("yolo11n", "yolox_tiny"))
     with pytest.raises(ValueError, match="Incomparable benchmarks"):
         write_bundle_comparisons(all_models, annotations, tmp_path / "mixed-reports")
+    reports = write_bundle_comparisons(
+        all_models, annotations, tmp_path / "accuracy-reports",
+        omit_incompatible_timings=True,
+    )
+    for report in reports.values():
+        rows = report.set_index("model")
+        assert rows.loc["yolo11n", "latency_ms_median"] == 10
+        candidate = rows.loc["yolox_tiny"]
+        assert candidate["ap50_95"] == pytest.approx(1)
+        assert candidate["training_total_hours"] == pytest.approx(600 / 3600)
+        assert candidate[["latency_ms_median", "batch_one_images_per_second"]].isna().all()
+        assert "host differ" in candidate["timing_unavailable_reason"]
 
 
 def test_consumer_imports_no_producer_modules_or_subprocesses(

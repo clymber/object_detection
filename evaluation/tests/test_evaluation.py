@@ -477,6 +477,26 @@ def test_comparison_rejects_incompatible_benchmarks(
             tmp_path / "comparison",
             split="test",
         )
+    frame = write_comparison(
+        {"yolo11n": reference, "rfdetr_small": candidate},
+        annotations,
+        tmp_path / "comparison-accuracy",
+        split="test",
+        omit_incompatible_timings=True,
+    ).set_index("model")
+    assert frame.loc["yolo11n", "latency_ms_median"] == 10
+    candidate_row = frame.loc["rfdetr_small"]
+    assert candidate_row["status"] == "available"
+    assert candidate_row["ap50_95"] == 0
+    assert candidate_row[[
+        "benchmark_samples", "latency_ms_median", "latency_ms_mean",
+        "batch_one_images_per_second",
+    ]].isna().all()
+    assert difference in candidate_row["timing_unavailable_reason"]
+    report = read_json(tmp_path / "comparison-accuracy/comparison_test.json")
+    assert report["models"]["rfdetr_small"]["metadata"]["benchmark"] == benchmark(**override)
+    inference = read_json(tmp_path / "comparison-accuracy/inference_test.json")
+    assert difference in inference["rows"][1]["timing_unavailable_reason"]
 
 
 @pytest.mark.parametrize(

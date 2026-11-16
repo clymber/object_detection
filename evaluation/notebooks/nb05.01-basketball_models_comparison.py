@@ -15,6 +15,8 @@
 # This notebook consumes immutable evaluation bundles below
 # `OUTPUT_ROOT/evaluation/basketball_large_dataset/`. It does not load model
 # frameworks, start producer processes, run inference, train, or require a GPU.
+# It compares YOLO11n, YOLOX Tiny, YOLOX Nano, RF-DETR Small, and RF-DETR Nano
+# (trained in nb04.04).
 # Missing models remain unavailable until their owning project finishes or
 # recovers a new-protocol full run and publishes its bundle.
 
@@ -47,6 +49,7 @@ RUN_SELECTIONS: dict[str, str | Path] = {
 	# "yolox_tiny": "yolox_tiny_20260919T130000",
 	# "yolox_nano": "yolox_nano_20260919T140000",
 	# "rfdetr_small": "rfdetr_small_20260919T150000",
+	# "rfdetr_nano": "rfdetr_nano_20261116T115819",
 }
 SOURCE_DATASET = DATA_ROOT / "composed" / "basketball-v0.1" / "coco"
 REPORT_DIR = OUTPUT_ROOT / "comparisons" / "basketball_large_dataset"
@@ -90,10 +93,14 @@ with pd.option_context("display.max_colwidth", None):
 # Both reports use the shared COCO evaluator. AP uses a score floor of 0.001;
 # precision, recall, F1, and negative-image error measures use confidence 0.25
 # and IoU 0.50. Inference timings are compared only when their benchmark
-# protocol, host, accelerator, image sequence, and settings are compatible.
+# protocol, host, accelerator, image sequence, and settings match the first
+# available benchmark in model order. Incompatible timings are left unavailable
+# with a reason in the inference report; accuracy and training remain included.
 
 # %%
-reports = write_bundle_comparisons(selections, ANNOTATIONS, REPORT_DIR)
+reports = write_bundle_comparisons(
+	selections, ANNOTATIONS, REPORT_DIR, omit_incompatible_timings=True
+)
 for split, report in reports.items():
 	display_report = report.copy()
 	for column in ("run_dir", "checkpoint"):

@@ -44,11 +44,16 @@ Replace the "notebook file path" in the final command as needed.
 
 | Notebook | Purpose | Requirements |
 | --- | --- | --- |
-| `nb05.01` | Compare validation and test metrics from published full-run bundles. | Canonical basketball dataset and model evaluation bundles. |
+| `nb05.01` | Compare YOLO11n, YOLOX Tiny/Nano, and RF-DETR Small/Nano validation and test metrics from published full-run bundles. | Canonical basketball dataset and model evaluation bundles. |
 | `nb05.02` | Validate model runtime environment setup. | YOLOX Nano ONNX export. |
 | `nb05.03` | Compare four exports on one test image and benchmark CPU and CoreML-first inference. | Canonical basketball dataset and all four ONNX exports. |
 | `nb05.04` | Full-video ONNX inference, timing, and annotated previews. | Dribbling WebM and four full-run exports; writes MP4, JSONL, summaries, selection metadata, and comparison CSV. |
 | `smoke` | Check evaluation imports and shared workspace paths. | None. |
+
+`nb05.01` includes accuracy and training results when a model's inference benchmark
+uses different hardware. Its incompatible timings remain unavailable, with the reason
+recorded in the inference report. Displayed timings match the first available benchmark
+in model order; the original measurements remain in bundle metadata.
 
 `nb05.04` reads
 `DATA_ROOT/sources/downloads/basketball_videos/basketball_dribbling.webm` and
