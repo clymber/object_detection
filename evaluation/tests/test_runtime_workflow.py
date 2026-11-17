@@ -22,6 +22,7 @@ from detection_evaluation import (
 )
 from detection_evaluation import runtime_comparison as comparison
 from detection_evaluation import runtime_workflow as workflow
+from detection_evaluation import runtime_stages as stages
 
 
 @pytest.fixture
@@ -70,56 +71,89 @@ def fixture_run(tmp_path):
     return run, dataset
 
 
-def fake_factory(run, *, fail_coreml=False, fail_image=False, shift=False):
+def fake_exporter(run, *, fail_coreml=False):
     """
-    Supply deterministic model-free predictions and package records.
+    Publish deterministic graph files independently of runtime loading.
     """
-    def factory(name, directory):
+    def export(name, directory):
         """
-        Create isolated format artifacts without touching source run state.
+        Create one canonical artifact without touching immutable training inputs.
         """
         if name == "coreml" and fail_coreml:
             raise RuntimeError("converter unavailable")
-        if name == "pytorch":
-            path = run / "weights/best_ckpt.pth"
-        else:
-            directory.mkdir(parents=True, exist_ok=True)
-            staged = directory / "temporary-export"
-            staged.write_bytes(name.encode())
-            path = workflow.publish_export(staged, directory, run, "yolox_nano", name)
+        directory.mkdir(parents=True, exist_ok=True)
+        staged = directory / "temporary-export"
+        staged.write_bytes(name.encode())
+        path = workflow.publish_export(staged, directory, run, "yolox_nano", name)
+        return workflow.artifact_identity(path)
 
+    return export
+
+
+def fake_loader(run, *, fail_image=False, shift=False):
+    """
+    Load deterministic model-free predictors without writing or replacing graphs.
+    """
+    def load(name, directory):
+        """
+        Return empty negatives or a known positive with optional runtime failures.
+        """
+        path = (run / "weights/best_ckpt.pth" if name == "pytorch" else
+                directory / workflow.export_artifact_path(run, "yolox_nano", name).name)
         prediction_calls = 0
 
         def predict(image):
             """
-            Return empty negatives or a known positive, optionally failing.
+            Return source-coordinate rows or deliberately fail during accuracy.
             """
             nonlocal prediction_calls
             prediction_calls += 1
             image_id = image.getpixel((0, 0))[0]
-            if (fail_image and image_id == 3 and name == "onnx"
-                    and prediction_calls > 3):
+            if fail_image and image_id == 3 and name == "onnx" and prediction_calls > 3:
                 raise OSError("bad image inference")
             if image_id != 1:
                 return []
             offset = 5 if shift and name == "onnx" else 0
             return [{"category_id": 7, "bbox": [2+offset, 3, 10, 12], "score": .9}]
 
-        return predict, {"backend": name, "device": "cpu", "precision": "float32",
-                         "artifact": workflow.artifact_identity(path)}, lambda: None
-    return factory
+        return workflow.RuntimeAdapter(
+            predict, {"backend": name, "device": "cpu", "precision": "float32",
+                      "artifact": workflow.artifact_identity(path)}, lambda: None)
+
+    return load
 
 
-def execute(fixture_run, tmp_path, **kwargs):
+def make_plan(fixture_run, tmp_path, formats=("onnx", "coreml")):
     """
-    Execute a compact real protocol/evaluator test without costly model inference.
+    Prepare the real neutral protocol around a tiny fixture dataset.
     """
     run, dataset = fixture_run
-    return workflow.execute_validation(
-        run_dir=run, dataset_dir=dataset, model="yolox_nano", formats=("onnx", "coreml"),
-        output_root=tmp_path / "outputs", models_root=tmp_path / "models",
-        configuration={"resolution": 64, "postprocessing": {"score_floor": .001}},
-        factory=fake_factory(run, **kwargs))
+    return workflow.ExportPlan(
+        run_dir=run, dataset_dir=dataset, model="yolox_nano", formats=formats,
+        protocol=workflow.validate_run(run, "yolox_nano"),
+        configuration={"resolution": 64, "postprocessing": {"score_floor": .001},
+                       "accuracy_splits": ["val", "test"],
+                       "host_timing": {"warmups": 30, "samples": 300, "repetitions": 3}},
+        output_root=tmp_path / "outputs", models_root=tmp_path / "models")
+
+
+def execute(fixture_run, tmp_path, *, fail_coreml=False, short=False, **kwargs):
+    """
+    Compose explicit stages for existing end-to-end protocol assertions.
+    """
+    run, _ = fixture_run
+    plan = make_plan(fixture_run, tmp_path)
+    if short:
+        plan.configuration.pop("accuracy_splits")
+        plan.configuration.pop("host_timing")
+    selected = stages.export_models(
+        plan, fake_exporter(run, fail_coreml=fail_coreml))
+    if not stages.read_results(selected)["source_run_unchanged"]:
+        return stages.read_results(selected)
+    loader = fake_loader(run, **kwargs)
+    stages.check_parity(selected, loader)
+    stages.evaluate_accuracy(selected, loader)
+    return stages.benchmark_host(selected, loader)
 
 
 def test_discovery_uses_mtime_tiebreak_and_exact_override(fixture_run, tmp_path):
@@ -197,9 +231,10 @@ def test_inference_errors_and_parity_failures_remain_diagnostic(
         assert onnx["parity_status"] == "failed"
         assert set(onnx["predictions"]) == {"val", "test"}
     else:
-        assert onnx["failed_stage"] == "full_split_evaluation"
+        assert onnx["failed_stage"] == "accuracy"
         assert onnx["parity_status"] == "passed"
-        assert not onnx.get("predictions")
+        assert set(onnx["predictions"]) == {"test"}
+        assert set(onnx["metrics"]) == {"test"}
 
 
 def test_comparison_recomputes_accuracy_and_gates_timing(fixture_run, tmp_path):
@@ -276,22 +311,19 @@ def test_package_hash_and_source_mutation_protection(fixture_run, tmp_path):
     with pytest.raises(ValueError, match="hash mismatch"):
         comparison.checked_record(identity)
     run, dataset = fixture_run
-    factory = fake_factory(run)
+    exporter = fake_exporter(run)
 
-    def mutating_factory(name, directory):
+    def mutating_exporter(name, directory):
         """
-        Simulate an exporter accidentally changing selected checkpoint contents.
+        Simulate a converter accidentally changing selected checkpoint contents.
         """
-        result = factory(name, directory)
-        if name == "onnx":
-            (run / "weights/best_ckpt.pth").write_bytes(b"mutated")
+        result = exporter(name, directory)
+        (run / "weights/best_ckpt.pth").write_bytes(b"mutated")
         return result
 
-    result = workflow.execute_validation(
-        run_dir=run, dataset_dir=dataset, model="yolox_nano", formats=("onnx",),
-        output_root=tmp_path / "outputs", models_root=tmp_path / "models",
-        configuration={"resolution": 64, "postprocessing": {"score_floor": .001}},
-        factory=mutating_factory)
+    selected = stages.export_models(
+        make_plan(fixture_run, tmp_path, ("onnx",)), mutating_exporter)
+    result = stages.read_results(selected)
     assert not result["source_run_unchanged"]
     with pytest.raises(RuntimeError):
         workflow.require_success(result)
@@ -503,3 +535,336 @@ def test_finder_metadata_does_not_change_model_or_training_identity(tmp_path):
     assert workflow.artifact_identity(package) == original
     assert not workflow.training_source_file(tmp_path / ".DS_Store", tmp_path,
                                               "rfdetr_small")
+
+
+@pytest.mark.parametrize("fail_coreml", [False, True])
+def test_separate_export_and_repeatable_validation(
+        fixture_run, tmp_path, monkeypatch, fail_coreml):
+    """
+    Execute one named task per call and preserve artifacts across validation reruns.
+    """
+    monkeypatch.setattr(workflow.platform, "system", lambda: "Darwin")
+    run, dataset = fixture_run
+    conversions, loads = [], []
+    create = fake_exporter(run, fail_coreml=fail_coreml)
+
+    def exporter(name, directory):
+        """
+        Record every actual graph conversion.
+        """
+        conversions.append(name)
+        return create(name, directory)
+
+    def loader(name, directory):
+        """
+        Record runtime loads separately from conversion.
+        """
+        loads.append(name)
+        return fake_loader(run)(name, directory)
+
+    selected = stages.export_models(make_plan(fixture_run, tmp_path), exporter)
+    exported = stages.read_results(selected)
+    assert conversions == ["onnx", "coreml"] and not loads
+    assert exported["formats"]["onnx"]["status"] == "exported"
+    assert not list(Path(exported["report_dir"]).rglob("*_predictions.json"))
+    path = Path(exported["exports"]["onnx"]["artifact"]["path"])
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    compared = comparison.compare_runtime_results(
+        runs_dir=run.parent, dataset_dir=dataset, output_dir=tmp_path / "comparison",
+        models=("yolox_nano",))
+    assert compared["table"]["status"].eq("incomplete").all()
+    for _ in range(2):
+        stages.check_parity(selected, loader)
+        stages.evaluate_accuracy(selected, loader)
+        validated = stages.benchmark_host(selected, loader)
+        assert validated["export_id"] == selected.export_id
+        assert validated["formats"]["onnx"]["accepted"]
+        if fail_coreml:
+            assert "converter unavailable" in validated["formats"]["coreml"]["error"]
+            assert "coreml" not in loads
+        else:
+            assert validated["formats"]["coreml"]["accepted"]
+        assert before == (path.read_bytes(), path.stat().st_mtime_ns)
+        assert validated["source_run_unchanged"]
+    assert conversions == ["onnx", "coreml"]
+
+
+@pytest.mark.parametrize("change", ["replacement", "training_source", "artifact"])
+def test_validation_rejects_changes_between_cells(fixture_run, tmp_path, change):
+    """
+    Reject replaced sets, source mutations and graph tampering before runtime load.
+    """
+    run, _ = fixture_run
+    plan = make_plan(fixture_run, tmp_path, ("onnx",))
+    selected = stages.export_models(plan, fake_exporter(run))
+    exported = stages.read_results(selected)
+    if change == "replacement":
+        stages.export_models(plan, fake_exporter(run))
+    elif change == "training_source":
+        (run / "args.yaml").write_text("changed saved settings")
+    else:
+        Path(exported["exports"]["onnx"]["artifact"]["path"]).write_bytes(b"tampered")
+    if change == "artifact":
+        def loader(name, directory):
+            """
+            Allow only the intact checkpoint to reach runtime loading.
+            """
+            assert name == "pytorch"
+            return fake_loader(run)(name, directory)
+
+        result = stages.check_parity(selected, loader)
+        assert result["formats"]["onnx"]["failed_stage"] == "artifact_verification"
+        assert not result["formats"]["onnx"]["accepted"]
+    else:
+        before = selected.manifest_path.read_bytes()
+        with pytest.raises(ValueError, match="replaced|Training source"):
+            stages.check_parity(selected, fake_loader(run))
+        assert before == selected.manifest_path.read_bytes()
+
+
+@pytest.mark.parametrize("short", [False, True])
+@pytest.mark.parametrize("stage", ["parity", "accuracy", "timing"])
+def test_stage_rerun_preserves_other_evidence(fixture_run, tmp_path, stage, short):
+    """
+    Rerun only the named stage and discard dependent timing without reconversion.
+    """
+    result = execute(fixture_run, tmp_path, short=short)
+    selected = stages.load_export_set(result["manifest_path"])
+    run, _ = fixture_run
+    before = result["formats"]["onnx"]
+    records = {key: (Path(before[key]["path"]).read_bytes(), before[key])
+               for key in ("parity", "timing")}
+    predictions = {split: Path(record["path"]).read_bytes()
+                   for split, record in before["predictions"].items()}
+    calls = []
+
+    def loader(name, directory):
+        """
+        Count exactly the images used by the explicitly selected stage.
+        """
+        adapter = fake_loader(run)(name, directory)
+
+        def predict(image):
+            """
+            Record inference without changing deterministic detections.
+            """
+            calls.append(name)
+            return adapter.predict(image)
+
+        return workflow.RuntimeAdapter(predict, adapter.contract, adapter.synchronize)
+
+    operation = {"parity": stages.check_parity, "accuracy": stages.evaluate_accuracy,
+                 "timing": stages.benchmark_host}[stage]
+    updated = operation(selected, loader)
+    outcome = updated["formats"]["onnx"]
+    expected = {"parity": 3, "accuracy": 3 if short else 6,
+                "timing": 105 if short else 930}
+    assert calls.count("onnx") == expected[stage]
+    if stage != "parity":
+        assert records["parity"][0] == Path(outcome["parity"]["path"]).read_bytes()
+    if stage != "accuracy":
+        assert predictions == {split: Path(record["path"]).read_bytes()
+                               for split, record in outcome["predictions"].items()}
+    if stage != "timing":
+        assert "timing" not in outcome
+        assert not Path(records["timing"][1]["path"]).exists()
+        assert outcome["stages"]["timing"]["status"] == "pending"
+        assert not outcome["accepted"]
+        with pytest.raises(RuntimeError):
+            workflow.require_success(updated)
+    else:
+        assert outcome["accepted"]
+        workflow.require_success(updated)
+
+
+def test_timing_prerequisites_do_not_run_hidden_stages(fixture_run, tmp_path):
+    """
+    Leave missing prerequisites pending and run no inference as a side effect.
+    """
+    run, _ = fixture_run
+    selected = stages.export_models(make_plan(fixture_run, tmp_path), fake_exporter(run))
+
+    def forbidden(*args):
+        """
+        Reject any runtime loading before parity and accuracy have succeeded.
+        """
+        pytest.fail("missing timing prerequisites must not load a model")
+
+    result = stages.benchmark_host(selected, forbidden)
+    assert result["formats"]["onnx"]["stages"]["timing"]["status"] == "pending"
+    assert not list(Path(result["report_dir"]).rglob("*_predictions.json"))
+    with pytest.raises(RuntimeError):
+        workflow.require_success(result)
+
+
+def test_accuracy_before_parity_remains_unaccepted(fixture_run, tmp_path):
+    """
+    Allow independent accuracy while keeping missing parity explicit.
+    """
+    run, _ = fixture_run
+    selected = stages.export_models(make_plan(fixture_run, tmp_path), fake_exporter(run))
+    result = stages.evaluate_accuracy(selected, fake_loader(run))
+    assert set(result["formats"]["onnx"]["metrics"]) == {"val", "test"}
+    assert "parity" not in result["formats"]["onnx"]
+    assert not result["formats"]["onnx"]["accepted"]
+
+
+def test_legacy_manifest_resumes_from_verified_evidence(fixture_run, tmp_path):
+    """
+    Hydrate old two-cell records without modifying parity or reconverting graphs.
+    """
+    result = execute(fixture_run, tmp_path)
+    selected = stages.load_export_set(result["manifest_path"])
+    legacy = read_json(selected.manifest_path)
+    for outcome in legacy["formats"].values():
+        outcome.pop("stages", None)
+    legacy.pop("configuration_sha256")
+    legacy.pop("timing_sequence")
+    legacy.pop("accuracy_splits")
+    legacy.pop("host_timing")
+    write_json(selected.manifest_path, legacy)
+    run, _ = fixture_run
+    updated = stages.benchmark_host(selected, fake_loader(run))
+    assert updated["formats"]["onnx"]["accepted"]
+    assert updated["formats"]["onnx"]["parity"] == result["formats"]["onnx"]["parity"]
+
+
+def test_stage_source_mutation_is_saved_after_failure(fixture_run, tmp_path):
+    """
+    Retain source immutability failures even when model inference also raises.
+    """
+    run, _ = fixture_run
+    selected = stages.export_models(make_plan(fixture_run, tmp_path), fake_exporter(run))
+
+    def loader(name, directory):
+        """
+        Return a predictor that changes training inputs and fails immediately.
+        """
+        adapter = fake_loader(run)(name, directory)
+
+        def predict(image):
+            """
+            Simulate a bad inference callback without losing mutation evidence.
+            """
+            (run / "args.yaml").write_text("modified")
+            raise RuntimeError("inference failed")
+
+        return workflow.RuntimeAdapter(predict, adapter.contract, adapter.synchronize)
+
+    result = stages.check_parity(selected, loader)
+    assert not result["source_run_unchanged"]
+    assert "args.yaml" in result["source_mutations"]
+    assert result["formats"]["onnx"]["stages"]["parity"]["status"] == "failed"
+    with pytest.raises(ValueError, match="Training source"):
+        stages.evaluate_accuracy(selected, fake_loader(run))
+
+
+def test_stage_lock_and_tampered_configuration_rejected(fixture_run, tmp_path):
+    """
+    Serialize stage writers and reject modified runtime settings before inference.
+    """
+    import fcntl
+
+    run, _ = fixture_run
+    selected = stages.export_models(make_plan(fixture_run, tmp_path), fake_exporter(run))
+    with (selected.manifest_path.parent / ".export.lock").open("a+b") as stream:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="already updating"):
+            stages.check_parity(selected, fake_loader(run))
+    manifest = read_json(selected.manifest_path)
+    manifest["configuration"]["resolution"] = 32
+    write_json(selected.manifest_path, manifest)
+    with pytest.raises(ValueError, match="configuration changed"):
+        stages.check_parity(selected, fake_loader(run))
+
+
+def test_changed_runtime_contract_cannot_mix_reports(fixture_run, tmp_path):
+    """
+    Fail a mismatched runtime policy while preserving the preceding parity report.
+    """
+    run, _ = fixture_run
+    selected = stages.export_models(make_plan(fixture_run, tmp_path), fake_exporter(run))
+    parity = stages.check_parity(selected, fake_loader(run))
+
+    def loader(name, directory):
+        """
+        Simulate a different precision despite identical exported graph bytes.
+        """
+        adapter = fake_loader(run)(name, directory)
+        adapter.contract["precision"] = "float16"
+        return adapter
+
+    result = stages.evaluate_accuracy(selected, loader)
+    outcome = result["formats"]["onnx"]
+    assert "contract changed" in outcome["error"]
+    assert outcome["parity"] == parity["formats"]["onnx"]["parity"]
+    assert not outcome.get("predictions")
+
+
+def test_legacy_export_only_manifest_loads_checkpoint_reference(fixture_run, tmp_path):
+    """
+    Restore the deferred PyTorch reference when resuming older export-only records.
+    """
+    run, _ = fixture_run
+    selected = stages.export_models(make_plan(fixture_run, tmp_path), fake_exporter(run))
+    legacy = read_json(selected.manifest_path)
+    legacy["formats"]["pytorch"] = {"status": "not_requested"}
+    for outcome in legacy["formats"].values():
+        outcome.pop("stages", None)
+    write_json(selected.manifest_path, legacy)
+    result = stages.check_parity(selected, fake_loader(run))
+    assert result["formats"]["pytorch"]["parity_status"] == "reference"
+    assert result["formats"]["onnx"]["parity_status"] == "passed"
+
+
+def test_partial_accuracy_stays_incomplete_in_comparison(fixture_run, tmp_path):
+    """
+    Keep stage results readable without accepting an unfinished validation set.
+    """
+    run, dataset = fixture_run
+    selected = stages.export_models(make_plan(fixture_run, tmp_path), fake_exporter(run))
+    stages.check_parity(selected, fake_loader(run))
+    stages.evaluate_accuracy(selected, fake_loader(run))
+    result = comparison.compare_runtime_results(
+        runs_dir=run.parent, dataset_dir=dataset, output_dir=tmp_path / "comparison",
+        models=("yolox_nano",))
+    assert result["table"]["status"].eq("incomplete").all()
+
+
+def test_legacy_combined_manifest_resumes_existing_graphs(fixture_run, tmp_path):
+    """
+    Reconstruct older export identities from runtime contracts without conversion.
+    """
+    result = execute(fixture_run, tmp_path)
+    path = Path(result["manifest_path"])
+    legacy = read_json(path)
+    legacy.pop("exports")
+    for outcome in legacy["formats"].values():
+        outcome.pop("stages", None)
+        outcome.pop("artifact", None)
+    write_json(path, legacy)
+    selected = stages.load_export_set(path)
+    assert "exports" not in read_json(path)
+    run, _ = fixture_run
+    updated = stages.benchmark_host(selected, fake_loader(run))
+    assert updated["formats"]["onnx"]["accepted"]
+    assert updated["exports"]["onnx"]["artifact"] == result["exports"]["onnx"]["artifact"]
+
+
+def test_test_only_results_remain_complete_in_comparison(fixture_run, tmp_path):
+    """
+    Accept complete test-only accuracy and record the shorter timing budget.
+    """
+    result = execute(fixture_run, tmp_path, short=True)
+    assert not list(Path(result["report_dir"]).rglob("val_predictions.json"))
+    timing = read_json(result["formats"]["onnx"]["timing"]["path"])
+    assert (timing["warmups"], timing["samples"], timing["repetitions"]) == (5, 100, 1)
+    assert len(timing["latencies_ms"]) == 1
+    assert len(timing["latencies_ms"][0]) == 100
+    run, dataset = fixture_run
+    compared = comparison.compare_runtime_results(
+        runs_dir=run.parent, dataset_dir=dataset, output_dir=tmp_path / "comparison",
+        models=("yolox_nano",),
+    )
+    assert set(compared["table"]["split"]) == {"test"}
+    assert compared["table"]["accepted"].all()

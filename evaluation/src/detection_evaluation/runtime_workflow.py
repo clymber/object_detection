@@ -9,18 +9,17 @@ managed exports and their validation results are updated in place.
 from __future__ import annotations
 
 import fcntl
-import gc
 import hashlib
 import json
 import os
 import platform
-import re
 import socket
 import shutil
 import time
 import uuid
 from collections import defaultdict
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -33,12 +32,66 @@ from PIL import Image, ImageDraw
 
 from .baseline import find_latest_path
 from .config import WORKSPACE_ROOT
-from .metrics import evaluate_predictions, write_prediction_artifact
 from .run_protocol import read_run_protocol, read_training_record
 
 MODELS = ("rfdetr_small", "rfdetr_nano", "yolox_nano")
 FORMATS = ("pytorch", "onnx", "coreml")
 TIMING_BOUNDARIES = "decoded-RGB-to-source-COCO;preprocess+predict+postprocess;synchronous"
+HOST_TIMING = {"warmups": 5, "samples": 100, "repetitions": 1}
+
+
+@dataclass(frozen=True)
+class ExportPlan:
+    """
+    Carry verified metadata and paths without retaining a model or runtime.
+    """
+
+    run_dir: Path
+    dataset_dir: Path
+    model: str
+    formats: tuple[str, ...]
+    protocol: dict
+    configuration: dict
+    output_root: Path
+    models_root: Path
+
+
+@dataclass(frozen=True)
+class ExportSet:
+    """
+    Pin one saved export generation independently of its changing reports.
+    """
+
+    manifest_path: Path
+    export_id: str
+
+
+@dataclass(frozen=True)
+class RuntimeAdapter:
+    """
+    Supply synchronous prediction, provenance and device synchronization.
+    """
+
+    predict: Callable
+    contract: dict
+    synchronize: Callable
+
+
+def validate_export_settings(
+    formats: tuple[str, ...] | None, *, device: str, cpu_threads: int,
+    coreml_precision: str, compute_units: str,
+) -> tuple[str, ...]:
+    """
+    Resolve platform defaults and reject unsupported runtime policies early.
+    """
+    if type(cpu_threads) is not int or cpu_threads < 1:
+        raise ValueError("cpu_threads must be a positive integer")
+    resolved = tuple(formats if formats is not None else (
+        ("onnx", "coreml") if platform.system() == "Darwin" else ("onnx",)))
+    validate_format_settings(resolved, coreml_precision, compute_units)
+    if device.split(":")[0] not in {"cpu", "mps", "cuda"}:
+        raise ValueError("Checkpoint device must be cpu, mps or cuda[:index]")
+    return resolved
 
 
 def utc_id() -> str:
@@ -353,15 +406,16 @@ def compare_detections(reference: list, runtime: list, width: int, height: int) 
 
 
 def host_timing(predict: Callable, images: dict, sequence: list[int], *,
-                backend: dict, synchronize: Callable = lambda: None) -> dict:
+                backend: dict, synchronize: Callable = lambda: None,
+                warmups: int = 5, repetitions: int = 1) -> dict:
     """
     Measure synchronous batch-one host inference on predecoded, fixed pixels.
     """
-    for index in range(30):
+    for index in range(warmups):
         predict(images[sequence[index % len(sequence)]])
         synchronize()
-    repetitions = []
-    for _ in range(3):
+    measurements = []
+    for _ in range(repetitions):
         samples = []
         for image_id in sequence:
             synchronize()
@@ -369,18 +423,18 @@ def host_timing(predict: Callable, images: dict, sequence: list[int], *,
             predict(images[image_id])
             synchronize()
             samples.append((time.perf_counter_ns()-start) / 1e6)
-        repetitions.append(samples)
-    values = np.asarray(repetitions).reshape(-1)
+        measurements.append(samples)
+    values = np.asarray(measurements).reshape(-1)
     return {"kind": "host", "host": {"name": socket.gethostname(),
             "platform": platform.platform(), "machine": platform.machine(),
             "processor": platform.processor()}, "backend": backend,
             "sequence": sequence, "sequence_sha256": digest_json(sequence),
-            "warmups": 30, "samples": 300, "repetitions": 3,
+            "warmups": warmups, "samples": len(sequence), "repetitions": repetitions,
             "batch_size": 1, "boundaries": TIMING_BOUNDARIES,
             "mean_ms": float(values.mean()), "p50_ms": float(np.percentile(values, 50)),
             "p95_ms": float(np.percentile(values, 95)),
             "throughput_images_second": float(1000 / values.mean()),
-            "latencies_ms": repetitions}
+            "latencies_ms": measurements}
 
 
 def resolved_versions() -> dict:
@@ -467,233 +521,19 @@ def export_in_progress(run: Path) -> bool:
     return False
 
 
-def execute_validation(*, run_dir: Path, dataset_dir: Path, model: str,
-                       formats: tuple, configuration: dict, factory: Callable,
-                       output_root: Path, models_root: Path) -> dict:
-    """
-    Exclusively update the selected run's one canonical export and validation set.
-    """
-    run = workspace_path(run_dir)
-    validate_run(run, model)
-    if export_in_progress(run):
-        raise RuntimeError(f"An export is already updating {run}")
-    hierarchy = Path("basketball") / model / run.name
-    report = Path(output_root) / "exports" / hierarchy
-    exports = Path(models_root) / "exports" / hierarchy
-    report.mkdir(parents=True, exist_ok=True)
-    exports.mkdir(parents=True, exist_ok=True)
-    with (report / ".export.lock").open("a+b") as stream:
-        try:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            raise RuntimeError(f"An export is already updating {run}") from error
-        try:
-            _replace_link(run / "export_validation", report)
-            return _execute_validation(
-                run_dir=run, dataset_dir=dataset_dir, model=model,
-                formats=formats, configuration=configuration, factory=factory,
-                export_directory=exports, reports=report)
-        finally:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-
-
-def _execute_validation(*, run_dir: Path, dataset_dir: Path, model: str,
-                        formats: tuple, configuration: dict, factory: Callable,
-                        export_directory: Path, reports: Path) -> dict:
-    """
-    Update one export/validation set per run, preserving independent format outcomes.
-
-    factory(format, export_directory) returns predict(PIL)->COCO rows, a runtime
-    contract and optionally a synchronize callback. Failures are persisted before
-    the notebook's final cell raises through require_success().
-    """
-    run = workspace_path(run_dir)
-    dataset = workspace_path(dataset_dir)
-    protocol = validate_run(run, model)
-    identity = validate_dataset(protocol, dataset)
-    checkpoint = checkpoint_path(run, model)
-    checkpoint_before = artifact_identity(checkpoint)
-    protected = {str(p): file_digest(p) for p in run.rglob("*")
-                 if p.is_file() and training_source_file(p, run, model)}
-    export_id = utc_id()
-    reports.mkdir(parents=True, exist_ok=True)
-    for name in FORMATS:
-        directory = reports / name
-        if directory.is_dir():
-            shutil.rmtree(directory)
-    snapshot_path = reports / "source_run_checksums.json"
-    write_json(snapshot_path, {"files": {
-        Path(path).relative_to(run).as_posix(): digest
-        for path, digest in sorted(protected.items())}})
-    documents = {split: read_json(value["path"])
-                 for split, value in identity["annotations"].items()}
-    selection = development_selection(documents["val"],
-                                      identity["annotations"]["val"]["sha256"])
-    write_json(reports / "development_parity_manifest.json", selection)
-    ids = sorted(i["id"] for i in documents["test"]["images"])
-    if not ids:
-        raise ValueError("Cannot time an empty test split")
-    sequence = [ids[i % len(ids)] for i in range(300)]
-    write_json(reports / "host_timing_sequence.json", {"image_ids": sequence})
-    manifest_path = reports / "model_manifest.json"
-    manifest = {"schema_version": 1, "attempt_status": "running",
-                "export_id": export_id, "model": model,
-                "storage_policy": "one export set per training run; no attempt directory",
-                "storage_layout": {"exports": str(export_directory), "validation": str(reports)},
-                "source_immutability_scope": "training files; managed exports and export_validation excluded",
-                "run_dir": str(run), "run_protocol_sha256": file_digest(run / "run_protocol.json"),
-                "checkpoint": checkpoint_before, "dataset": identity,
-                "source_snapshot": artifact_identity(snapshot_path),
-                "configuration": configuration, "tool_versions": resolved_versions(),
-                "parity_manifest": artifact_identity(reports / "development_parity_manifest.json"),
-                "formats": {name: ({"status": "failed", "failed_stage": "pending"}
-                            if name == "pytorch" or name in formats
-                            else {"status": "not_requested"}) for name in FORMATS}}
-    _write_manifest(manifest_path, manifest)
-    reference = None
-    for name in FORMATS:
-        if name != "pytorch" and name not in formats:
-            continue
-        stage = "initialization"
-        outcome = {"status": "failed", "parity_status": "unavailable"}
-        manifest["formats"][name] = outcome
-        directory = reports / name
-        directory.mkdir()
-        _write_manifest(manifest_path, manifest)
-        try:
-            print(f"{model}/{name}: loading and conversion", flush=True)
-            if name == "coreml" and platform.system() != "Darwin":
-                raise RuntimeError("Core ML export/runtime requires macOS; request ONNX on Renku")
-            stage = "conversion_and_loading"
-            predict, contract, synchronize = factory(name, export_directory / name)
-            outcome.update(contract=contract, predictions={}, metrics={})
-            outcome["failed_stage"] = "parity"
-            _write_manifest(manifest_path, manifest)
-            stage = "parity"
-            parity_rows = {}
-            images_by_id = {i["id"]: i for i in documents["val"]["images"]}
-            for image_id in selection["image_ids"]:
-                entry = images_by_id[image_id]
-                with Image.open(dataset / "images" / "val" / entry["file_name"]) as source:
-                    parity_rows[image_id] = predict(source.convert("RGB"))
-            if name == "pytorch":
-                reference = parity_rows
-                parity = {"status": "reference", "images": []}
-            elif reference is None:
-                parity = {"status": "unavailable", "reason": "checkpoint reference failed"}
-            else:
-                checks = [{"image_id": image_id, **compare_detections(
-                    reference[image_id], parity_rows[image_id],
-                    images_by_id[image_id]["width"], images_by_id[image_id]["height"])}
-                    for image_id in selection["image_ids"]]
-                parity = {"status": "passed" if all(c["passed"] for c in checks) else "failed",
-                          "images": checks}
-            parity.update(detections=parity_rows, reference_detections=reference)
-            write_json(directory / "parity.json", parity)
-            outcome["parity_status"] = parity["status"]
-            outcome["parity"] = artifact_identity(directory / "parity.json")
-            stage = "full_split_evaluation"
-            outcome["failed_stage"] = stage
-            _write_manifest(manifest_path, manifest)
-            for split, truth in documents.items():
-                predictions = []
-                ordered_images = sorted(truth["images"], key=lambda i: i["id"])
-                for image_index, entry in enumerate(ordered_images):
-                    with Image.open(dataset / "images" / split / entry["file_name"]) as source:
-                        rows = predict(source.convert("RGB"))
-                    predictions.extend({**r, "image_id": entry["id"]} for r in rows)
-                    if (image_index + 1) % 100 == 0:
-                        outcome["progress"] = {"split": split, "processed": image_index + 1,
-                                               "total": len(ordered_images)}
-                        _write_manifest(manifest_path, manifest)
-                metadata = {"model": model, "split": split, "run_dir": str(run),
-                            "checkpoint": str(checkpoint), "smoke_run": False,
-                            "resolution": configuration["resolution"],
-                            "dataset_fingerprint": identity["fingerprint"],
-                            "runtime": name, "runtime_contract": contract,
-                            "postprocessing": configuration["postprocessing"]}
-                path = write_prediction_artifact(
-                    directory / f"{split}_predictions.json",
-                    identity["annotations"][split]["path"], predictions, metadata=metadata)
-                outcome["predictions"][split] = artifact_identity(path)
-                metrics = evaluate_predictions(identity["annotations"][split]["path"], predictions)
-                write_json(directory / f"{split}_metrics.json", metrics)
-                outcome["metrics"][split] = metrics
-                positive_ids = {a["image_id"] for a in truth["annotations"]}
-                ordered_ids = [entry["id"] for entry in ordered_images]
-                sample_ids = ([i for i in ordered_ids if i in positive_ids][:4]
-                              + [i for i in ordered_ids if i not in positive_ids][:4])
-                sample_ids += [i for i in ordered_ids if i not in sample_ids][
-                    :8-len(sample_ids)]
-                qualitative_grid(directory / f"{split}_comparison.jpg", truth,
-                                 predictions, dataset, split, sample_ids)
-                _write_manifest(manifest_path, manifest)
-            if outcome["parity_status"] not in {"passed", "reference"}:
-                outcome.update(status="completed", accepted=False,
-                               timing_unavailable_reason="Parity failed or reference unavailable; accuracy is diagnostic")
-                outcome.pop("failed_stage", None)
-                outcome.pop("progress", None)
-                del predict
-                gc.collect()
-                _write_manifest(manifest_path, manifest)
-                continue
-            stage = "host_timing"
-            outcome["failed_stage"] = stage
-            _write_manifest(manifest_path, manifest)
-            entries = {i["id"]: i for i in documents["test"]["images"]}
-            pixels = {}
-            for image_id in set(sequence):
-                with Image.open(dataset / "images" / "test" / entries[image_id]["file_name"]) as source:
-                    pixels[image_id] = source.convert("RGB")
-            timing = host_timing(predict, pixels, sequence, backend={
-                k: contract[k] for k in ("backend", "device", "precision", "compute_units", "cpu_threads")
-                if k in contract}, synchronize=synchronize)
-            write_json(directory / "host_timing.json", timing)
-            outcome["timing"] = artifact_identity(directory / "host_timing.json")
-            outcome["status"] = "completed"
-            outcome.pop("progress", None)
-            outcome.pop("failed_stage", None)
-            outcome["accepted"] = outcome["parity_status"] in {"passed", "reference"}
-            del predict, pixels
-            gc.collect()
-        except Exception as error:
-            outcome.update(status="failed", failed_stage=stage,
-                           error=f"{type(error).__name__}: {error}", accepted=False)
-        _write_manifest(manifest_path, manifest)
-    for base in (export_directory, reports):
-        for previous in base.iterdir():
-            if (previous.is_dir() and not previous.is_symlink()
-                    and re.fullmatch(r"\d{8}T\d{6,12}Z_[0-9a-f]{8,32}", previous.name)):
-                shutil.rmtree(previous)
-    for format_name in ("onnx", "coreml"):
-        alias = export_artifact_path(run, model, format_name)
-        if alias.is_symlink() and not alias.exists():
-            alias.unlink()
-    changed = [p for p, digest in protected.items()
-               if not Path(p).is_file() or file_digest(p) != digest]
-    added = [str(p) for p in run.rglob("*") if p.is_file()
-             and training_source_file(p, run, model) and str(p) not in protected]
-    manifest["attempt_status"] = "finished"
-    manifest["source_run_unchanged"] = not changed and not added
-    if changed or added:
-        manifest["source_mutations"] = changed + added
-    _write_manifest(manifest_path, manifest)
-    return {"manifest_path": str(manifest_path), "report_dir": str(reports),
-            "export_dir": str(export_directory), "formats": manifest["formats"],
-            "source_run_unchanged": manifest["source_run_unchanged"]}
-
-
 def require_success(result: dict) -> None:
     """
-    Fail notebook execution after displaying and retaining all requested outcomes.
+    Reject failed, unfinished or unaccepted validation after displaying evidence.
     """
-    failed = {name: outcome for name, outcome in result["formats"].items()
-              if outcome["status"] == "failed"
-              or outcome.get("parity_status") in {"failed", "unavailable"}
-              and outcome["status"] != "not_requested"}
-    if failed or not result["source_run_unchanged"]:
-        raise RuntimeError(f"Export validation requires review: {list(failed)}; "
-                           f"details: {result['manifest_path']}")
+    failed = [name for name, outcome in result["formats"].items()
+              if outcome["status"] != "not_requested"
+              and (outcome["status"] != "completed"
+                   or not outcome.get("accepted", False))]
+    if (failed or not result["source_run_unchanged"]
+            or result.get("attempt_status", "finished") != "finished"):
+        raise RuntimeError(
+            f"Export validation requires review: {failed}; "
+            f"details: {result['manifest_path']}")
 
 
 def raw_predictor(forward: Callable, *, family: str, resolution: int,

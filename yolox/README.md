@@ -56,33 +56,72 @@ The full-only baseline CLI above does not publish comparison bundles.
 its checkpoint using validation metrics, and retains checkpoint reports and
 published shared prediction bundles. It does not export ONNX.
 
-Run [nb03.03.02](notebooks/nb03.03.02-yolox_nano-basketball-export.py) in a fresh
-YOLOX kernel after training. It uses
-`yolox_pipeline.export_validation.export_and_validate`, restores saved resolution,
-category mapping and NMS IoU, and prefers selected EMA weights. Loading does not
-initialize training, download pretrained replacement weights or update provenance.
+## Independent export and validation
 
-`RUNS_DIR` defaults to `OUTPUT_ROOT/runs/basketball`. `RUN_DIR=None` selects the
-latest completed matching run by modification time; an absolute override selects
-that exact run or raises. Supply `DATASET_DIR` for local copies of archived Linux
-runs. Default checkpoint/ONNX inference is CPU/FP32. macOS also exports a fixed
-batch-one traced Core ML graph with FP16 and `all` compute units. Both exported
-graphs retain raw grids and use external decoding and the saved NMS policy.
+Open the [Nano export notebook](notebooks/nb03.03.02-yolox_nano-basketball-export.py) in a fresh
+`object-detection-yolox` kernel. Each notebook has eight numbered steps:
+configure, prepare/inspect, export, parity, accuracy, host timing, saved comparison
+images, and completion review.
 
-The single export set lives at
-`models/exports/basketball/yolox_nano/<run>/{onnx,coreml}/`, with no attempt-ID
-subdirectory. `weights/best_ckpt.{onnx,mlpackage}` in the run are relative links to
-those artifacts. Reruns replace that set and remove obsolete attempt folders.
-The current report set is updated at
-`outputs/exports/basketball/yolox_nano/<run>/`, also available through the run's
-`export_validation` link. It includes development parity, complete
-validation/test prediction artifacts and metrics, qualitative overlays, and host
-timing with 30 warmups, 300 fixed test IDs and three repetitions. Failed formats
-and parity failures remain diagnostic and unaccepted. After saving all available
-results, the final cell prints the validation error so the notebook task runner
-can continue. Training checkpoints, provenance and existing
-evaluation bundles remain unchanged. Compare saved results with
+The `yolox_pipeline.export_validation` API exposes the same explicit stages:
+
+```python
+plan = prepare_export(RUN_DIR, DATASET_DIR, **settings)
+export_set = export_models(plan)
+parity = check_parity(export_set)
+accuracy = evaluate_accuracy(export_set)
+timing = benchmark_host(export_set)
+result = read_results(export_set)
+```
+
+Preparation verifies YOLOX Nano run metadata and the local dataset
+without loading weights or writing artifacts. `RUN_DIR=None` selects the latest completed matching
+run by modification time; an absolute override pins an exact run or raises.
+`DATASET_DIR` resolves archived Linux paths against the local dataset without
+changing saved provenance. Export uses fresh checkpoint state for each format.
+
+Accuracy uses the full test split; validation keeps its 25-image parity check.
+Host timing uses five untimed warmups and 100 measured images once. The shared
+`runtime_workflow.HOST_TIMING` constant defines this budget. Existing exports keep
+their saved protocol. `CHECKPOINT_DEVICE="mps"` selects native PyTorch Apple GPU
+inference; ONNX stays on CPU and native Core ML uses its `all` compute policy.
+
+Each validation call executes only its named stage. Parity and accuracy can be
+repeated independently; either clears old timing while preserving the other
+report. Accuracy remains diagnostic after failed parity. Timing requires saved
+successful parity and accuracy and reports missing or failed prerequisites.
+Independent format failures remain visible without discarding successful results.
+
+After restarting the kernel, import the API and resume without conversion:
+
+```python
+export_set = load_export_set(Path("<saved model_manifest.json path>"))
+result = read_results(export_set)
+```
+
+Skip preparation/export and run the desired validation cells. The handle pins the
+export ID; another export makes an older handle stale. Source, dataset and graph
+identities are checked before each validation stage. Existing schema-1 export
+manifests resume from verified saved evidence.
+
+One physical export set lives under
+`models/exports/basketball/<model>/<run>/{onnx,coreml}/`, without attempt-ID
+subdirectories. The run's `weights/` paths link to those artifacts. An explicit
+export replaces that set; validation never replaces it. Reports live under
+`outputs/exports/basketball/<model>/<run>/`, exposed by the run's
+`export_validation` link. Stage writes are locked and manifests update atomically.
+Training checkpoints and provenance remain unchanged.
+
+CPU/FP32 is the checkpoint and ONNX Runtime default on Mac and Renku. macOS also
+defaults to Core ML FP32 with `all` compute units. `CPU_THREADS` defaults to four.
+Parity retains the fixed development selection and tolerances. These host
+measurements do not establish iPhone or CUDA equivalence. Compare saved results using
 [nb05.05](../evaluation/notebooks/nb05.05-basketball_runtime_comparison.py).
 
-`CPU_THREADS` defaults to four for PyTorch and ONNX Runtime; the actual policy is
-recorded with each configuration. Change it explicitly for a separate host test.
+The final notebook cell prints unfinished or failed validation after displaying
+saved diagnostic evidence, so batch notebook runners can continue.
+
+YOLOX preserves saved resolution, classes, seed, EMA/regular weights and NMS IoU.
+Both exported graphs retain raw grids with external decoding and class-aware CPU
+NMS. Core ML retains its fixed batch-one trace and iOS 16 target. The standalone
+baseline export CLI remains unchanged.

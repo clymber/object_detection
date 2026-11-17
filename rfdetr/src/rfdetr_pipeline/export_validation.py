@@ -1,182 +1,198 @@
 """
-Independent, read-only RF-DETR checkpoint export and runtime validation.
+Explicit preparation, export and validation steps for RF-DETR checkpoints.
 """
 
 from __future__ import annotations
 
-import platform
-import tempfile
+from functools import partial
 from pathlib import Path
 
 from detection_common.utils.json_io import read_json
+from detection_evaluation import runtime_stages as stages
+from detection_evaluation.runtime_stages import load_export_set, read_results
 from detection_evaluation.runtime_workflow import (
-    artifact_identity,
-    execute_validation,
-    publish_export,
-    raw_predictor,
+    ExportPlan,
+    ExportSet,
     select_run,
-    validate_format_settings,
+    validate_dataset,
+    validate_export_settings,
     validate_run,
     workspace_path,
 )
 
-from . import rfdetr
+from . import export_backends
 from .config import OUTPUT_ROOT, WORKSPACE_ROOT
 
+__all__ = [
+    "ExportPlan",
+    "ExportSet",
+    "benchmark_host",
+    "check_parity",
+    "evaluate_accuracy",
+    "export_models",
+    "load_export_set",
+    "prepare_export",
+    "read_results",
+]
 
-def export_and_validate(run_dir: Path | None, dataset_dir: Path, *,
-                        model: str, runs_dir: Path | None = None,
-                        formats: tuple[str, ...] | None = None,
-                        device: str = "cpu", cpu_threads: int = 4,
-                        coreml_precision: str = "float16",
-                        compute_units: str = "all") -> dict:
+
+def prepare_export(
+    run_dir: Path | None,
+    dataset_dir: Path,
+    *,
+    model: str,
+    runs_dir: Path | None = None,
+    formats: tuple[str, ...] | None = None,
+    device: str = "cpu",
+    cpu_threads: int = 4,
+    coreml_precision: str = "float16",
+    compute_units: str = "all",
+) -> ExportPlan:
     """
-    Export a completed Small/Nano run through fresh instances for every runtime.
+    Verify the selected run and local data without loading weights or writing files.
     """
-    if type(cpu_threads) is not int or cpu_threads < 1:
-        raise ValueError("cpu_threads must be a positive integer")
+    formats = validate_export_settings(
+        formats,
+        device=device,
+        cpu_threads=cpu_threads,
+        coreml_precision=coreml_precision,
+        compute_units=compute_units,
+    )
     dataset_dir = workspace_path(dataset_dir)
-    formats = tuple(formats if formats is not None else (
-        ("onnx", "coreml") if platform.system() == "Darwin" else ("onnx",)))
-    validate_format_settings(formats, coreml_precision, compute_units)
     if model not in {"rfdetr_small", "rfdetr_nano"}:
         raise ValueError(f"Expected RF-DETR Small/Nano, got {model}")
     run = select_run(runs_dir or OUTPUT_ROOT / "runs/basketball", model, run_dir)
     protocol = validate_run(run, model)
+    resolution, categories, mapping, saved = _saved_model_settings(run, protocol)
+    validate_dataset(protocol, dataset_dir)
+    configuration = _configuration(
+        resolution,
+        categories,
+        mapping,
+        saved,
+        device,
+        cpu_threads,
+        coreml_precision,
+        compute_units,
+    )
+    return ExportPlan(
+        run_dir=run,
+        dataset_dir=dataset_dir,
+        model=model,
+        formats=formats,
+        protocol=protocol,
+        configuration=configuration,
+        output_root=OUTPUT_ROOT,
+        models_root=WORKSPACE_ROOT / "models",
+    )
+
+
+def _saved_model_settings(run: Path, protocol: dict) -> tuple:
+    """
+    Verify trained dimensions, class identities and the saved selection count.
+    """
     saved = read_json(run / "resolved_config.json")["model_config"]
     resolution = protocol["training_settings"]["resolution"]
     if saved["resolution"] != resolution:
         raise ValueError("Saved model resolution differs from run protocol")
     mapping = read_json(run / "dataset_manifest.json")["category_mapping"]
-    categories = [mapping["prediction_to_source"][str(i)]
-                  for i in range(len(mapping["class_names"]))]
-    if categories != [c["id"] for c in protocol["dataset_identity"]["canonical"][
-            "canonical_source"]["category_mapping"]]:
+    categories = [
+        mapping["prediction_to_source"][str(i)]
+        for i in range(len(mapping["class_names"]))
+    ]
+    source_categories = protocol["dataset_identity"]["canonical"]["canonical_source"][
+        "category_mapping"
+    ]
+    if categories != [category["id"] for category in source_categories]:
         raise ValueError("Saved RF-DETR category mapping differs from source identity")
-    source_categories = protocol["dataset_identity"]["canonical"]["canonical_source"]["category_mapping"]
     if mapping["class_names"] != [category["name"] for category in source_categories]:
         raise ValueError("Saved RF-DETR class names differ from source identity")
-    print(f"Run: {run}\nCheckpoint: {run / rfdetr.BEST_CHECKPOINT}", flush=True)
-    configuration = {"resolution": resolution, "category_ids": categories,
-                     "class_mapping": mapping, "checkpoint_device": device, "cpu_threads": cpu_threads,
-                     "coreml_precision": coreml_precision, "compute_units": compute_units,
-                     "preprocessing": "RGB float32/255;half-pixel square bilinear;ImageNet normalization",
-                     "postprocessing": {"score_floor": .001, "num_select": saved["num_select"],
-                                        "nms": None, "background": "rank then discard last slot",
-                                        "boxes": "unclipped source xywh"}}
+    return resolution, categories, mapping, saved
 
-    def factory(name: str, directory: Path) -> tuple:
-        """
-        Load a new detector before reference inference or an exporter mutation.
-        """
-        import torch
 
-        torch.set_num_threads(cpu_threads)
+def _configuration(
+    resolution,
+    categories,
+    mapping,
+    saved,
+    device,
+    cpu_threads,
+    coreml_precision,
+    compute_units,
+) -> dict:
+    """
+    Describe the saved preprocessing, postprocessing and runtime policy exactly.
+    """
+    return {
+        "resolution": resolution,
+        "category_ids": categories,
+        "class_mapping": mapping,
+        "checkpoint_device": device,
+        "cpu_threads": cpu_threads,
+        "coreml_precision": coreml_precision,
+        "compute_units": compute_units,
+        "preprocessing": "RGB float32/255;half-pixel square bilinear;ImageNet normalization",
+        "postprocessing": {
+            "score_floor": 0.001,
+            "num_select": saved["num_select"],
+            "nms": None,
+            "background": "rank then discard last slot",
+            "boxes": "unclipped source xywh",
+        },
+    }
 
-        if device.split(":")[0] not in {"cpu", "mps", "cuda"}:
-            raise ValueError("Checkpoint device must be cpu, mps or cuda[:index]")
-        detector, metadata = rfdetr.load_best_model(
-            run, device=device if name == "pytorch" else "cpu", write_metadata=False)
-        if detector.model_config.resolution != resolution:
-            raise ValueError("Loaded model resolution differs from run protocol")
-        if detector.model_config.num_select != saved["num_select"]:
-            raise ValueError("Loaded num_select differs from saved model configuration")
-        if name == "pytorch":
-            def predict(image):
-                """
-                Run the native checkpoint postprocessor in FP32 without autograd.
-                """
-                with torch.inference_mode():
-                    rows = rfdetr.predictions_for_image(detector, image, 0, categories)
-                return [{k: v for k, v in r.items() if k != "image_id"} for r in rows]
 
-            def synchronize():
-                """
-                Wait for the selected device before ending a host timing sample.
-                """
-                if device.startswith("cuda"):
-                    torch.cuda.synchronize(device)
-                elif device == "mps":
-                    torch.mps.synchronize()
+def export_models(plan: ExportPlan) -> ExportSet:
+    """
+    Convert requested models without running parity, accuracy or host timing.
+    """
+    return stages.export_models(plan, partial(export_backends.export_model, plan))
 
-            return predict, {"backend": "pytorch", "device": device,
-                             "precision": "float32", "cpu_threads": cpu_threads, "artifact": artifact_identity(
-                                 run / rfdetr.BEST_CHECKPOINT),
-                             "selected_weights": metadata["selected_weights"],
-                             "source_checkpoint": artifact_identity(Path(metadata["source_checkpoint"]))}, synchronize
-        directory.mkdir(parents=True, exist_ok=True)
-        if name == "onnx":
-            import onnxruntime as ort
 
-            with tempfile.TemporaryDirectory(prefix=".rfdetr-onnx-", dir=directory) as temporary:
-                staged = rfdetr.export_onnx_model(detector, Path(temporary), resolution)
-                rfdetr.validate_onnx_model(staged)
-                path = publish_export(staged, directory, run, model, name)
-            del detector
-            options = ort.SessionOptions()
-            options.intra_op_num_threads = cpu_threads
-            session = ort.InferenceSession(str(path), options,
-                                           providers=["CPUExecutionProvider"])
-            input_info = session.get_inputs()[0]
-            if input_info.shape != [1, 3, resolution, resolution]:
-                raise ValueError("ONNX input differs from fixed trained dimensions")
-            outputs = [o.name for o in session.get_outputs()]
-            if set(outputs) != {"dets", "labels"}:
-                raise ValueError(f"Unexpected RF-DETR outputs: {outputs}")
+def _saved_plan(export_set: ExportSet) -> ExportPlan:
+    """
+    Restore and verify model-specific settings from the pinned saved export set.
+    """
+    manifest = read_results(export_set)
+    config = manifest["configuration"]
+    plan = prepare_export(
+        Path(manifest["run_dir"]),
+        Path(manifest["dataset"]["directory"]),
+        model=manifest["model"],
+        formats=tuple(manifest["exports"]),
+        device=config["checkpoint_device"],
+        cpu_threads=config["cpu_threads"],
+        coreml_precision=config["coreml_precision"],
+        compute_units=config["compute_units"],
+    )
+    if plan.configuration != config:
+        raise ValueError("Saved export configuration differs from the source run")
+    return plan
 
-            def forward(tensor):
-                """
-                Execute synchronous CPU ONNX boxes and logits in contract order.
-                """
-                return session.run(["dets", "labels"], {input_info.name: tensor})
 
-            contract = {"backend": "onnxruntime", "device": "cpu", "precision": "float32",
-                        "input": {"name": input_info.name, "shape": input_info.shape,
-                                  "dtype": input_info.type},
-                        "outputs": [{"name": o.name, "shape": o.shape, "dtype": o.type}
-                                    for o in session.get_outputs()]}
-        else:
-            import coremltools as ct
-            import numpy as np
+def check_parity(export_set: ExportSet) -> dict:
+    """
+    Compare saved exports to a fresh checkpoint reference, without evaluating splits.
+    """
+    plan = _saved_plan(export_set)
+    return stages.check_parity(export_set, partial(export_backends.load_runtime, plan))
 
-            with tempfile.TemporaryDirectory(prefix=".rfdetr-coreml-", dir=directory) as temporary:
-                staged = Path(detector.export(
-                    format="coreml", coreml_precision=coreml_precision,
-                    batch_size=1, dynamic_batch=False, shape=(resolution, resolution),
-                    output_dir=temporary, output_name="model", verbose=False))
-                path = publish_export(staged, directory, run, model, name)
-            del detector
-            runtime = ct.models.MLModel(str(path), compute_units=getattr(
-                ct.ComputeUnit, compute_units.upper()))
-            spec = runtime.get_spec()
-            inputs, outputs = list(spec.description.input), list(spec.description.output)
-            if len(inputs) != 1 or len(outputs) != 2:
-                raise ValueError("Unexpected Core ML input/output count")
-            input_spec = inputs[0].type.multiArrayType
-            if list(input_spec.shape) != [1, 3, resolution, resolution]:
-                raise ValueError("Core ML input differs from fixed trained dimensions")
-            dtype = np.float16 if input_spec.dataType == 65552 else np.float32
 
-            def forward(tensor):
-                """
-                Use Core ML spec output position, as RF-DETR's exporter requires.
-                """
-                values = runtime.predict({inputs[0].name: tensor.astype(dtype)})
-                return [values[o.name] for o in outputs]
+def evaluate_accuracy(export_set: ExportSet) -> dict:
+    """
+    Evaluate full splits without converting models, checking parity or timing.
+    """
+    plan = _saved_plan(export_set)
+    return stages.evaluate_accuracy(
+        export_set, partial(export_backends.load_runtime, plan)
+    )
 
-            contract = {"backend": "coreml", "device": "macOS", "precision": coreml_precision,
-                        "compute_units": compute_units,
-                        "input": {"name": inputs[0].name, "shape": list(input_spec.shape),
-                                  "dtype": str(np.dtype(dtype))},
-                        "outputs": [{"name": o.name, "shape": list(o.type.multiArrayType.shape),
-                                     "dtype": o.type.multiArrayType.dataType} for o in outputs]}
-        if name == "onnx":
-            contract["cpu_threads"] = cpu_threads
-        contract["artifact"] = artifact_identity(path)
-        return raw_predictor(forward, family="rfdetr", resolution=resolution,
-                             category_ids=categories, num_select=saved["num_select"]), contract, lambda: None
 
-    return execute_validation(run_dir=run, dataset_dir=dataset_dir, model=model,
-                              formats=formats, output_root=OUTPUT_ROOT,
-                              models_root=WORKSPACE_ROOT / "models",
-                              configuration=configuration, factory=factory)
+def benchmark_host(export_set: ExportSet) -> dict:
+    """
+    Time eligible runtimes using their saved successful parity and accuracy results.
+    """
+    plan = _saved_plan(export_set)
+    return stages.benchmark_host(
+        export_set, partial(export_backends.load_runtime, plan)
+    )

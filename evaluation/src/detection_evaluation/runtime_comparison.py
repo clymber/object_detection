@@ -138,19 +138,21 @@ def compare_runtime_results(*, runs_dir: Path, dataset_dir: Path,
             continue
         manifest = read_json(selection["manifest_path"])
         annotations = validate_manifest(manifest, selection, workspace_path(dataset_dir))
-        if manifest.get("source_run_unchanged") is not True:
+        if (manifest.get("source_run_unchanged") is not True
+                or manifest.get("attempt_status", "finished") != "finished"):
             for name in FORMATS:
                 rows.append({"model": selection["model"], "runtime": name,
                              "status": "incomplete", "accepted": False,
                              "run_dir": selection["run_dir"],
                              "manifest_path": selection["manifest_path"],
-                             "reason": "Attempt has not finished source immutability verification"})
+                             "reason": "Export validation has not finished"})
             continue
         identity = {"fingerprint": manifest["dataset"]["fingerprint"],
                     "annotations": {s: file_digest(p) for s, p in annotations.items()}}
         if annotation_identity is not None and annotation_identity != identity:
             raise ValueError("Cannot compare incompatible datasets or annotations")
         annotation_identity = identity
+        splits = set(manifest.get("accuracy_splits", ("val", "test")))
         baseline_metrics = {}
         for name in FORMATS:
             outcome = manifest["formats"][name]
@@ -186,18 +188,18 @@ def compare_runtime_results(*, runs_dir: Path, dataset_dir: Path,
                       "reason": outcome.get("error") or outcome.get("timing_unavailable_reason")}
             if "timing" in outcome:
                 timing_records[(selection["model"], name)] = read_json(checked_record(outcome["timing"]))
-            complete = set(outcome.get("predictions", {})) == {"val", "test"}
+            complete = set(outcome.get("predictions", {})) == splits
             if status == "completed" and not complete:
                 raise ValueError("Completed evaluation has incomplete split coverage")
             if not outcome.get("predictions"):
                 rows.append({**common, "timing_status": "unavailable"})
                 continue
-            for missing_split in sorted({"val", "test"} - set(outcome["predictions"])):
+            for missing_split in sorted(splits - set(outcome["predictions"])):
                 rows.append({**common, "split": missing_split,
                              "evaluation_complete": False,
                              "reason": outcome.get("error") or "Full split predictions unavailable"})
             for split, record in outcome["predictions"].items():
-                if split not in annotations:
+                if split not in splits:
                     raise ValueError("Unknown evaluation split")
                 artifact = read_prediction_artifact(checked_record(record), annotations[split])
                 metadata = artifact["metadata"]

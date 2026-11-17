@@ -72,39 +72,71 @@ rfdetr_pipeline.onnx_cli --run-dir <run>`.
 
 ## Independent export and validation
 
-After training, open the corresponding export notebook in a fresh RF-DETR kernel:
+Open the [Small](notebooks/nb04.02.02-rfdetr_small-basketball-export.py) and
+[Nano](notebooks/nb04.04.02-rfdetr_nano-basketball-export.py) export notebooks in a fresh
+`object-detection-rfdetr` kernel. Each notebook has eight numbered steps:
+configure, prepare/inspect, export, parity, accuracy, host timing, saved comparison
+images, and completion review.
 
-- [Small export](notebooks/nb04.02.02-rfdetr_small-basketball-export.py).
-- [Nano export](notebooks/nb04.04.02-rfdetr_nano-basketball-export.py).
+The `rfdetr_pipeline.export_validation` API exposes the same explicit stages:
 
-`RUN_DIR=None` selects the latest completed matching run through the shared
-modification-time discovery utility. Set an absolute `RUN_DIR` to select an exact
-historical run; invalid overrides raise. `DATASET_DIR` resolves archived Linux
-paths against the supplied local COCO dataset without modifying saved provenance.
-The notebooks use `rfdetr_pipeline.export_validation.export_and_validate`.
+```python
+plan = prepare_export(RUN_DIR, DATASET_DIR, model="rfdetr_nano", **settings)
+export_set = export_models(plan)
+parity = check_parity(export_set)
+accuracy = evaluate_accuracy(export_set)
+timing = benchmark_host(export_set)
+result = read_results(export_set)
+```
 
-ONNX export and CPU/FP32 validation run on Mac or Renku. macOS also defaults to
-native Core ML FP16 with `all` compute units. Set `EXPORT_FORMATS` to request
-formats explicitly. Each format uses a fresh checkpoint instance. The single export set lives at
-`models/exports/basketball/<model>/<run>/{onnx,coreml}/`, without an attempt-ID
-subdirectory. Reruns replace the existing set. The run's
-`weights/checkpoint_best_total.{onnx,mlpackage}` paths are relative links to those
-artifacts, so only one physical copy is kept.
+Preparation verifies RF-DETR Small/Nano run metadata and the local dataset
+without loading weights or writing artifacts. `RUN_DIR=None` selects the latest completed matching
+run by modification time; an absolute override pins an exact run or raises.
+`DATASET_DIR` resolves archived Linux paths against the local dataset without
+changing saved provenance. Export uses fresh checkpoint state for each format.
 
-The single report set lives at `outputs/exports/basketball/<model>/<run>/`, also
-available through the run's `export_validation` link. It contains the current
-manifest, full-split predictions, metrics, qualitative overlays, development
-parity and host timing. Obsolete timestamp/UUID attempt folders are removed.
+Accuracy uses the full test split; validation keeps its 25-image parity check.
+Host timing uses five untimed warmups and 100 measured images once. The shared
+`runtime_workflow.HOST_TIMING` constant defines this budget. Existing exports keep
+their saved protocol. `CHECKPOINT_DEVICE="mps"` selects native PyTorch Apple GPU
+inference; ONNX stays on CPU and native Core ML uses its `all` compute policy.
 
-Training checkpoints and immutable provenance stay unchanged.
-Failed conversion and failed parity remain explicit, unaccepted outcomes. After
-preserving successful and diagnostic results, the final notebook cell prints the
-validation error so the notebook task runner can continue.
-Read these with [nb05.05](../evaluation/notebooks/nb05.05-basketball_runtime_comparison.py).
-Host measurements do not establish iPhone or CUDA performance equivalence.
-`evaluate_checkpoint_run(run_dir, device=..., publish=False)` creates training
-checkpoint reports without exporting; the legacy `postprocess_run` recovery
-wrapper retains its ONNX behavior and original immutable notebook provenance.
+Each validation call executes only its named stage. Parity and accuracy can be
+repeated independently; either clears old timing while preserving the other
+report. Accuracy remains diagnostic after failed parity. Timing requires saved
+successful parity and accuracy and reports missing or failed prerequisites.
+Independent format failures remain visible without discarding successful results.
 
-`CPU_THREADS` defaults to four for PyTorch and ONNX Runtime; the actual policy is
-recorded with each configuration. Change it explicitly for a separate host test.
+After restarting the kernel, import the API and resume without conversion:
+
+```python
+export_set = load_export_set(Path("<saved model_manifest.json path>"))
+result = read_results(export_set)
+```
+
+Skip preparation/export and run the desired validation cells. The handle pins the
+export ID; another export makes an older handle stale. Source, dataset and graph
+identities are checked before each validation stage. Existing schema-1 export
+manifests resume from verified saved evidence.
+
+One physical export set lives under
+`models/exports/basketball/<model>/<run>/{onnx,coreml}/`, without attempt-ID
+subdirectories. The run's `weights/` paths link to those artifacts. An explicit
+export replaces that set; validation never replaces it. Reports live under
+`outputs/exports/basketball/<model>/<run>/`, exposed by the run's
+`export_validation` link. Stage writes are locked and manifests update atomically.
+Training checkpoints and provenance remain unchanged.
+
+CPU/FP32 is the checkpoint and ONNX Runtime default on Mac and Renku. macOS also
+defaults to Core ML FP16 with `all` compute units. `CPU_THREADS` defaults to four.
+Parity retains the fixed development selection and tolerances. These host
+measurements do not establish iPhone or CUDA equivalence. Compare saved results using
+[nb05.05](../evaluation/notebooks/nb05.05-basketball_runtime_comparison.py).
+
+The final notebook cell prints unfinished or failed validation after displaying
+saved diagnostic evidence, so batch notebook runners can continue.
+
+RF-DETR preserves the saved input resolution, class mapping, `num_select`, selected
+EMA/regular checkpoint provenance, background ranking and unclipped source boxes.
+`evaluate_checkpoint_run(..., publish=False)` and standalone ONNX export retain
+their existing behavior.

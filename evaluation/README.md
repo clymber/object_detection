@@ -97,6 +97,23 @@ environment-linux-cuda.yml on Renku Linux. Both profiles use the checkout-local
 `.conda/envs/object-detection-evaluation` prefix; on Renku, bootstrap Miniforge first
 from the workspace root with bash scripts/install_miniforge_renku.sh.
 
+## Independent export validation stages
+
+`runtime_workflow` defines framework-neutral `ExportPlan`, `ExportSet` and
+`RuntimeAdapter` contracts. `runtime_stages` exposes independent export, parity,
+full-split accuracy and host timing functions supplied with model-owned callbacks.
+New exports use test-only accuracy, five untimed warmups and 100 measured images
+once. The shared `runtime_workflow.HOST_TIMING` constant defines the timing budget.
+Older manifests retain their original coverage and timing protocol.
+No validation stage calls an exporter or retains sessions between calls.
+
+Per-format stage records preserve progress and independent failures. Rerunning
+parity or accuracy clears timing while keeping the other report. Timing requires
+successful parity and accuracy. `load_export_set` resumes verified schema-1
+export evidence after a kernel restart. `require_success` rejects unfinished or
+unaccepted validation. Each writer holds the canonical run lock and checks source
+immutability, including on failure.
+
 ## Saved runtime comparison
 
 [nb05.05](notebooks/nb05.05-basketball_runtime_comparison.py) uses
@@ -110,7 +127,7 @@ relative link to that single report set. Exact export pins derive their source r
 must agree with any run pin. Invalid explicit selections raise without fallback.
 
 The consumer validates provenance, checkpoint, package, prediction and annotation
-hashes, then recomputes validation/test accuracy using the shared evaluator. It
+hashes, then recomputes accuracy for the saved splits using the shared evaluator. It
 shows accuracy deltas from each model's checkpoint reference and preserves
 failed/incomplete/parity-failed rows as diagnostic. Host latency comparisons require
 matching host identity, pixel sequence, warmup/repetition settings and timing
