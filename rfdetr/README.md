@@ -97,8 +97,9 @@ manifest, full-split predictions, metrics, qualitative overlays, development
 parity and host timing. Obsolete timestamp/UUID attempt folders are removed.
 
 Training checkpoints and immutable provenance stay unchanged.
-Failed conversion and failed parity remain explicit, independent outcomes. The
-final notebook cell raises after preserving successful and diagnostic results.
+Failed conversion and failed parity remain explicit, unaccepted outcomes. After
+preserving successful and diagnostic results, the final notebook cell prints the
+validation error so the notebook task runner can continue.
 Read these with [nb05.05](../evaluation/notebooks/nb05.05-basketball_runtime_comparison.py).
 Host measurements do not establish iPhone or CUDA performance equivalence.
 `evaluate_checkpoint_run(run_dir, device=..., publish=False)` creates training

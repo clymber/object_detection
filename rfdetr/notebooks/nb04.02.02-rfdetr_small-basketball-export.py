@@ -118,8 +118,12 @@ for name in result["formats"]:
             display_img(grid, width=1000)
 
 # %% [markdown]
-# Requested conversion/evaluation failures or failed parity make execution fail
-# after saving all available diagnostic evidence and showing per-format outcomes.
+# Print requested conversion/evaluation or parity failures after saving all
+# diagnostic evidence. Failed results remain unaccepted in the manifest, while
+# notebook execution completes so the task runner can continue.
 
 # %%
-require_success(result)
+try:
+    require_success(result)
+except RuntimeError as error:
+    print(f"ERROR: {error}")

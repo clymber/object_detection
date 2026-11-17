@@ -78,8 +78,9 @@ The current report set is updated at
 `export_validation` link. It includes development parity, complete
 validation/test prediction artifacts and metrics, qualitative overlays, and host
 timing with 30 warmups, 300 fixed test IDs and three repetitions. Failed formats
-and parity failures remain diagnostic and cause the final cell to raise after all
-available results are saved. Training checkpoints, provenance and existing
+and parity failures remain diagnostic and unaccepted. After saving all available
+results, the final cell prints the validation error so the notebook task runner
+can continue. Training checkpoints, provenance and existing
 evaluation bundles remain unchanged. Compare saved results with
 [nb05.05](../evaluation/notebooks/nb05.05-basketball_runtime_comparison.py).
 
