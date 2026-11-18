@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "model": "rfdetr_small",
+  "run_id": "rfdetr_small_20261106T124419",
+  "model_resource": "rfdetr_small.mlpackage",
+  "model_sha256": "7a705b0cfb132a52ecdfaeaea9e35e1fdc9195ebd8dd27fe4a48bd71605de1d3",
+  "checkpoint_sha256": "85fc2abfa9fd2aa0964c7b355900711aae8f0c6185776f63bfefc597bd287c64",
+  "export_manifest_path": "outputs/exports/basketball/rfdetr_small/rfdetr_small_20261106T124419/model_manifest.json",
+  "reference_parity_sha256": "2025c09960b6ad6a48bca45de2be4ddb099e19116c950e0987f35bd0451a784c",
+  "annotation_sha256": "c7e78acea3f87a068d10ba4ff6d11e4a20cbf369435cd1e4433b9af4c919042f",
+  "split": "val",
+  "confidence_threshold": 0.25,
+  "max_detections": 100,
+  "box_convention": "unclipped source-pixel top-left xywh",
+  "class_mapping": {
+    "0": 1
+  },
+  "samples": [
+    {
+      "kind": "positive",
+      "image_id": 5731,
+      "file_name": "positive_5731.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/val/8369a0abc096b0216ab47798df8beaa6f6e1b40766813433b1ce129e538ecd61.jpg",
+      "sha256": "bf93ca1e2c1556b545a6894d65cf8166e06f6b219d032b2a00c394e0701f4e47",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            48.0,
+            108.0,
+            544.5,
+            423.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            48.17880630493164,
+            103.88938903808594,
+            545.3025779724121,
+            428.02210998535156
+          ],
+          "category_id": 1,
+          "score": 0.9746087789535522
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            47.96875,
+            103.75,
+            545.3125,
+            428.125
+          ],
+          "category_id": 1,
+          "score": 0.9742394685745239
+        }
+      ]
+    },
+    {
+      "kind": "negative",
+      "image_id": 5812,
+      "file_name": "negative_5812.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/val/66c7ea7d1cd79e32395fc81dabd1752c73064cc2a1006eb93f4475b0d7140f42.jpg",
+      "sha256": "75b10565e89bf0b658547ef22c58504db5905581ffcc003a5ff8bd200b2d8a5c",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [],
+      "expected_checkpoint_detections": [],
+      "expected_mac_coreml_detections": []
+    }
+  ]
+}

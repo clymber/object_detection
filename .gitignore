@@ -18,6 +18,11 @@ xcuserdata/
 *.xcuserstate
 DerivedData/
 
+# Locally staged iOS model packages and dataset sample images.
+/ios/ENABLECoreMLBench/ENABLECoreMLBench/Models/*.mlpackage/
+/ios/ENABLECoreMLBench/ENABLECoreMLBench/Resources/TestImages/*.jpg
+/ios/ENABLECoreMLBench/ENABLECoreMLBench/Resources/TestImages/*.png
+
 # Share portable folder settings, but not machine-specific VS Code state.
 **/.vscode/*
 !**/.vscode/settings.json
@@ -183,4 +188,5 @@ cython_debug/
 
 # Temporary project plans
 /plans/*
+!/plans/plan_stage01_training_export_runtime_comparison.md
 /documents/daily_*.md
