@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Runs the first-device RF-DETR Small check on the bundled validation images.
+/// Runs RF-DETR Small on the bundled test-split examples.
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var session = StillImageSession()
-    @State private var selectedSample = BundledSample.positive
+    @State private var batch = StillImageBatchSession()
+    @State private var selectedSample = BundledSample.testPositive6988
 
     var body: some View {
         NavigationStack {
@@ -19,17 +20,18 @@ struct ContentView: View {
                             Text(sample.title).tag(sample)
                         }
                     }
-                    .pickerStyle(.segmented)
-                    .disabled(session.isBusy)
+                    .pickerStyle(.menu)
+                    .disabled(session.isBusy || batch.isBusy)
                     .accessibilityIdentifier("samplePicker")
                     if session.image == nil && !session.isBusy {
                         Button("Load image") { session.load(selectedSample) }
+                            .disabled(batch.isBusy)
                     }
                 } header: {
                     Text("Input")
                 } footer: {
                     Text(
-                        "Bundled validation images: one basketball and one background image."
+                        "\(BundledSample.allCases.count) test-split images, including the notebook comparison grid."
                     )
                 }
                 Section {
@@ -60,7 +62,7 @@ struct ContentView: View {
                     HStack {
                         Button("Start", systemImage: "play.fill") { session.start() }
                             .buttonStyle(.borderedProminent)
-                            .disabled(!session.canStart)
+                            .disabled(!session.canStart || batch.isBusy)
                             .accessibilityIdentifier("startDetection")
                         Spacer()
                         Button("Stop", systemImage: "stop.fill") { session.stop() }
@@ -70,6 +72,33 @@ struct ContentView: View {
                     }
                 } header: {
                     Text("Detection")
+                }
+                Section {
+                    Button(
+                        "Run all test images",
+                        systemImage: "play.rectangle.on.rectangle"
+                    ) {
+                        batch.start()
+                    }
+                    .disabled(session.isBusy || batch.isBusy)
+                    .accessibilityIdentifier("runAllTestImages")
+                    if batch.isBusy {
+                        ProgressView(
+                            value: Double(batch.completed), total: Double(batch.total)
+                        ) {
+                            Text("\(batch.completed) of \(batch.total) images")
+                        }
+                        Button("Stop batch", role: .cancel) { batch.stop() }
+                    }
+                    Text(batch.message).font(.footnote).foregroundStyle(.secondary)
+                    if let url = batch.exportURL {
+                        ShareLink("Export results", item: url)
+                            .accessibilityIdentifier("exportTestResults")
+                    }
+                } header: {
+                    Text("Test-set comparison")
+                } footer: {
+                    Text("Export exact boxes and scores to compare on your Mac.")
                 }
                 BenchmarkMetricsView(
                     latencyMilliseconds: session.latencyMilliseconds,
@@ -82,10 +111,14 @@ struct ContentView: View {
         }
         .task { session.load(selectedSample) }
         .onChange(of: selectedSample) { _, sample in session.load(sample) }
-        .onDisappear { session.stop() }
+        .onDisappear {
+            session.stop()
+            batch.stop()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 session.stop()
+                batch.stop()
             } else if session.image == nil && !session.isBusy {
                 session.load(selectedSample)
             }

@@ -11,7 +11,7 @@ struct StillImageSessionSmokeTests {
         let session = StillImageSession(worker: worker)
         session.start()
         precondition(session.status == .error && !session.canStart)
-        session.load(.positive)
+        session.load(.testPositive6988)
         try await waitForIdle(session)
         precondition(session.canStart && session.status == .idle)
         session.start()
@@ -23,7 +23,7 @@ struct StillImageSessionSmokeTests {
         let runCount = await worker.runCount
         precondition(runCount == 1, "Duplicate Start ran another prediction")
 
-        session.load(.negative)
+        session.load(.testNegative7028)
         precondition(session.detections.isEmpty && session.latencyMilliseconds == nil)
         precondition(session.processedImages == 0)
         try await waitForIdle(session)
@@ -40,14 +40,14 @@ struct StillImageSessionSmokeTests {
         try await waitForIdle(session)
         precondition(session.status == .completed)
 
-        session.load(.positive)
+        session.load(.testPositive6988)
         try await waitForIdle(session)
         await worker.holdNextPrediction()
         session.start()
         await worker.waitForPrediction()
         session.stop()
         precondition(session.status == .idle && session.processedImages == 0)
-        session.load(.negative)
+        session.load(.testNegative7028)
         try await waitForIdle(session)
         session.start()
         try await waitForIdle(session)
@@ -81,7 +81,7 @@ private actor SessionWorker: StillImageProcessing {
 
     /// Uses image width to distinguish positive from negative input in checks.
     func load(_ sample: BundledSample) throws -> CGImage {
-        let width = sample == .positive ? 2 : 3
+        let width = sample.isPositive ? 2 : 3
         let context = CGContext(
             data: nil, width: width, height: 2, bitsPerComponent: 8,
             bytesPerRow: width * 4,

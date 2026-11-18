@@ -7,6 +7,31 @@ struct FramePreview: View {
     let imageTitle: String
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            imagePreview
+            ForEach(detections.indices, id: \.self) { index in
+                let detection = detections[index]
+                HStack {
+                    Rectangle().stroke(.red, lineWidth: 2)
+                        .frame(width: 12, height: 10)
+                    Text(
+                        detection.classID == 1
+                            ? "Basketball" : "Class \(detection.classID)")
+                    Spacer()
+                    Text(
+                        detection.confidence,
+                        format: .percent.precision(.fractionLength(1))
+                    )
+                    .monospacedDigit()
+                }
+                .font(.caption)
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    /// Draws image and outlines without placing text over the source pixels.
+    private var imagePreview: some View {
         GeometryReader { geometry in
             if let image {
                 let layout = PreviewGeometry(
@@ -26,13 +51,6 @@ struct FramePreview: View {
                         if let box = layout.displayedBox(detection.boundingBox) {
                             Rectangle()
                                 .stroke(.red, lineWidth: 2)
-                                .overlay(alignment: .topLeading) {
-                                    Text(label(for: detection))
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                        .padding(3)
-                                        .background(.red)
-                                }
                                 .frame(width: box.width, height: box.height)
                                 .clipped()
                                 .position(x: box.midX, y: box.midY)
@@ -53,11 +71,4 @@ struct FramePreview: View {
         .accessibilityIdentifier("detectionPreview")
     }
 
-    /// Labels a category and confidence without rounding stored results.
-    private func label(for detection: Detection) -> String {
-        let category =
-            detection.classID == 1 ? "Basketball" : "Class \(detection.classID)"
-        return
-            "\(category) \(detection.confidence.formatted(.percent.precision(.fractionLength(1))))"
-    }
 }

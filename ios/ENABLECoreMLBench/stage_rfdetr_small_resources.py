@@ -1,5 +1,5 @@
 """
-Hardlink the selected RF-DETR Small export and two validation images into the app.
+Hardlink RF-DETR Small and 25 test-split examples, including the notebook grid.
 """
 
 import argparse
@@ -55,6 +55,41 @@ def retained(rows: list[dict]) -> list[dict]:
     )[:100]
 
 
+def stage_sample(
+    root: Path, app: Path, dataset: Path, kind: str,
+    image: dict, annotations: list[dict], references: dict,
+) -> dict:
+    """
+    Link one original image and retain its split, ground truth and saved outputs.
+    """
+    image_id = image["id"]
+    source = dataset / "images/test" / image["file_name"]
+    name = f"test_{kind}_{image_id}{source.suffix.lower()}"
+    source_hash = file_hash(source)
+    destination = app / "Resources/TestImages" / name
+    hardlink_file(source, destination)
+    if file_hash(destination) != source_hash:
+        raise ValueError(f"Image bytes changed during staging: {name}")
+    return {
+        "kind": kind, "split": "test", "image_id": image_id, "file_name": name,
+        "source_path": source.relative_to(root).as_posix(),
+        "sha256": source_hash, "width": image["width"], "height": image["height"],
+        "ground_truth": [
+            {key: row[key] for key in ("category_id", "bbox", "iscrowd")}
+            for row in annotations if row["image_id"] == image_id
+        ],
+        "expected_checkpoint_detections": retained(
+            references["pytorch"].get(str(image_id), [])
+        ),
+        "expected_onnx_detections": retained(
+            references["onnx"].get(str(image_id), [])
+        ),
+        "expected_mac_coreml_detections": retained(
+            references["coreml"].get(str(image_id), [])
+        ),
+    }
+
+
 def stage(root: Path, manifest_path: Path) -> None:
     """
     Verify provenance, link resources and write portable sample expectations.
@@ -82,59 +117,58 @@ def stage(root: Path, manifest_path: Path) -> None:
     for relative in files:
         hardlink_file(package / relative, target / relative)
 
-    selection = json.loads(verified_record(manifest["parity_manifest"]).read_text())
-    parity_path = verified_record(coreml["parity"])
-    parity = json.loads(parity_path.read_text())
-    annotation_record = manifest["dataset"]["annotations"]["val"]
-    annotations = json.loads(verified_record(annotation_record).read_text())
-    images = {image["id"]: image for image in annotations["images"]}
-    source_root = Path(manifest["dataset"]["directory"]) / "images/val"
+    dataset = Path(manifest["dataset"]["directory"])
     samples = []
-    for kind in ("positive", "negative"):
-        image_id = next(
-            image_id for image_id in selection[f"{kind}_ids"]
-            if bool(retained(parity["reference_detections"][str(image_id)]))
-            == (kind == "positive")
-        )
-        image = images[image_id]
-        source = source_root / image["file_name"]
-        name = f"{kind}_{image_id}{source.suffix.lower()}"
-        destination = app / "Resources/TestImages" / name
-        source_hash = file_hash(source)
-        hardlink_file(source, destination)
-        if file_hash(destination) != source_hash:
-            raise ValueError(f"Image bytes changed during staging: {name}")
-        samples.append({
-            "kind": kind,
-            "image_id": image_id,
-            "file_name": name,
-            "source_path": source.relative_to(root).as_posix(),
-            "sha256": source_hash,
-            "width": image["width"],
-            "height": image["height"],
-            "ground_truth": [
-                {key: row[key] for key in ("category_id", "bbox", "iscrowd")}
-                for row in annotations["annotations"] if row["image_id"] == image_id
-            ],
-            "expected_checkpoint_detections": retained(
-                parity["reference_detections"][str(image_id)]
-            ),
-            "expected_mac_coreml_detections": retained(
-                parity["detections"][str(image_id)]
-            ),
-        })
+    test_record = manifest["dataset"]["annotations"]["test"]
+    test_annotations = json.loads(verified_record(test_record).read_text())
+    test_images = {image["id"]: image for image in test_annotations["images"]}
+    positive_ids = {row["image_id"] for row in test_annotations["annotations"]}
+    test_references = {}
+    prediction_records = {}
+    for runtime in ("pytorch", "onnx", "coreml"):
+        record = manifest["formats"][runtime]["predictions"]["test"]
+        artifact_data = json.loads(verified_record(record).read_text())
+        if (artifact_data["metadata"]["checkpoint_sha256"]
+                != manifest["checkpoint"]["sha256"]
+                or artifact_data["annotation_sha256"] != test_record["sha256"]
+                or set(artifact_data["image_ids"]) != set(test_images)):
+            raise ValueError(f"Wrong checkpoint or test coverage for {runtime}")
+        rows_by_image = {str(image_id): [] for image_id in test_images}
+        for row in artifact_data["predictions"]:
+            rows_by_image[str(row["image_id"])].append({
+                key: row[key] for key in ("bbox", "category_id", "score")
+            })
+        test_references[runtime] = rows_by_image
+        prediction_records[runtime] = {
+            "path": Path(record["path"]).relative_to(root).as_posix(),
+            "sha256": record["sha256"],
+        }
+    # First 20 positive and first 5 negative test examples from the pinned export.
+    # The notebook's original 4+4 grid is retained within this expanded selection.
+    for kind, ids in (
+        ("positive", tuple(range(6988, 7008))),
+        ("negative", (7028, 7030, 7032, 7046, 7054)),
+    ):
+        for image_id in ids:
+            if (image_id in positive_ids) != (kind == "positive"):
+                raise ValueError(f"Test sample ground truth changed: {image_id}")
+            samples.append(stage_sample(
+                root, app, dataset, kind, test_images[image_id],
+                test_annotations["annotations"], test_references,
+            ))
 
     sample_manifest = {
-        "schema_version": 1,
+        "schema_version": 3,
+        "scope": "test_examples",
         "model": manifest["model"],
         "run_id": Path(manifest["run_dir"]).name,
         "model_resource": "rfdetr_small.mlpackage",
         "model_sha256": artifact["sha256"],
         "checkpoint_sha256": manifest["checkpoint"]["sha256"],
         "export_manifest_path": manifest_path.relative_to(root).as_posix(),
-        "reference_parity_sha256": coreml["parity"]["sha256"],
-        "annotation_sha256": annotation_record["sha256"],
-        "split": "val",
+        "split": "test",
+        "annotation_sha256": test_record["sha256"],
+        "prediction_records": prediction_records,
         "confidence_threshold": 0.25,
         "max_detections": 100,
         "box_convention": "unclipped source-pixel top-left xywh",
@@ -145,7 +179,7 @@ def stage(root: Path, manifest_path: Path) -> None:
     path.write_text(json.dumps(sample_manifest, indent=2) + "\n")
     print(f"Hardlinked {len(files)} package files: {target.relative_to(root)}")
     for sample in samples:
-        print(f"Staged {sample['kind']} image {sample['image_id']}: "
+        print(f"Staged {sample['split']} {sample['kind']} image {sample['image_id']}: "
               f"Resources/TestImages/{sample['file_name']}")
     print(f"Saved provenance and expected detections: {path.relative_to(root)}")
 

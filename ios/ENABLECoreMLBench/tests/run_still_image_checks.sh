@@ -14,9 +14,10 @@ still_flags=(
   -parse-as-library -swift-version 5 -default-isolation MainActor
   -strict-concurrency=complete -warnings-as-errors
   -enable-upcoming-feature NonisolatedNonsendingByDefault
+  -enable-upcoming-feature MemberImportVisibility
   -module-cache-path outputs/cache/swift_module_cache
 )
-for still_test in StillImageSession PreviewGeometry; do
+for still_test in StillImageSession PreviewGeometry StillImageBatch; do
   xcrun swiftc "${still_flags[@]}" "${still_sources[@]}" \
     "ios/ENABLECoreMLBench/tests/${still_test}SmokeTests.swift" \
     -o "$still_build/$still_test"

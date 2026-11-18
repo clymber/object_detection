@@ -22,6 +22,7 @@ DerivedData/
 /ios/ENABLECoreMLBench/ENABLECoreMLBench/Models/*.mlpackage/
 /ios/ENABLECoreMLBench/ENABLECoreMLBench/Resources/TestImages/*.jpg
 /ios/ENABLECoreMLBench/ENABLECoreMLBench/Resources/TestImages/*.png
+/ios/results/
 
 # Share portable folder settings, but not machine-specific VS Code state.
 **/.vscode/*
