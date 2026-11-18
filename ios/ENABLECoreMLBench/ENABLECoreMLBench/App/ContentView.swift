@@ -1,140 +1,93 @@
 import SwiftUI
 
+/// Runs the first-device RF-DETR Small check on the bundled validation images.
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @State private var session = DemoSession()
-    @State private var selectedModel = "RF-DETR Small"
-    @State private var selectedInput = "Static image"
-    @State private var simulateError = false
-    @State private var showingExportNotice = false
-
-    private let modelNames = [
-        "RF-DETR Small",
-        "RF-DETR Nano",
-        "YOLOX Nano",
-    ]
-
-    private let inputNames = [
-        "Static image",
-        "Prerecorded video",
-        "Live camera",
-    ]
+    @State private var session = StillImageSession()
+    @State private var selectedSample = BundledSample.positive
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Picker("Detector", selection: $selectedModel) {
-                        ForEach(modelNames, id: \.self) { modelName in
-                            Text(modelName).tag(modelName)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                } header: {
-                    Text("Model")
-                } footer: {
-                    Text("Demo mode: selecting a model does not load it yet.")
+                Section("Model") {
+                    LabeledContent(
+                        "Detector", value: DetectorModel.rfdetrSmall.displayName)
                 }
-                .disabled(session.isRunning)
-
                 Section {
-                    Picker("Source", selection: $selectedInput) {
-                        ForEach(inputNames, id: \.self) { inputName in
-                            Text(inputName).tag(inputName)
+                    Picker("Test image", selection: $selectedSample) {
+                        ForEach(BundledSample.allCases) { sample in
+                            Text(sample.title).tag(sample)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .pickerStyle(.segmented)
+                    .disabled(session.isBusy)
+                    .accessibilityIdentifier("samplePicker")
+                    if session.image == nil && !session.isBusy {
+                        Button("Load image") { session.load(selectedSample) }
+                    }
                 } header: {
                     Text("Input")
                 } footer: {
-                    Text("Demo mode: media loading and camera capture come later.")
+                    Text(
+                        "Bundled validation images: one basketball and one background image."
+                    )
                 }
-                .disabled(session.isRunning)
-
                 Section {
-                    FramePreview(inputName: selectedInput)
+                    FramePreview(
+                        image: session.image, detections: session.detections,
+                        imageTitle: selectedSample.title
+                    )
                 } header: {
                     Text("Preview")
                 } footer: {
-                    Text("Placeholder for future frames and detection boxes.")
+                    Text("Boxes show detections at confidence ≥ 25%.")
                 }
-
-                BenchmarkMetricsView()
-
                 Section {
                     LabeledContent("Status") {
                         HStack {
-                            if session.isRunning {
-                                ProgressView()
-                                    .controlSize(.small)
-                            }
+                            if session.isBusy { ProgressView().controlSize(.small) }
                             Text(session.status.rawValue)
                                 .foregroundStyle(
-                                    session.status == .error ? Color.red : Color.primary
+                                    session.status == .error ? Color.red : .primary
                                 )
+                                .accessibilityIdentifier("detectionStatus")
                         }
                     }
-
                     Text(session.message)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-
+                        .accessibilityIdentifier("detectionMessage")
                     HStack {
-                        Button("Start", systemImage: "play.fill") {
-                            session.start(
-                                model: selectedModel,
-                                input: selectedInput,
-                                simulateError: simulateError
-                            )
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(session.isRunning)
-
+                        Button("Start", systemImage: "play.fill") { session.start() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!session.canStart)
+                            .accessibilityIdentifier("startDetection")
                         Spacer()
-
-                        Button("Stop", systemImage: "stop.fill") {
-                            session.stop()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(!session.isRunning)
+                        Button("Stop", systemImage: "stop.fill") { session.stop() }
+                            .buttonStyle(.bordered)
+                            .disabled(!session.isBusy)
+                            .accessibilityIdentifier("stopDetection")
                     }
-
-                    #if DEBUG
-                    Toggle("Simulate an error", isOn: $simulateError)
-                        .disabled(session.isRunning)
-                    #endif
                 } header: {
-                    Text("Demo session")
-                } footer: {
-                    Text("Finishes after 5 seconds. No model or media is loaded.")
+                    Text("Detection")
                 }
-
-                Section {
-                    Button("Export Results", systemImage: "square.and.arrow.up") {
-                        showingExportNotice = true
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(session.isRunning)
-                } header: {
-                    Text("Results")
-                } footer: {
-                    Text("Demo placeholder. Export will be added with real results.")
-                }
+                BenchmarkMetricsView(
+                    latencyMilliseconds: session.latencyMilliseconds,
+                    processedImages: session.processedImages,
+                    detectionCount: session.detections.count
+                )
             }
             .navigationTitle("ENABLE Core ML Bench")
             .toolbarTitleDisplayMode(.inline)
         }
-        .alert("Export not available yet", isPresented: $showingExportNotice) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("Export is not implemented yet. This demo has no results to save.")
-        }
-        .onDisappear {
-            session.stop()
-        }
+        .task { session.load(selectedSample) }
+        .onChange(of: selectedSample) { _, sample in session.load(sample) }
+        .onDisappear { session.stop() }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 session.stop()
+            } else if session.image == nil && !session.isBusy {
+                session.load(selectedSample)
             }
         }
     }

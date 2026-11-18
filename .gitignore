@@ -188,5 +188,4 @@ cython_debug/
 
 # Temporary project plans
 /plans/*
-!/plans/plan_stage01_training_export_runtime_comparison.md
 /documents/daily_*.md

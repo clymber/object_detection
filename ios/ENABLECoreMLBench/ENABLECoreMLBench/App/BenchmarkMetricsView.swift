@@ -1,24 +1,31 @@
 import SwiftUI
 
-/// Displays unmeasured timings and zero processed frames for the UI demo.
+/// Reports one image's detection latency without inventing benchmark FPS.
 struct BenchmarkMetricsView: View {
+    let latencyMilliseconds: Double?
+    let processedImages: Int
+    let detectionCount: Int
+
     var body: some View {
         Section {
+            LabeledContent("Detection latency", value: latencyText)
+            LabeledContent("Processed images", value: String(processedImages))
+            LabeledContent("Detections", value: String(detectionCount))
             LabeledContent("Model-only FPS", value: "—")
             LabeledContent("End-to-end FPS", value: "—")
-            LabeledContent("Inference latency", value: "— ms")
-            LabeledContent("Processed frames", value: "0")
         } header: {
             Text("Metrics")
         } footer: {
-            Text("Demo only: no frames are processed and no timings are measured.")
+            Text(
+                "Latency includes preprocessing, inference and decoding. Image/model loading and rendering are excluded. FPS needs a timed benchmark run."
+            )
         }
         .monospacedDigit()
     }
-}
 
-#Preview {
-    Form {
-        BenchmarkMetricsView()
+    private var latencyText: String {
+        guard let latencyMilliseconds else { return "—" }
+        return latencyMilliseconds.formatted(.number.precision(.fractionLength(1)))
+            + " ms"
     }
 }
