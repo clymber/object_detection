@@ -12,8 +12,18 @@ nonisolated protocol StillImageProcessing: Actor {
     /// Loads one upright sample outside the UI actor.
     func load(_ sample: BundledSample) async throws -> CGImage
 
+    /// Loads an imported photo and resolves its orientation on the worker actor.
+    func loadPhoto(_ url: URL) async throws -> CGImage
+
     /// Runs one image after loading the selected model.
     func run(_ image: CGImage, model: DetectorModel) async throws -> StillImageResult
+}
+
+extension StillImageProcessing {
+    /// Shares the real photo decoder with actor-based workers and test doubles.
+    func loadPhoto(_ url: URL) throws -> CGImage {
+        try StillImagePhotoDecoder.load(url)
+    }
 }
 
 /// Keeps image decoding, model loading and detection independent of SwiftUI.

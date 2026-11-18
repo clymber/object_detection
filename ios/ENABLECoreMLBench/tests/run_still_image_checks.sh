@@ -24,6 +24,12 @@ for still_test in StillImageSession PreviewGeometry StillImageBatch; do
   "$still_build/$still_test"
 done
 
+xcrun swiftc "${still_flags[@]}" "${still_sources[@]}" \
+  ios/ENABLECoreMLBench/ENABLECoreMLBench/App/MediaInput.swift \
+  ios/ENABLECoreMLBench/tests/MediaImportSmokeTests.swift \
+  -o "$still_build/MediaImport"
+"$still_build/MediaImport"
+
 if [[ "${1:-}" == "--with-model" ]]; then
   xcrun swiftc -O "${still_flags[@]}" "${still_sources[@]}" \
     ios/ENABLECoreMLBench/ENABLECoreMLBench/App/FramePreview.swift \

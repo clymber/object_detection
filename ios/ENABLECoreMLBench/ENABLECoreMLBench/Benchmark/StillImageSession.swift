@@ -15,7 +15,7 @@ final class StillImageSession {
     }
 
     private(set) var status: Status = .idle
-    private(set) var message = "Choose a test image, then tap Start."
+    private(set) var message = "Choose an image, then tap Start."
     private(set) var image: CGImage?
     private(set) var detections: [Detection] = []
     private(set) var latencyMilliseconds: Double?
@@ -35,16 +35,41 @@ final class StillImageSession {
 
     /// Replaces the selected image and clears results from the previous input.
     func load(_ sample: BundledSample) {
+        loadImage(title: sample.title) { worker in try await worker.load(sample) }
+    }
+
+    /// Loads an imported photo through the same asynchronous inference session.
+    func loadPhoto(_ url: URL) {
+        loadImage(title: url.lastPathComponent) { worker in
+            try await worker.loadPhoto(url)
+        }
+    }
+
+    /// Discards the old input and measurements when the input source changes.
+    func clear(message: String = "Choose an image, then tap Start.") {
+        invalidateTask()
+        image = nil
+        clearResults()
+        status = .idle
+        self.message = message
+    }
+
+    /// Runs input decoding on a worker and rejects superseded load results.
+    private func loadImage(
+        title: String,
+        operation:
+            @escaping @Sendable (any StillImageProcessing) async throws -> CGImage
+    ) {
         invalidateTask()
         let request = generation
         image = nil
         clearResults()
         status = .loading
-        message = "Loading \(sample.title.lowercased()) image…"
+        message = "Loading \(title)…"
         let worker = worker
         task = Task { [weak self] in
             do {
-                let loaded = try await worker.load(sample)
+                let loaded = try await operation(worker)
                 try Task.checkCancellation()
                 guard let self, self.generation == request else { return }
                 self.image = loaded
@@ -62,7 +87,7 @@ final class StillImageSession {
     func start(model: DetectorModel = .rfdetrSmall) {
         guard !isBusy else { return }
         guard let image else {
-            fail(DetectorError.invalidImage("Choose a test image before starting."))
+            fail(DetectorError.invalidImage("Choose an image before starting."))
             return
         }
         invalidateTask()
