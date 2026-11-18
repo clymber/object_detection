@@ -7,6 +7,8 @@ import hashlib
 import json
 from pathlib import Path
 import runpy
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -14,6 +16,30 @@ import unittest
 TOOLS = runpy.run_path(str(Path(__file__).resolve().parents[1]
                            / "compare_device_results.py"))
 MANIFEST_PATH = TOOLS["DEFAULT_MANIFEST"]
+
+
+def prediction_export(manifest: dict, digest: str) -> dict:
+    """
+    Build synthetic device results from one model's saved checkpoint predictions.
+    """
+    results = {
+        key: manifest[key] for key in (
+            "model", "run_id", "model_sha256", "checkpoint_sha256", "split",
+            "confidence_threshold", "max_detections", "box_convention")
+    }
+    results.update({
+        "schema_version": 1, "scope": manifest["scope"], "status": "completed",
+        "sample_manifest_sha256": digest,
+        "runtime": {"platform": "ios", "hardware": "synthetic_test_fixture",
+                    "os_version": "test", "compute_units": "all"},
+        "images": [{
+            "image_id": sample["image_id"], "file_name": sample["file_name"],
+            "image_sha256": sample["sha256"], "width": sample["width"],
+            "height": sample["height"], "status": "completed", "latency_ms": 1.0,
+            "detections": deepcopy(sample["expected_checkpoint_detections"]),
+        } for sample in manifest["samples"]],
+    })
+    return results
 
 
 class CompareDeviceResultsTests(unittest.TestCase):
@@ -27,23 +53,7 @@ class CompareDeviceResultsTests(unittest.TestCase):
         """
         self.manifest = json.loads(MANIFEST_PATH.read_text())
         self.digest = hashlib.sha256(MANIFEST_PATH.read_bytes()).hexdigest()
-        self.results = {
-            key: self.manifest[key] for key in (
-                "model", "run_id", "model_sha256", "checkpoint_sha256", "split",
-                "confidence_threshold", "max_detections", "box_convention")
-        }
-        self.results.update({
-            "schema_version": 1, "scope": self.manifest["scope"], "status": "completed",
-            "sample_manifest_sha256": self.digest,
-            "runtime": {"platform": "ios", "hardware": "synthetic_test_fixture",
-                        "os_version": "test", "compute_units": "all"},
-            "images": [{
-                "image_id": sample["image_id"], "file_name": sample["file_name"],
-                "image_sha256": sample["sha256"], "width": sample["width"],
-                "height": sample["height"], "status": "completed", "latency_ms": 1.0,
-                "detections": deepcopy(sample["expected_checkpoint_detections"]),
-            } for sample in self.manifest["samples"]],
-        })
+        self.results = prediction_export(self.manifest, self.digest)
 
     def report(self, results=None, **kwargs):
         """
@@ -63,6 +73,37 @@ class CompareDeviceResultsTests(unittest.TestCase):
         negative = report["images"][-1]["references"]["pytorch"]
         self.assertTrue(negative["passed"])
         self.assertEqual(negative["matches"], [])
+
+    def test_model_specific_cli_references(self):
+        """
+        Select Nano/YOLOX references automatically and reject a Small manifest.
+        """
+        fields = ("image_id", "file_name", "sha256", "width", "height",
+                  "split", "ground_truth")
+        frozen_inputs = [{key: row[key] for key in fields}
+                         for row in self.manifest["samples"]]
+        with tempfile.TemporaryDirectory() as directory:
+            for model in ("rfdetr_nano", "yolox_nano"):
+                with self.subTest(model=model):
+                    manifest_path = TOOLS["MODEL_MANIFESTS"][model]
+                    manifest = json.loads(manifest_path.read_text())
+                    digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+                    self.assertEqual([{key: row[key] for key in fields}
+                                      for row in manifest["samples"]], frozen_inputs)
+                    source = Path(directory) / f"{model}.json"
+                    source.write_text(json.dumps(prediction_export(manifest, digest)))
+                    output = Path(directory) / f"{model}_report.json"
+                    command = [sys.executable, TOOLS["__file__"], str(source),
+                               "--output", str(output)]
+                    run = subprocess.run(command, capture_output=True, text=True)
+                    self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                    report = json.loads(output.read_text())
+                    self.assertEqual(report["model"], model)
+                    self.assertEqual(report["sample_manifest_sha256"], digest)
+                    run = subprocess.run(command + ["--manifest", str(MANIFEST_PATH)],
+                                         capture_output=True, text=True)
+                    self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+                    self.assertEqual(json.loads(output.read_text())["status"], "failed")
 
     def test_missing_duplicate_and_unexpected_images(self):
         """

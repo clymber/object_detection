@@ -35,6 +35,23 @@ struct StillImageBatchSmokeTests {
         let runCount = await worker.runCount
         precondition(runCount == count, "Duplicate Start ran the batch twice")
 
+        for model in [DetectorModel.rfdetrNano, .yoloxNano] {
+            session.reset()
+            precondition(session.exportURL == nil && session.completed == 0)
+            session.start(model: model)
+            try await waitForIdle(session)
+            let url = session.exportURL!
+            let report = try JSONDecoder().decode(
+                StillImageBatchReport.self, from: Data(contentsOf: url))
+            precondition(report.model == model.rawValue && report.images.count == count)
+            precondition(report.model_sha256 == "test_\(model.rawValue)")
+            precondition(url.lastPathComponent.hasPrefix(model.rawValue + "_test_"))
+            let submitted = await worker.models.suffix(count)
+            precondition(submitted.allSatisfy { $0 == model })
+        }
+        session.reset()
+        precondition(session.exportURL == nil)
+
         await worker.failSomeImages()
         session.start()
         precondition(session.exportURL == nil)
@@ -90,16 +107,19 @@ struct StillImageBatchSmokeTests {
                 "width": 640, "height": 640, "split": "test",
             ])
         }
-        let manifest: [String: Any] = [
-            "schema_version": 3, "scope": "test_examples",
-            "model": "rfdetr_small", "run_id": "test",
-            "model_sha256": "test", "checkpoint_sha256": "test", "split": "test",
-            "confidence_threshold": 0.25, "max_detections": 100,
-            "box_convention": "unclipped source-pixel top-left xywh",
-            "samples": samples,
-        ]
-        try JSONSerialization.data(withJSONObject: manifest).write(
-            to: url.appendingPathComponent("sample_manifest.json"))
+        for model in DetectorModel.allCases {
+            let manifest: [String: Any] = [
+                "schema_version": 3, "scope": "test_examples",
+                "model": model.rawValue, "run_id": "test_\(model.rawValue)",
+                "model_sha256": "test_\(model.rawValue)",
+                "checkpoint_sha256": "test_\(model.rawValue)", "split": "test",
+                "confidence_threshold": 0.25, "max_detections": 100,
+                "box_convention": "unclipped source-pixel top-left xywh",
+                "samples": samples,
+            ]
+            try JSONSerialization.data(withJSONObject: manifest).write(
+                to: url.appendingPathComponent(model.sampleManifestName + ".json"))
+        }
         return Bundle(url: url)!
     }
 
@@ -120,6 +140,7 @@ private actor BatchWorker: StillImageProcessing {
     private var holdNext = false
     private var pending: CheckedContinuation<Void, Never>?
     private(set) var runCount = 0
+    private(set) var models: [DetectorModel] = []
     var isHeld: Bool { pending != nil }
 
     /// Can fail a read while retaining the remaining catalog coverage.
@@ -138,6 +159,7 @@ private actor BatchWorker: StillImageProcessing {
     /// Can suspend an older inference until a newer session has finished.
     func run(_ image: CGImage, model: DetectorModel) async throws -> StillImageResult {
         runCount += 1
+        models.append(model)
         let input = sample
         if holdNext {
             holdNext = false

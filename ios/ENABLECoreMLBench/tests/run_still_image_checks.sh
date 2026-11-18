@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check session lifecycle/overlay geometry and optionally the actual Small model.
+# Check session/batch lifecycles and optionally all three selected models.
 set -euo pipefail
 
 still_workspace=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -31,7 +31,7 @@ if [[ "${1:-}" == "--with-model" ]]; then
     -o "$still_build/StillImageIntegration"
   TMPDIR="$still_workspace/$still_build/tmp" "$still_build/StillImageIntegration" \
     "$still_workspace" \
-    "$still_workspace/outputs/ios_builds/rfdetr_small_resources/Build/Products/Debug-iphoneos/ENABLECoreMLBench.app"
+    "$still_workspace/outputs/ios_builds/benchmark_resources/Build/Products/Debug-iphoneos/ENABLECoreMLBench.app"
 elif [[ $# -ne 0 ]]; then
   echo "Usage: bash ios/ENABLECoreMLBench/tests/run_still_image_checks.sh [--with-model]" >&2
   exit 2

@@ -24,11 +24,13 @@ actor StillImageBatchRunner {
     }
 
     /// Processes every catalog entry; individual failures make the export incomplete.
-    func run(progress: Progress) async throws -> StillImageBatchReport {
+    func run(
+        model: DetectorModel = .rfdetrSmall, progress: Progress
+    ) async throws -> StillImageBatchReport {
         let manifestURL = ["TestImages", "Resources/TestImages", nil]
             .compactMap {
                 bundle.url(
-                    forResource: "sample_manifest", withExtension: "json",
+                    forResource: model.sampleManifestName, withExtension: "json",
                     subdirectory: $0)
             }.first
         guard let manifestURL else {
@@ -38,7 +40,7 @@ actor StillImageBatchRunner {
         let catalog = try JSONDecoder().decode(StillImageCatalog.self, from: data)
         let names = Set(BundledSample.allCases.map { $0.rawValue + ".jpg" })
         guard catalog.schema_version == 3, catalog.scope == "test_examples",
-            catalog.model == "rfdetr_small",
+            catalog.model == model.rawValue,
             catalog.split == "test", catalog.confidence_threshold == 0.25,
             catalog.max_detections == 100, catalog.samples.count == names.count,
             Set(catalog.samples.map(\.file_name)) == names,
@@ -68,7 +70,7 @@ actor StillImageBatchRunner {
                 guard image.width == sample.width, image.height == sample.height else {
                     throw DetectorError.invalidImage("Decoded image dimensions differ.")
                 }
-                let result = try await worker.run(image, model: .rfdetrSmall)
+                let result = try await worker.run(image, model: model)
                 try Task.checkCancellation()
                 rows.append(
                     StillImageBatchRow(
@@ -115,7 +117,7 @@ actor StillImageBatchRunner {
         try FileManager.default.createDirectory(
             at: exportDirectory, withIntermediateDirectories: true)
         let url = exportDirectory.appendingPathComponent(
-            "rfdetr_small_test_\(UUID().uuidString)_predictions.json")
+            "\(report.model)_test_\(UUID().uuidString)_predictions.json")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(report).write(to: url, options: .atomic)

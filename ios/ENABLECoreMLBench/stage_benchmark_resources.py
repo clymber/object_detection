@@ -1,5 +1,5 @@
 """
-Hardlink RF-DETR Small and 25 test-split examples, including the notebook grid.
+Hardlink the three selected Core ML models and the 25 frozen test images.
 """
 
 import argparse
@@ -7,6 +7,20 @@ import hashlib
 import json
 import os
 from pathlib import Path
+
+
+SELECTED_RUNS = {
+    "rfdetr_small": "rfdetr_small_20261106T124419",
+    "rfdetr_nano": "rfdetr_nano_20261116T115819",
+    "yolox_nano": "yolox_nano_20261105T200341",
+}
+
+
+def sample_manifest_name(model: str) -> str:
+    """
+    Keep the frozen Small manifest name and use distinct names for other models.
+    """
+    return "sample_manifest" if model == "rfdetr_small" else f"sample_manifest_{model}"
 
 
 def file_hash(path: Path) -> str:
@@ -90,13 +104,13 @@ def stage_sample(
     }
 
 
-def stage(root: Path, manifest_path: Path) -> None:
+def stage(root: Path, model: str, manifest_path: Path) -> None:
     """
     Verify provenance, link resources and write portable sample expectations.
     """
     manifest = json.loads(manifest_path.read_text())
-    if manifest["model"] != "rfdetr_small":
-        raise ValueError("This staging helper requires the RF-DETR Small export")
+    if model not in SELECTED_RUNS or manifest["model"] != model:
+        raise ValueError(f"Require the selected {model} export")
     coreml = manifest["formats"]["coreml"]
     if not coreml["accepted"] or coreml["parity_status"] != "passed":
         raise ValueError("Require an accepted export with development parity passed")
@@ -113,7 +127,7 @@ def stage(root: Path, manifest_path: Path) -> None:
         raise ValueError("Selected Core ML package no longer matches its manifest")
 
     app = root / "ios/ENABLECoreMLBench/ENABLECoreMLBench"
-    target = app / "Models/rfdetr_small.mlpackage"
+    target = app / f"Models/{model}.mlpackage"
     for relative in files:
         hardlink_file(package / relative, target / relative)
 
@@ -162,7 +176,7 @@ def stage(root: Path, manifest_path: Path) -> None:
         "scope": "test_examples",
         "model": manifest["model"],
         "run_id": Path(manifest["run_dir"]).name,
-        "model_resource": "rfdetr_small.mlpackage",
+        "model_resource": f"{model}.mlpackage",
         "model_sha256": artifact["sha256"],
         "checkpoint_sha256": manifest["checkpoint"]["sha256"],
         "export_manifest_path": manifest_path.relative_to(root).as_posix(),
@@ -175,31 +189,36 @@ def stage(root: Path, manifest_path: Path) -> None:
         "class_mapping": {"0": 1},
         "samples": samples,
     }
-    path = app / "Resources/TestImages/sample_manifest.json"
+    path = app / "Resources/TestImages" / f"{sample_manifest_name(model)}.json"
     path.write_text(json.dumps(sample_manifest, indent=2) + "\n")
     print(f"Hardlinked {len(files)} package files: {target.relative_to(root)}")
-    for sample in samples:
-        print(f"Staged {sample['split']} {sample['kind']} image {sample['image_id']}: "
-              f"Resources/TestImages/{sample['file_name']}")
+    print(f"Staged {len(samples)} frozen test images for {model}")
     print(f"Saved provenance and expected detections: {path.relative_to(root)}")
 
 
 def main() -> None:
     """
-    Stage the pinned selection from any working directory without copying weights.
+    Stage all selected models or one explicit model from any working directory.
     """
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", choices=("all", *SELECTED_RUNS), default="all")
     parser.add_argument(
         "--manifest", type=Path,
-        default=root / "outputs/exports/basketball/rfdetr_small"
-        / "rfdetr_small_20261106T124419/model_manifest.json",
+        help="Override one export manifest; requires --model other than all",
     )
     args = parser.parse_args()
-    manifest_path = args.manifest
-    if not manifest_path.is_absolute():
-        manifest_path = root / manifest_path
-    stage(root, manifest_path.resolve())
+    if args.manifest is not None and args.model == "all":
+        parser.error("--manifest requires an explicit --model")
+    models = SELECTED_RUNS if args.model == "all" else (args.model,)
+    for model in models:
+        path = args.manifest or (
+            root / "outputs/exports/basketball" / model
+            / SELECTED_RUNS[model] / "model_manifest.json"
+        )
+        if not path.is_absolute():
+            path = root / path
+        stage(root, model, path.resolve())
 
 
 if __name__ == "__main__":

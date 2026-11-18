@@ -9,6 +9,10 @@ nonisolated enum DetectorModel: String, CaseIterable, Sendable, Identifiable {
 
     var id: String { rawValue }
 
+    var sampleManifestName: String {
+        self == .rfdetrSmall ? "sample_manifest" : "sample_manifest_\(rawValue)"
+    }
+
     var displayName: String {
         switch self {
         case .rfdetrSmall: "RF-DETR Small"

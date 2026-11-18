@@ -21,18 +21,19 @@ final class StillImageBatchSession {
     }
 
     /// Starts a fresh run and prevents sharing a previous run while it is replaced.
-    func start() {
+    func start(model: DetectorModel = .rfdetrSmall) {
         guard !isBusy else { return }
         generation &+= 1
         let request = generation
         completed = 0
         exportURL = nil
         isBusy = true
-        message = "Running all test images…"
+        message = "Running \(model.displayName) on all test images…"
         let runner = runner
         task = Task { [weak self] in
             do {
-                let report = try await runner.run { [weak self] completed, total in
+                let report = try await runner.run(model: model) {
+                    [weak self] completed, total in
                     await self?.update(
                         completed: completed, total: total, request: request)
                 }
@@ -55,6 +56,17 @@ final class StillImageBatchSession {
                 self.task = nil
             }
         }
+    }
+
+    /// Clears the previous model's results when the model selector changes.
+    func reset() {
+        generation &+= 1
+        task?.cancel()
+        task = nil
+        isBusy = false
+        completed = 0
+        exportURL = nil
+        message = "Run all test images, then export results for comparison."
     }
 
     /// Cancels publication so an older batch cannot replace a newer export.

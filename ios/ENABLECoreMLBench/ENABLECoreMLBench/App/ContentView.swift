@@ -1,18 +1,25 @@
 import SwiftUI
 
-/// Runs RF-DETR Small on the bundled test-split examples.
+/// Runs the selected detector on the bundled test-split examples.
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var session = StillImageSession()
     @State private var batch = StillImageBatchSession()
+    @State private var selectedModel = DetectorModel.rfdetrSmall
     @State private var selectedSample = BundledSample.testPositive6988
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Model") {
-                    LabeledContent(
-                        "Detector", value: DetectorModel.rfdetrSmall.displayName)
+                    Picker("Detector", selection: $selectedModel) {
+                        ForEach(DetectorModel.allCases) { model in
+                            Text(model.displayName).tag(model)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .disabled(session.isBusy || batch.isBusy)
+                    .accessibilityIdentifier("modelPicker")
                 }
                 Section {
                     Picker("Test image", selection: $selectedSample) {
@@ -60,10 +67,12 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("detectionMessage")
                     HStack {
-                        Button("Start", systemImage: "play.fill") { session.start() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(!session.canStart || batch.isBusy)
-                            .accessibilityIdentifier("startDetection")
+                        Button("Start", systemImage: "play.fill") {
+                            session.start(model: selectedModel)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!session.canStart || batch.isBusy)
+                        .accessibilityIdentifier("startDetection")
                         Spacer()
                         Button("Stop", systemImage: "stop.fill") { session.stop() }
                             .buttonStyle(.bordered)
@@ -78,7 +87,7 @@ struct ContentView: View {
                         "Run all test images",
                         systemImage: "play.rectangle.on.rectangle"
                     ) {
-                        batch.start()
+                        batch.start(model: selectedModel)
                     }
                     .disabled(session.isBusy || batch.isBusy)
                     .accessibilityIdentifier("runAllTestImages")
@@ -111,6 +120,10 @@ struct ContentView: View {
         }
         .task { session.load(selectedSample) }
         .onChange(of: selectedSample) { _, sample in session.load(sample) }
+        .onChange(of: selectedModel) { _, _ in
+            session.load(selectedSample)
+            batch.reset()
+        }
         .onDisappear {
             session.stop()
             batch.stop()

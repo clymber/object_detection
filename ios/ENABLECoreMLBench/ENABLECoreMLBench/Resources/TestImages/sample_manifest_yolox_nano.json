@@ -1,0 +1,1304 @@
+{
+  "schema_version": 3,
+  "scope": "test_examples",
+  "model": "yolox_nano",
+  "run_id": "yolox_nano_20261105T200341",
+  "model_resource": "yolox_nano.mlpackage",
+  "model_sha256": "6dcdecec73f943908ae34e40157f450153fc0486547cabaedb2f4bb1e9b6422e",
+  "checkpoint_sha256": "d9b9d32ee716c90480bd1bb1a40304c6ee0fed064d6d996d2876ea5a470e99d3",
+  "export_manifest_path": "outputs/exports/basketball/yolox_nano/yolox_nano_20261105T200341/model_manifest.json",
+  "split": "test",
+  "annotation_sha256": "c3dab2d03660d191bee4ef2ebc8da22e00a9f146c4137bae847b6cf7d44a3215",
+  "prediction_records": {
+    "pytorch": {
+      "path": "outputs/exports/basketball/yolox_nano/yolox_nano_20261105T200341/pytorch/test_predictions.json",
+      "sha256": "edbf210c597e3267840db7372f5a982124607f66c439d28349ec461cacf0a00b"
+    },
+    "onnx": {
+      "path": "outputs/exports/basketball/yolox_nano/yolox_nano_20261105T200341/onnx/test_predictions.json",
+      "sha256": "05e2e6e359d333ccbc783afa288bfe1e23f163ed59b3abc590f479adf0b78816"
+    },
+    "coreml": {
+      "path": "outputs/exports/basketball/yolox_nano/yolox_nano_20261105T200341/coreml/test_predictions.json",
+      "sha256": "7621f6bd0aa16960c8d5ab6bdc03b4ef7d7124a4968b82e1dd400c0ce78fc37a"
+    }
+  },
+  "confidence_threshold": 0.25,
+  "max_detections": 100,
+  "box_convention": "unclipped source-pixel top-left xywh",
+  "class_mapping": {
+    "0": 1
+  },
+  "samples": [
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6988,
+      "file_name": "test_positive_6988.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/9cfd9970fa3d416cba358cf86e26be80b86f9b0d228390cd42ca536367dc74e4.jpg",
+      "sha256": "e2ce0701572f458a8c634324efb17ca78ab7afbb760f86a828c912e6fb9480f0",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            222.0,
+            365.0,
+            157.0,
+            231.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            216.17613220214844,
+            356.7662353515625,
+            168.7718048095703,
+            235.42999267578125
+          ],
+          "category_id": 1,
+          "score": 0.9211934804916382
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            216.17611694335938,
+            356.7662353515625,
+            168.7718505859375,
+            235.429931640625
+          ],
+          "category_id": 1,
+          "score": 0.9211934208869934
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            216.17611694335938,
+            356.7662353515625,
+            168.7718505859375,
+            235.429931640625
+          ],
+          "category_id": 1,
+          "score": 0.9211935997009277
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6989,
+      "file_name": "test_positive_6989.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/a499248d6b964f6cb78fdcdc178b4f0254314c509769068588046259763b5fd1.jpg",
+      "sha256": "e5bdf8cea98e896feb77b52d007528f6a6a7ad406c1734744ee8109ca4de78f6",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            57.0,
+            52.0,
+            60.0,
+            104.5
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            51.327327728271484,
+            52.2569465637207,
+            65.89630126953125,
+            104.68562316894531
+          ],
+          "category_id": 1,
+          "score": 0.9006385207176208
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            51.32732391357422,
+            52.2569465637207,
+            65.89631652832031,
+            104.68561935424805
+          ],
+          "category_id": 1,
+          "score": 0.9006385803222656
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            51.327327728271484,
+            52.2569465637207,
+            65.89630508422852,
+            104.68561935424805
+          ],
+          "category_id": 1,
+          "score": 0.9006385207176208
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6990,
+      "file_name": "test_positive_6990.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/88e4eeddd25346c957f67dbda6f1676e27eab9ac9bc367d3fd1bf03a1d3b01a0.jpg",
+      "sha256": "b0938eed21d2d35fa6c2216837795b14b4b10dc3616360a8061880a2745c3622",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            403.0,
+            343.0,
+            94.0,
+            137.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            398.23809814453125,
+            337.4074401855469,
+            102.56842041015625,
+            148.230712890625
+          ],
+          "category_id": 1,
+          "score": 0.9109070301055908
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            398.23809814453125,
+            337.4074401855469,
+            102.56838989257812,
+            148.23074340820312
+          ],
+          "category_id": 1,
+          "score": 0.9109071493148804
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            398.2381591796875,
+            337.4074401855469,
+            102.56838989257812,
+            148.23074340820312
+          ],
+          "category_id": 1,
+          "score": 0.9109071493148804
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6991,
+      "file_name": "test_positive_6991.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/57c744c9238b4b647814e4957fae998c36f9c18bbc1048e20f7809213fcb05c0.jpg",
+      "sha256": "b0ed6a7e6ea8b6c553b68d2ae15e168b67e9de16975357afaafc8573c9c566ef",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            82.0,
+            73.0,
+            158.5,
+            277.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            81.07209014892578,
+            67.35772705078125,
+            153.52114868164062,
+            282.73175048828125
+          ],
+          "category_id": 1,
+          "score": 0.9392777681350708
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            81.07206726074219,
+            67.35771179199219,
+            153.52117919921875,
+            282.7317657470703
+          ],
+          "category_id": 1,
+          "score": 0.939277708530426
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            81.07208251953125,
+            67.35771179199219,
+            153.52114868164062,
+            282.7317657470703
+          ],
+          "category_id": 1,
+          "score": 0.9392777681350708
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6992,
+      "file_name": "test_positive_6992.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/ea4cdfcba90bee48d880f2bceaf4f80e8d20765f78fec075ff5873e12b4679b4.jpg",
+      "sha256": "cb168693c6124df40514ca89129de1c675887e69eb793f406a35083a941de2d4",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            412.0,
+            372.0,
+            91.0,
+            134.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            404.6618347167969,
+            369.7913818359375,
+            98.42572021484375,
+            144.32196044921875
+          ],
+          "category_id": 1,
+          "score": 0.9088543653488159
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            404.6618347167969,
+            369.7913818359375,
+            98.42575073242188,
+            144.32196044921875
+          ],
+          "category_id": 1,
+          "score": 0.9088543653488159
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            404.6618347167969,
+            369.7913818359375,
+            98.42575073242188,
+            144.32196044921875
+          ],
+          "category_id": 1,
+          "score": 0.9088544845581055
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6993,
+      "file_name": "test_positive_6993.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/9b6280c17e522e81ef59900babc86152732aa9ca26bece7c6829ec88a69c466d.jpg",
+      "sha256": "bed08578bb3f80f758ca0606dbee993cd0c1387f3fdac11b9d86a084e93849c1",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            243.0,
+            194.0,
+            35.5,
+            54.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            241.309814453125,
+            192.04037475585938,
+            37.7742919921875,
+            55.013336181640625
+          ],
+          "category_id": 1,
+          "score": 0.8469539880752563
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            241.30984497070312,
+            192.04037475585938,
+            37.7742919921875,
+            55.013336181640625
+          ],
+          "category_id": 1,
+          "score": 0.846953809261322
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            241.30984497070312,
+            192.04037475585938,
+            37.7742919921875,
+            55.013336181640625
+          ],
+          "category_id": 1,
+          "score": 0.8469538688659668
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6994,
+      "file_name": "test_positive_6994.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/e85731331f61e8e05865c46995f64ab8896b970bff1f6d049b0a313c1373ebc0.jpg",
+      "sha256": "87e34ddb0dcca68e519fd69c5c6213f3c232269de3b35d6e1e25bbba33940b2b",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            288.0,
+            51.0,
+            57.0,
+            52.5
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            284.6726379394531,
+            49.43324279785156,
+            59.96795654296875,
+            63.05694580078125
+          ],
+          "category_id": 1,
+          "score": 0.9007198810577393
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            284.6726379394531,
+            49.43324279785156,
+            59.96795654296875,
+            63.05696105957031
+          ],
+          "category_id": 1,
+          "score": 0.9007200598716736
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            284.6726379394531,
+            49.43324279785156,
+            59.96795654296875,
+            63.05696105957031
+          ],
+          "category_id": 1,
+          "score": 0.900719940662384
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6995,
+      "file_name": "test_positive_6995.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/4dc4a3e3235cb31ec6a5c28e1219026133aca76d5a87ae1dc3f128e05a5c0521.jpg",
+      "sha256": "5fa703430611ad49bae496acb664f0aa3d1237845c7548851a6babe7bdbc3626",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            39.0,
+            116.0,
+            160.0,
+            109.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            32.85955047607422,
+            108.49623107910156,
+            172.07220458984375,
+            118.10598754882812
+          ],
+          "category_id": 1,
+          "score": 0.9157074689865112
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            32.85955810546875,
+            108.49624633789062,
+            172.07220458984375,
+            118.10595703125
+          ],
+          "category_id": 1,
+          "score": 0.9157075881958008
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            32.859535217285156,
+            108.49624633789062,
+            172.07222747802734,
+            118.10595703125
+          ],
+          "category_id": 1,
+          "score": 0.9157076478004456
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6996,
+      "file_name": "test_positive_6996.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/b5edad58117bd9320e4c8642163843105cd9ad9174f2bb6962f6a28971f097f9.jpg",
+      "sha256": "6d54ba2cbe4e93540f302d6cd6f7717a5ec52d55cea0958078f690fea0ce8c5e",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            43.0,
+            31.0,
+            552.5,
+            560.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            28.302490234375,
+            25.274566650390625,
+            587.9196166992188,
+            574.380859375
+          ],
+          "category_id": 1,
+          "score": 0.9414857625961304
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            28.302520751953125,
+            25.274566650390625,
+            587.9196472167969,
+            574.3808288574219
+          ],
+          "category_id": 1,
+          "score": 0.9414859414100647
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            28.302581787109375,
+            25.274566650390625,
+            587.9194641113281,
+            574.3808288574219
+          ],
+          "category_id": 1,
+          "score": 0.9414858818054199
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6997,
+      "file_name": "test_positive_6997.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/80ab59bbc05999a6ccefb9a1ed5382f8fdd10601e469efb5c5f0868ad906cd85.jpg",
+      "sha256": "796dc552b2c92f73e8c2cb2315275b2a9f09564e44b62b6804edc6331da8150a",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            157.0,
+            63.0,
+            112.5,
+            171.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            154.95663452148438,
+            61.385704040527344,
+            112.935791015625,
+            171.4034423828125
+          ],
+          "category_id": 1,
+          "score": 0.9278268218040466
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            154.95663452148438,
+            61.385711669921875,
+            112.935791015625,
+            171.4034423828125
+          ],
+          "category_id": 1,
+          "score": 0.9278267621994019
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            154.95663452148438,
+            61.385704040527344,
+            112.935791015625,
+            171.40345001220703
+          ],
+          "category_id": 1,
+          "score": 0.9278268218040466
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6998,
+      "file_name": "test_positive_6998.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/7296aeb5b2a820bb9f8548cca46c54b864f461749cd88646e05a074352129b11.jpg",
+      "sha256": "f66f15204477366f421684838adfdeb7f33e1c408367e24ec37938e25637a8ae",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            265.0,
+            403.0,
+            77.0,
+            126.0
+          ],
+          "iscrowd": 0
+        },
+        {
+          "category_id": 1,
+          "bbox": [
+            162.0,
+            309.0,
+            61.5,
+            98.5
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            264.57232666015625,
+            404.6912536621094,
+            75.82745361328125,
+            123.20016479492188
+          ],
+          "category_id": 1,
+          "score": 0.9163996577262878
+        },
+        {
+          "bbox": [
+            162.5576629638672,
+            314.1961364746094,
+            61.000579833984375,
+            94.29669189453125
+          ],
+          "category_id": 1,
+          "score": 0.8973283767700195
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            264.57232666015625,
+            404.69122314453125,
+            75.82742309570312,
+            123.2001953125
+          ],
+          "category_id": 1,
+          "score": 0.9163997769355774
+        },
+        {
+          "bbox": [
+            162.55767822265625,
+            314.19610595703125,
+            61.00056457519531,
+            94.29672241210938
+          ],
+          "category_id": 1,
+          "score": 0.8973283767700195
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            264.57232666015625,
+            404.69122314453125,
+            75.82742309570312,
+            123.2001953125
+          ],
+          "category_id": 1,
+          "score": 0.9163997173309326
+        },
+        {
+          "bbox": [
+            162.55767822265625,
+            314.1961364746094,
+            61.00056457519531,
+            94.29672241210938
+          ],
+          "category_id": 1,
+          "score": 0.8973283171653748
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 6999,
+      "file_name": "test_positive_6999.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/7c17c9b29a33ee77991903ae3a976c0e3a0b40b8a94b4e8bef56ffe690359143.jpg",
+      "sha256": "8096d90a67156bc21d87ff7f6c210258a152c6eeadf92b6158d90b5526233c65",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            125.0,
+            377.0,
+            100.0,
+            154.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            122.51011657714844,
+            377.26751708984375,
+            97.92434692382812,
+            156.081787109375
+          ],
+          "category_id": 1,
+          "score": 0.914104700088501
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            122.5101318359375,
+            377.2675476074219,
+            97.92431640625,
+            156.08169555664062
+          ],
+          "category_id": 1,
+          "score": 0.9141047596931458
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            122.5101318359375,
+            377.2675476074219,
+            97.92431640625,
+            156.08169555664062
+          ],
+          "category_id": 1,
+          "score": 0.914104700088501
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 7000,
+      "file_name": "test_positive_7000.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/7f574d5e7c3a9313dbccaffae1a5c0255449d7f9d8b1faeb076d286eee18f349.jpg",
+      "sha256": "eedb7aac3f8fea5e67f6afba23e67d68ea57ca69302f15514ecd6db07ab156df",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            351.0,
+            194.0,
+            254.0,
+            378.5
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            345.2093505859375,
+            191.34042358398438,
+            263.5936279296875,
+            389.7119445800781
+          ],
+          "category_id": 1,
+          "score": 0.9433342814445496
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            345.20928955078125,
+            191.3404083251953,
+            263.59368896484375,
+            389.7119598388672
+          ],
+          "category_id": 1,
+          "score": 0.9433344006538391
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            345.2093505859375,
+            191.34036254882812,
+            263.5936279296875,
+            389.7120056152344
+          ],
+          "category_id": 1,
+          "score": 0.9433344006538391
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 7001,
+      "file_name": "test_positive_7001.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/496814653dfc7da46c59258a7adcaf60116d6fb9e68ad46110f6546baa90f367.jpg",
+      "sha256": "83cb993e1918044fd9d1eea37b6724f30f07b5c18b9bc0309c27e0f55f4bac83",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            248.0,
+            79.0,
+            47.5,
+            51.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            244.36038208007812,
+            77.26670837402344,
+            51.77838134765625,
+            52.76106262207031
+          ],
+          "category_id": 1,
+          "score": 0.8970356583595276
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            244.36038208007812,
+            77.26670837402344,
+            51.77838134765625,
+            52.76106262207031
+          ],
+          "category_id": 1,
+          "score": 0.8970360159873962
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            244.36038208007812,
+            77.26671600341797,
+            51.77838134765625,
+            52.761070251464844
+          ],
+          "category_id": 1,
+          "score": 0.8970360159873962
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 7002,
+      "file_name": "test_positive_7002.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/e7c03950843397097b1c50c33b1265033d76d970ec054b77be1893f47972d52e.jpg",
+      "sha256": "487a054ee8d210c1bd507d371ddb5dc4b72995b67c17377f30f2922110087c15",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            140.0,
+            15.0,
+            407.5,
+            504.5
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            51.005889892578125,
+            25.39959716796875,
+            552.8984375,
+            519.8452758789062
+          ],
+          "category_id": 1,
+          "score": 0.9336113929748535
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            51.005950927734375,
+            25.399627685546875,
+            552.8983459472656,
+            519.8451232910156
+          ],
+          "category_id": 1,
+          "score": 0.9336114525794983
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            51.005950927734375,
+            25.39959716796875,
+            552.8983459472656,
+            519.8452758789062
+          ],
+          "category_id": 1,
+          "score": 0.9336113929748535
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 7003,
+      "file_name": "test_positive_7003.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/1e6675ac6d756bb961f43be537aee845128c07b359eb44ac665b6ac16ae36254.jpg",
+      "sha256": "9c829f7e3e38e73243065558bd218cf5ea7f1c1a179555d40f2eb6c7e3eb8596",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            246.0,
+            229.0,
+            60.0,
+            41.5
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            243.30970764160156,
+            226.49215698242188,
+            63.18769836425781,
+            44.3018798828125
+          ],
+          "category_id": 1,
+          "score": 0.888490617275238
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            243.30970764160156,
+            226.4921417236328,
+            63.18769836425781,
+            44.30189514160156
+          ],
+          "category_id": 1,
+          "score": 0.888490617275238
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            243.30970764160156,
+            226.49215698242188,
+            63.18769836425781,
+            44.3018798828125
+          ],
+          "category_id": 1,
+          "score": 0.888490617275238
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 7004,
+      "file_name": "test_positive_7004.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/099610099180dee6bb680f724e6d8af498f7a65d10e9a4c13ac0cd891339de20.jpg",
+      "sha256": "9708958e00c864a27684a13de5eebaecf19cd73e7cbe5b79f0c436ce5fc70b5a",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            297.0,
+            103.0,
+            24.5,
+            37.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            295.2069091796875,
+            100.99147033691406,
+            29.35748291015625,
+            42.33558654785156
+          ],
+          "category_id": 1,
+          "score": 0.8688977360725403
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            295.2068786621094,
+            100.99147033691406,
+            29.357513427734375,
+            42.33558654785156
+          ],
+          "category_id": 1,
+          "score": 0.8688979148864746
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            295.2069091796875,
+            100.99147033691406,
+            29.357513427734375,
+            42.33558654785156
+          ],
+          "category_id": 1,
+          "score": 0.8688977956771851
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 7005,
+      "file_name": "test_positive_7005.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/e435ec207f13ed0492da0894b0544aa1e1854380bd8b7633d30de095640e60a2.jpg",
+      "sha256": "88655f99d439275bf01e927fee00a3ea63e451b8ab23b05fe3350ac1ed9e0616",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            326.0,
+            146.0,
+            277.0,
+            434.0
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            313.13726806640625,
+            132.71983337402344,
+            300.73260498046875,
+            486.0416259765625
+          ],
+          "category_id": 1,
+          "score": 0.9077463746070862
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            313.13726806640625,
+            132.7198028564453,
+            300.73260498046875,
+            486.0416717529297
+          ],
+          "category_id": 1,
+          "score": 0.9077464938163757
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            313.13714599609375,
+            132.71983337402344,
+            300.73272705078125,
+            486.04164123535156
+          ],
+          "category_id": 1,
+          "score": 0.9077463746070862
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 7006,
+      "file_name": "test_positive_7006.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/421ae8e86cce730b87a14e98b4c0845a4f7c26d991fa0234c3315a2937659444.jpg",
+      "sha256": "86bc95d04adc0f2a5782daffe7be47b556465a81ecd7f93881b87dcfa73f842a",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            86.0,
+            29.0,
+            474.0,
+            478.5
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            80.01156616210938,
+            44.063201904296875,
+            482.2311096191406,
+            466.30670166015625
+          ],
+          "category_id": 1,
+          "score": 0.9386554956436157
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            80.01155090332031,
+            44.06317138671875,
+            482.23118591308594,
+            466.30670166015625
+          ],
+          "category_id": 1,
+          "score": 0.9386555552482605
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            80.01155090332031,
+            44.063201904296875,
+            482.23118591308594,
+            466.30670166015625
+          ],
+          "category_id": 1,
+          "score": 0.9386556148529053
+        }
+      ]
+    },
+    {
+      "kind": "positive",
+      "split": "test",
+      "image_id": 7007,
+      "file_name": "test_positive_7007.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/2dedc0798c1fdc05914808fb7ff19aaff5542467b8967932f16ab098e4d603c6.jpg",
+      "sha256": "f56baa7b4987b01471be99e9cf733fced049d1605582071335419b5687da237c",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [
+        {
+          "category_id": 1,
+          "bbox": [
+            134.0,
+            89.0,
+            101.5,
+            67.5
+          ],
+          "iscrowd": 0
+        }
+      ],
+      "expected_checkpoint_detections": [
+        {
+          "bbox": [
+            134.32339477539062,
+            89.26658630371094,
+            103.48208618164062,
+            72.11195373535156
+          ],
+          "category_id": 1,
+          "score": 0.6102046966552734
+        }
+      ],
+      "expected_onnx_detections": [
+        {
+          "bbox": [
+            134.3234100341797,
+            89.26659393310547,
+            103.48207092285156,
+            72.1119155883789
+          ],
+          "category_id": 1,
+          "score": 0.6102091670036316
+        }
+      ],
+      "expected_mac_coreml_detections": [
+        {
+          "bbox": [
+            134.32342529296875,
+            89.2666015625,
+            103.4820556640625,
+            72.11192321777344
+          ],
+          "category_id": 1,
+          "score": 0.6102086901664734
+        }
+      ]
+    },
+    {
+      "kind": "negative",
+      "split": "test",
+      "image_id": 7028,
+      "file_name": "test_negative_7028.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/68b545091995a5297ca5e18548ed086a7ba41710d2b70afa68002014d922a6eb.jpg",
+      "sha256": "760dc0039124b3dcf8e29435d02b44d678a6ef9a85a14a8299038f52419874f0",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [],
+      "expected_checkpoint_detections": [],
+      "expected_onnx_detections": [],
+      "expected_mac_coreml_detections": []
+    },
+    {
+      "kind": "negative",
+      "split": "test",
+      "image_id": 7030,
+      "file_name": "test_negative_7030.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/ecc4918e16f1bbf551b0537d0e260cf6f4d5e2e51b2da96d3de517092d1396ee.jpg",
+      "sha256": "7aa06453a78339fb33c007a90074373f689927a99d9a113f353822107c9064ad",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [],
+      "expected_checkpoint_detections": [],
+      "expected_onnx_detections": [],
+      "expected_mac_coreml_detections": []
+    },
+    {
+      "kind": "negative",
+      "split": "test",
+      "image_id": 7032,
+      "file_name": "test_negative_7032.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/c75266097b82dc64a51f0b26eed6ab9642b8bc3a8cb09b91ec15f657d75cb7dd.jpg",
+      "sha256": "64df5f57283c2bb16cfc1420574b3e640cf00cd24b0527bec3781579d01764fc",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [],
+      "expected_checkpoint_detections": [],
+      "expected_onnx_detections": [],
+      "expected_mac_coreml_detections": []
+    },
+    {
+      "kind": "negative",
+      "split": "test",
+      "image_id": 7046,
+      "file_name": "test_negative_7046.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/53a72a92bc9900025764a9cd4b5bb5c69219cef580f502daae47cdb6444a141f.jpg",
+      "sha256": "b8aad461de54c3e9db8f7e09b8c96af7e12dd6591149f794ba6f1aa0059716eb",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [],
+      "expected_checkpoint_detections": [],
+      "expected_onnx_detections": [],
+      "expected_mac_coreml_detections": []
+    },
+    {
+      "kind": "negative",
+      "split": "test",
+      "image_id": 7054,
+      "file_name": "test_negative_7054.jpg",
+      "source_path": "data/composed/basketball-v0.1/coco/images/test/57cdad2e681eb90a589ede7d1ed3f5d8d70ba20872921e7297ed48622f5daa4f.jpg",
+      "sha256": "e7f9755c4b57f98fb52048076f4dd03f3ed97107baa6d9d66ed318ff8c9433f5",
+      "width": 640,
+      "height": 640,
+      "ground_truth": [],
+      "expected_checkpoint_detections": [],
+      "expected_onnx_detections": [],
+      "expected_mac_coreml_detections": []
+    }
+  ]
+}
