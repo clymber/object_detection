@@ -18,9 +18,9 @@ SELECTED_RUNS = {
 
 def sample_manifest_name(model: str) -> str:
     """
-    Keep the frozen Small manifest name and use distinct names for other models.
+    Use the same media/model/manifest filename pattern for every detector.
     """
-    return "sample_manifest" if model == "rfdetr_small" else f"sample_manifest_{model}"
+    return f"test_images_{model}_manifest"
 
 
 def file_hash(path: Path) -> str:

@@ -7,13 +7,15 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Separates frozen benchmark inputs, personal photos and video playback.
+/// Separates frozen images, bundled development clips and personal media.
 nonisolated enum MediaInputSource: String, CaseIterable, Identifiable {
     case testImages = "Test images"
+    case testVideos = "Test videos"
     case photo = "Photo"
     case video = "Video"
 
     var id: String { rawValue }
+    var isVideo: Bool { self == .testVideos || self == .video }
 }
 
 /// Identifies the selected media type without relying on a filename extension.
@@ -22,7 +24,7 @@ nonisolated enum ImportedMediaKind: Sendable {
     case video
 }
 
-/// Owns a copied provider file after its temporary transfer URL expires.
+/// Identifies an app-owned cache copy or a read-only bundled resource.
 nonisolated struct ImportedMediaFile: Transferable, Sendable, Equatable {
     let url: URL
     var displayName: String { url.lastPathComponent }
@@ -41,6 +43,14 @@ nonisolated struct ImportedMediaFile: Transferable, Sendable, Equatable {
 nonisolated struct ImportedVideo: Sendable, Equatable {
     let file: ImportedMediaFile
     let durationSeconds: Double
+    let sourceID: String?
+
+    /// Keeps a stable catalog identity for bundled clips and URL identity for imports.
+    init(file: ImportedMediaFile, durationSeconds: Double, sourceID: String? = nil) {
+        self.file = file
+        self.durationSeconds = durationSeconds
+        self.sourceID = sourceID
+    }
 }
 
 /// Copies security-scoped/provider files and reads metadata off the main actor.
@@ -77,7 +87,9 @@ actor MediaImportWorker {
     }
 
     /// Rejects unsupported or audio-only inputs before offering video playback.
-    func video(_ file: ImportedMediaFile) async throws -> ImportedVideo {
+    func video(
+        _ file: ImportedMediaFile, sourceID: String? = nil
+    ) async throws -> ImportedVideo {
         try Task.checkCancellation()
         let asset = AVURLAsset(url: file.url)
         let playable = try await asset.load(.isPlayable)
@@ -87,7 +99,7 @@ actor MediaImportWorker {
             throw DetectorError.invalidImage("The selected video cannot be played.")
         }
         try Task.checkCancellation()
-        return ImportedVideo(file: file, durationSeconds: duration)
+        return ImportedVideo(file: file, durationSeconds: duration, sourceID: sourceID)
     }
 
     /// Removes only a UUID folder inside this worker's private import cache.
@@ -134,6 +146,13 @@ final class MediaImportSession {
         begin(kind: kind) { try await worker.copy(url) }
     }
 
+    /// Validates a bundled clip without copying it or acquiring cache ownership.
+    func selectTestVideo(_ sample: BundledVideo, bundle: Bundle = .main) {
+        begin(kind: .video, sourceID: sample.sourceID) {
+            ImportedMediaFile(url: try sample.resourceURL(in: bundle))
+        }
+    }
+
     /// Presents picker errors while retaining an already selected input.
     func report(_ error: Error) { errorMessage = error.localizedDescription }
 
@@ -156,7 +175,7 @@ final class MediaImportSession {
 
     /// Rejects late transfer/metadata results and cleans up cancelled copies.
     private func begin(
-        kind: ImportedMediaKind,
+        kind: ImportedMediaKind, sourceID: String? = nil,
         operation: @escaping @Sendable () async throws -> ImportedMediaFile
     ) {
         reset()
@@ -169,7 +188,8 @@ final class MediaImportSession {
                 let file = try await operation()
                 imported = file
                 try Task.checkCancellation()
-                let video = kind == .video ? try await worker.video(file) : nil
+                let video = kind == .video
+                    ? try await worker.video(file, sourceID: sourceID) : nil
                 try Task.checkCancellation()
                 guard let self, self.generation == request else {
                     await worker.remove(file)

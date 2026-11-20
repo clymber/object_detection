@@ -10,7 +10,7 @@ nonisolated enum DetectorModel: String, CaseIterable, Sendable, Identifiable {
     var id: String { rawValue }
 
     var sampleManifestName: String {
-        self == .rfdetrSmall ? "sample_manifest" : "sample_manifest_\(rawValue)"
+        "test_images_\(rawValue)_manifest"
     }
 
     var displayName: String {

@@ -91,9 +91,52 @@ struct MediaImportSmokeTests {
         try await waitForRemoval(newest.url)
         try await waitForRemoval(copiedVideo.url)
         precondition(FileManager.default.fileExists(atPath: uprightURL.path))
+        try await testBundledSelection(
+            directory: directory, movie: videoURL, worker: worker)
         print(
             "Media import: upright/rotated photos, inference handoff, video metadata, invalid inputs, cancellation and cache ownership passed."
         )
+    }
+
+    /// Retains bundled bytes across selection changes, cancellation and import cleanup.
+    private static func testBundledSelection(
+        directory: URL, movie: URL, worker: MediaImportWorker
+    ) async throws {
+        let bundleURL = directory.appendingPathComponent("videos.bundle")
+        try FileManager.default.createDirectory(
+            at: bundleURL, withIntermediateDirectories: true)
+        let info = try PropertyListSerialization.data(
+            fromPropertyList: ["CFBundleIdentifier": "test.bundled.videos"],
+            format: .xml, options: 0)
+        try info.write(to: bundleURL.appendingPathComponent("Info.plist"))
+        let bundledURL = bundleURL.appendingPathComponent(
+            BundledVideo.nba.rawValue + ".mp4")
+        try Data(contentsOf: movie).write(to: bundledURL)
+        let bundle = Bundle(url: bundleURL)!
+        let session = MediaImportSession(worker: worker)
+        session.selectTestVideo(.nba, bundle: bundle)
+        try await waitForIdle(session)
+        precondition(
+            session.video?.file.url.standardizedFileURL.path
+                == bundledURL.standardizedFileURL.path,
+            "Bundled selection failed: \(session.errorMessage ?? "URL mismatch")")
+        precondition(session.video?.sourceID == BundledVideo.nba.sourceID)
+        precondition(session.video!.durationSeconds > 0)
+        session.selectTestVideo(.dribbling, bundle: bundle)
+        try await waitForIdle(session)
+        precondition(session.video == nil && session.errorMessage != nil)
+        session.selectTestVideo(.nba, bundle: bundle)
+        session.cancel()
+        session.importFile(movie, as: .video)
+        try await waitForIdle(session)
+        precondition(session.video?.sourceID == nil)
+        precondition(session.video?.file.url != bundledURL)
+        let imported = session.video!.file
+        session.reset()
+        try await waitForRemoval(imported.url)
+        let bundledBytes = try Data(contentsOf: bundledURL)
+        let originalBytes = try Data(contentsOf: movie)
+        precondition(bundledBytes == originalBytes)
     }
 
     /// Encodes an asymmetric image with independent EXIF orientation metadata.

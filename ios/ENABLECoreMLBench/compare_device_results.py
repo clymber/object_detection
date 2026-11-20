@@ -11,14 +11,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MANIFEST = ROOT / (
-    "ios/ENABLECoreMLBench/ENABLECoreMLBench/Resources/TestImages/sample_manifest.json"
+MANIFEST_DIRECTORY = ROOT / (
+    "ios/ENABLECoreMLBench/ENABLECoreMLBench/Resources/TestImages"
 )
 MODEL_MANIFESTS = {
-    "rfdetr_small": DEFAULT_MANIFEST,
-    "rfdetr_nano": DEFAULT_MANIFEST.with_name("sample_manifest_rfdetr_nano.json"),
-    "yolox_nano": DEFAULT_MANIFEST.with_name("sample_manifest_yolox_nano.json"),
+    model: MANIFEST_DIRECTORY / f"test_images_{model}_manifest.json"
+    for model in ("rfdetr_small", "rfdetr_nano", "yolox_nano")
 }
+DEFAULT_MANIFEST = MODEL_MANIFESTS["rfdetr_small"]
 REFERENCE_KEYS = {
     "pytorch": "expected_checkpoint_detections",
     "onnx": "expected_onnx_detections",

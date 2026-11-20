@@ -18,10 +18,11 @@ xcuserdata/
 *.xcuserstate
 DerivedData/
 
-# Locally staged iOS model packages and dataset sample images.
+# Locally staged iOS models, sample images and development videos.
 /ios/ENABLECoreMLBench/ENABLECoreMLBench/Models/*.mlpackage/
 /ios/ENABLECoreMLBench/ENABLECoreMLBench/Resources/TestImages/*.jpg
 /ios/ENABLECoreMLBench/ENABLECoreMLBench/Resources/TestImages/*.png
+/ios/ENABLECoreMLBench/ENABLECoreMLBench/Resources/TestVideos/*.mp4
 /ios/results/
 
 # Share portable folder settings, but not machine-specific VS Code state.

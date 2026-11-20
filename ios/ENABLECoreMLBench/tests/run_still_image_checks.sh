@@ -9,6 +9,7 @@ mkdir -p "$still_build/tmp" outputs/cache/swift_module_cache
 still_sources=(
   ios/ENABLECoreMLBench/ENABLECoreMLBench/Detection/*.swift
   ios/ENABLECoreMLBench/ENABLECoreMLBench/Benchmark/StillImage*.swift
+  ios/ENABLECoreMLBench/ENABLECoreMLBench/Video/BundledVideo.swift
 )
 still_flags=(
   -parse-as-library -swift-version 5 -default-isolation MainActor

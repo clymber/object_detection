@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var inputSource = MediaInputSource.testImages
     @State private var selectedModel = DetectorModel.rfdetrSmall
     @State private var selectedSample = BundledSample.testPositive6988
+    @State private var selectedTestVideo = BundledVideo.nba
     @State private var photoSelection: PhotosPickerItem?
     @State private var videoSelection: PhotosPickerItem?
     @State private var showingFiles = false
@@ -32,7 +33,7 @@ struct ContentView: View {
             Form {
                 inputSection
                 modelSection
-                if inputSource == .video {
+                if inputSource.isVideo {
                     videoSection
                     videoDetectionSection
                     VideoMetricsView(
@@ -64,13 +65,13 @@ struct ContentView: View {
         .task { loadSelectedImage() }
         .fileImporter(
             isPresented: $showingFiles,
-            allowedContentTypes: inputSource == .video ? [.movie] : [.image]
+            allowedContentTypes: inputSource.isVideo ? [.movie] : [.image]
         ) {
             result in
             switch result {
             case .success(let url):
                 prepareForImport()
-                media.importFile(url, as: inputSource == .video ? .video : .photo)
+                media.importFile(url, as: inputSource.isVideo ? .video : .photo)
             case .failure(let error):
                 if (error as NSError).code != NSUserCancelledError {
                     media.report(error)
@@ -86,14 +87,22 @@ struct ContentView: View {
             photoSelection = nil
             videoSelection = nil
             loadSelectedImage()
+            if inputSource == .testVideos { media.selectTestVideo(selectedTestVideo) }
         }
         .onChange(of: selectedSample) { _, sample in
             if inputSource == .testImages { session.load(sample) }
         }
+        .onChange(of: selectedTestVideo) { _, sample in
+            guard inputSource == .testVideos else { return }
+            prepareForImport()
+            media.selectTestVideo(sample)
+        }
         .onChange(of: selectedModel) { _, _ in
             loadSelectedImage()
             batch.reset()
-            videoSession.select(inputSource == .video ? media.video?.file.url : nil)
+            videoSession.select(
+                inputSource.isVideo ? media.video?.file.url : nil,
+                sourceID: media.video?.sourceID)
         }
         .onChange(of: photoSelection) { _, item in
             guard let item else { return }
@@ -112,8 +121,9 @@ struct ContentView: View {
         }
         .onChange(of: media.video?.file.url) { _, url in
             stopPlayback()
-            videoSession.select(inputSource == .video ? url : nil)
-            if inputSource == .video, let url { player = AVPlayer(url: url) }
+            videoSession.select(
+                inputSource.isVideo ? url : nil, sourceID: media.video?.sourceID)
+            if inputSource.isVideo, let url { player = AVPlayer(url: url) }
         }
         .onDisappear {
             session.stop()
@@ -129,7 +139,7 @@ struct ContentView: View {
                 videoSession.stop()
                 media.cancel()
                 player?.pause()
-            } else if inputSource != .video && session.image == nil && !isBusy {
+            } else if !inputSource.isVideo && session.image == nil && !isBusy {
                 loadSelectedImage()
             }
         }
@@ -156,6 +166,18 @@ struct ContentView: View {
                 .accessibilityIdentifier("samplePicker")
                 if session.image == nil && !isBusy {
                     Button("Load image") { session.load(selectedSample) }
+                }
+            case .testVideos:
+                Picker("Test video", selection: $selectedTestVideo) {
+                    ForEach(BundledVideo.allCases) { sample in
+                        Text(sample.title).tag(sample)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(isBusy)
+                .accessibilityIdentifier("testVideoPicker")
+                if media.video == nil && !isBusy {
+                    Button("Load video") { media.selectTestVideo(selectedTestVideo) }
                 }
             case .photo:
                 PhotosPicker(
@@ -197,6 +219,8 @@ struct ContentView: View {
                 Text(
                     "\(BundledSample.allCases.count) frozen test images for parity comparison."
                 )
+            case .testVideos:
+                Text("Bundled development clips. Choose a detector, then tap Start.")
             case .photo:
                 Text("Detect basketballs in a photo from Photos or Files.")
             case .video:
@@ -346,7 +370,7 @@ struct ContentView: View {
             } else {
                 session.clear(message: "Choose a photo, then tap Start.")
             }
-        case .video: session.clear()
+        case .testVideos, .video: session.clear()
         }
     }
 

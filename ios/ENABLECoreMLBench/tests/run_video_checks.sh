@@ -21,7 +21,7 @@ video_flags=(
 video_tests=("$@")
 if [[ $# -eq 0 ]]; then
   video_tests=(
-    VideoFrameContract VideoFrameReader VideoFrameConversion
+    VideoFrameContract VideoFrameReader VideoFrameConversion BundledVideo
     VideoFrameDetection VideoFrameResult VideoFrameTiming
     OfflineVideoCoverage OfflineVideoMetrics OfflineVideoRunner OfflineVideoSession
   )

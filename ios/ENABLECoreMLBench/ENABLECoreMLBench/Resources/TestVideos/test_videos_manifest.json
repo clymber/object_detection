@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "scope": "development_test_videos",
+  "samples": [
+    {
+      "id": "bundled-video:basketball-nba_clip",
+      "file_name": "basketball-nba_clip.mp4",
+      "sha256": "718a363e60769b0baf0ec48f7c57c8c258076cdbaec0ef7031c34f871b3ee40e",
+      "source_path": "data/sources/downloads/basketball_videos/basketball-nba_clip.mp4",
+      "source_sha256": "718a363e60769b0baf0ec48f7c57c8c258076cdbaec0ef7031c34f871b3ee40e",
+      "resource_path": "data/sources/downloads/basketball_videos/basketball-nba_clip.mp4",
+      "source_video": {
+        "codec": "h264",
+        "width": 1280,
+        "height": 720,
+        "time_base": "1/60000",
+        "average_frame_rate": "60/1",
+        "rotation_degrees": [],
+        "duration_seconds": 9.25,
+        "frame_count": 555,
+        "first_pts": 0,
+        "last_pts": 554000,
+        "pts_sha256": "5dc0871f4703ea150cd37e7e839a6ac14c858df7a18bdc27bb7fa77633c11add"
+      },
+      "video": {
+        "codec": "h264",
+        "width": 1280,
+        "height": 720,
+        "time_base": "1/60000",
+        "average_frame_rate": "60/1",
+        "rotation_degrees": [],
+        "duration_seconds": 9.25,
+        "frame_count": 555,
+        "first_pts": 0,
+        "last_pts": 554000,
+        "pts_sha256": "5dc0871f4703ea150cd37e7e839a6ac14c858df7a18bdc27bb7fa77633c11add"
+      },
+      "conversion": null
+    },
+    {
+      "id": "bundled-video:basketball-uhd_4096_2160_30fps",
+      "file_name": "basketball-uhd_4096_2160_30fps.mp4",
+      "sha256": "4f8c3554a5dd01ab12c4b98cb6f18205e13b9a47203e80a57086fdad0f633bcf",
+      "source_path": "data/sources/downloads/basketball_videos/basketball-uhd_4096_2160_30fps.mp4",
+      "source_sha256": "4f8c3554a5dd01ab12c4b98cb6f18205e13b9a47203e80a57086fdad0f633bcf",
+      "resource_path": "data/sources/downloads/basketball_videos/basketball-uhd_4096_2160_30fps.mp4",
+      "source_video": {
+        "codec": "h264",
+        "width": 4096,
+        "height": 2160,
+        "time_base": "1/30",
+        "average_frame_rate": "30/1",
+        "rotation_degrees": [],
+        "duration_seconds": 7.871667,
+        "frame_count": 236,
+        "first_pts": 0,
+        "last_pts": 235,
+        "pts_sha256": "b8a2b45579d773afd7292e5008d7b62a50e69af9d69c7c0b219b5e8fd29c5246"
+      },
+      "video": {
+        "codec": "h264",
+        "width": 4096,
+        "height": 2160,
+        "time_base": "1/30",
+        "average_frame_rate": "30/1",
+        "rotation_degrees": [],
+        "duration_seconds": 7.871667,
+        "frame_count": 236,
+        "first_pts": 0,
+        "last_pts": 235,
+        "pts_sha256": "b8a2b45579d773afd7292e5008d7b62a50e69af9d69c7c0b219b5e8fd29c5246"
+      },
+      "conversion": null
+    },
+    {
+      "id": "bundled-video:basketball_dribbling_h264",
+      "file_name": "basketball_dribbling_h264.mp4",
+      "sha256": "11ca01f291ca346a65a5e4552ee88525f5ca6a07f43b7502fbd8a73fd3045184",
+      "source_path": "data/sources/downloads/basketball_videos/basketball_dribbling.webm",
+      "source_sha256": "1a592d92d8359729b679067977b295526fa376a9b15f92d3d7be3671941aa023",
+      "resource_path": "data/processed/ios_benchmark/videos/basketball_dribbling_h264.mp4",
+      "source_video": {
+        "codec": "vp8",
+        "width": 960,
+        "height": 540,
+        "time_base": "1/1000",
+        "average_frame_rate": "2997/100",
+        "rotation_degrees": [],
+        "duration_seconds": 58.658,
+        "frame_count": 1758,
+        "first_pts": 0,
+        "last_pts": 58625,
+        "pts_sha256": "b48c78377616de012c6f58f9935b4a0b15c205e4777d3dec646ac578eb787a3b"
+      },
+      "video": {
+        "codec": "h264",
+        "width": 960,
+        "height": 540,
+        "time_base": "1/1000",
+        "average_frame_rate": "879000/29329",
+        "rotation_degrees": [],
+        "duration_seconds": 58.658,
+        "frame_count": 1758,
+        "first_pts": 0,
+        "last_pts": 58625,
+        "pts_sha256": "b48c78377616de012c6f58f9935b4a0b15c205e4777d3dec646ac578eb787a3b"
+      },
+      "conversion": {
+        "source_sha256": "1a592d92d8359729b679067977b295526fa376a9b15f92d3d7be3671941aa023",
+        "sha256": "11ca01f291ca346a65a5e4552ee88525f5ca6a07f43b7502fbd8a73fd3045184",
+        "encoding_options": [
+          "-map",
+          "0:v:0",
+          "-an",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "medium",
+          "-crf",
+          "18",
+          "-pix_fmt",
+          "yuv420p",
+          "-bf",
+          "0",
+          "-fps_mode",
+          "passthrough",
+          "-enc_time_base",
+          "demux",
+          "-video_track_timescale",
+          "1000",
+          "-movflags",
+          "+faststart"
+        ],
+        "ffmpeg_version": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+        "audio": "removed",
+        "presentation_times": "unchanged"
+      }
+    }
+  ]
+}
