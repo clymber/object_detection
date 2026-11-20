@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var session = StillImageSession()
     @State private var batch = StillImageBatchSession()
     @State private var media = MediaImportSession()
+    @State private var videoSession = OfflineVideoSession()
     @State private var inputSource = MediaInputSource.testImages
     @State private var selectedModel = DetectorModel.rfdetrSmall
     @State private var selectedSample = BundledSample.testPositive6988
@@ -18,7 +19,9 @@ struct ContentView: View {
     @State private var showingFiles = false
     @State private var player: AVPlayer?
 
-    private var isBusy: Bool { session.isBusy || batch.isBusy || media.isBusy }
+    private var isBusy: Bool {
+        session.isBusy || batch.isBusy || media.isBusy || videoSession.isBusy
+    }
     private var previewTitle: String {
         inputSource == .photo
             ? (media.photo?.displayName ?? "Imported photo") : selectedSample.title
@@ -28,10 +31,11 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 inputSection
+                modelSection
                 if inputSource == .video {
                     videoSection
+                    videoDetectionSection
                 } else {
-                    modelSection
                     Section {
                         FramePreview(
                             image: session.image, detections: session.detections,
@@ -70,6 +74,7 @@ struct ContentView: View {
         }
         .onChange(of: inputSource) { _, _ in
             stopPlayback()
+            videoSession.select(nil)
             session.clear()
             batch.reset()
             media.reset()
@@ -83,6 +88,7 @@ struct ContentView: View {
         .onChange(of: selectedModel) { _, _ in
             loadSelectedImage()
             batch.reset()
+            videoSession.select(inputSource == .video ? media.video?.file.url : nil)
         }
         .onChange(of: photoSelection) { _, item in
             guard let item else { return }
@@ -101,11 +107,13 @@ struct ContentView: View {
         }
         .onChange(of: media.video?.file.url) { _, url in
             stopPlayback()
+            videoSession.select(inputSource == .video ? url : nil)
             if inputSource == .video, let url { player = AVPlayer(url: url) }
         }
         .onDisappear {
             session.stop()
             batch.stop()
+            videoSession.stop()
             media.cancel()
             player?.pause()
         }
@@ -113,6 +121,7 @@ struct ContentView: View {
             if phase != .active {
                 session.stop()
                 batch.stop()
+                videoSession.stop()
                 media.cancel()
                 player?.pause()
             } else if inputSource != .video && session.image == nil && !isBusy {
@@ -186,7 +195,7 @@ struct ContentView: View {
             case .photo:
                 Text("Detect basketballs in a photo from Photos or Files.")
             case .video:
-                Text("Preview a video from Photos or Files.")
+                Text("Choose a video from Photos or Files, then tap Start.")
             }
         }
     }
@@ -214,6 +223,7 @@ struct ContentView: View {
         Section("Video preview") {
             if let player, let video = media.video {
                 VideoPlayer(player: player).frame(height: 280)
+                    .disabled(videoSession.isBusy)
                     .accessibilityIdentifier("videoPreview")
                 Text(video.file.displayName)
                 LabeledContent(
@@ -225,6 +235,44 @@ struct ContentView: View {
                 ContentUnavailableView("Choose a video", systemImage: "video")
                     .frame(height: 280)
             }
+        }
+    }
+
+    private var videoDetectionSection: some View {
+        Section {
+            LabeledContent("Status", value: videoSession.status.rawValue)
+                .foregroundStyle(videoSession.status == .error ? Color.red : .primary)
+                .accessibilityIdentifier("videoDetectionStatus")
+            Text(videoSession.message).font(.footnote).foregroundStyle(.secondary)
+                .accessibilityIdentifier("videoDetectionMessage")
+            if videoSession.isBusy {
+                ProgressView { Text(videoSession.progressText) }
+                    .accessibilityIdentifier("videoDetectionProgress")
+            } else if videoSession.latestReport != nil {
+                Text(videoSession.progressText)
+                    .accessibilityIdentifier("videoDetectionProgress")
+            }
+            HStack {
+                Button("Start", systemImage: "play.fill") {
+                    player?.pause()
+                    videoSession.start(model: selectedModel)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    !videoSession.canStart || session.isBusy
+                        || batch.isBusy || media.isBusy
+                )
+                .accessibilityIdentifier("startVideoDetection")
+                Spacer()
+                Button("Stop", systemImage: "stop.fill") { videoSession.stop() }
+                    .buttonStyle(.bordered)
+                    .disabled(!videoSession.isBusy || videoSession.status == .stopping)
+                    .accessibilityIdentifier("stopVideoDetection")
+            }
+        } header: {
+            Text("Video detection")
+        } footer: {
+            Text("Processes every frame from the beginning at the detector’s speed.")
         }
     }
 
@@ -301,6 +349,7 @@ struct ContentView: View {
     private func prepareForImport() {
         session.clear(message: "Choose a photo, then tap Start.")
         batch.reset()
+        videoSession.select(nil)
         stopPlayback()
     }
 

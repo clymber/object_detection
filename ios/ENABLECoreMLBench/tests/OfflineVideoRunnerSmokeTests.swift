@@ -34,7 +34,10 @@ struct OfflineVideoRunnerSmokeTests {
         try await testDecodeFailure(video, directory: directory)
         try await testFrozenCoverage(video)
         try await testCoverageGuard(video)
-        print("Offline video: 16 sequencing, outcome and coverage checks passed.")
+        try await testSessionProgress(video)
+        try await testSessionStop(video)
+        try await testSessionInputError(video)
+        print("Offline video: 19 sequencing, coverage and session checks passed.")
     }
 
     /// Processes frames exceeding 200 ms without age-based dropping or overlap.
@@ -458,6 +461,75 @@ struct OfflineVideoRunnerSmokeTests {
         precondition(snapshot.issue?.stage == .reconciliation)
         precondition(snapshot.coverage.invalidOutcomeIndices == [0])
         precondition(!snapshot.coverage.isFullyAccounted)
+    }
+
+    /// Publishes live progress from real decoding and retains mixed frame outcomes.
+    private static func testSessionProgress(_ video: URL) async throws {
+        let gate = OfflineGate(request: 2)
+        let backend = OfflineFixtureDetector(failFrame: 2, gate: gate)
+        let session = OfflineVideoSession(worker: makeRunner(backend))
+        session.select(video, sourceID: "session-progress")
+        session.start(model: .rfdetrNano)
+        precondition(session.status == .preparing && !session.canStart)
+        await gate.waitForRequest()
+        precondition(session.status == .running && session.processedFrames == 1)
+        await gate.finish()
+        try await waitForSession(session)
+        precondition(session.status == .completedWithFailures && session.canStart)
+        precondition(session.processedFrames == 4 && session.completedFrames == 3)
+        precondition(session.failedFrames == 1 && session.unfinishedFrames == 0)
+        let snapshot = session.latestReport!
+        precondition(
+            snapshot.model == .rfdetrNano && snapshot.sourceID == "session-progress")
+        precondition(snapshot.coverage.isFullyAccounted)
+        precondition(snapshot.outcomes[1].result!.detections.isEmpty)
+    }
+
+    /// Keeps Stop pending during an active prediction, then permits a fresh run.
+    private static func testSessionStop(_ video: URL) async throws {
+        let gate = OfflineGate()
+        let backend = OfflineFixtureDetector(gate: gate)
+        let session = OfflineVideoSession(worker: makeRunner(backend))
+        session.select(video)
+        session.start(model: .rfdetrSmall)
+        await gate.waitForRequest()
+        session.stop()
+        session.start(model: .yoloxNano)
+        precondition(session.status == .stopping && !session.canStart)
+        await gate.finish()
+        try await waitForSession(session)
+        precondition(session.status == .cancelled && session.processedFrames == 0)
+        precondition(session.unfinishedFrames == 1 && session.canStart)
+        let cancelled = session.latestReport!
+        precondition(cancelled.status == .cancelled && cancelled.model == .rfdetrSmall)
+        precondition(cancelled.outcomes[0].sourceFrameIndex == 0)
+        session.start(model: .yoloxNano)
+        try await waitForSession(session)
+        precondition(session.status == .completed && session.completedFrames == 4)
+        precondition(session.latestReport!.id != cancelled.id)
+        precondition(session.latestReport!.model == .yoloxNano)
+        precondition(session.latestReport!.coverage.isFullyProcessed)
+    }
+
+    /// Surfaces a real reader startup failure without leaving controls busy.
+    private static func testSessionInputError(_ video: URL) async throws {
+        let session = OfflineVideoSession(worker: makeRunner(OfflineFixtureDetector()))
+        session.select(video.appendingPathExtension("missing"))
+        session.start(model: .rfdetrSmall)
+        try await waitForSession(session)
+        precondition(session.status == .error && session.canStart)
+        precondition(session.processedFrames == 0 && !session.message.isEmpty)
+        precondition(session.latestReport?.status == .failed)
+        precondition(session.latestReport?.issue?.stage == .sourceOpening)
+    }
+
+    /// Bounds session completion checks while allowing actor handoffs to progress.
+    private static func waitForSession(_ session: OfflineVideoSession) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while session.isBusy && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        precondition(!session.isBusy, "Offline video session did not finish")
     }
 
     /// Requires a retained value snapshot after both normal and exceptional exits.
