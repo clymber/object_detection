@@ -82,11 +82,15 @@ nonisolated struct VideoFrame {
     let metadata: VideoFrameMetadata
     let pixelBuffer: CVPixelBuffer
 
+    /// Host time when decoded pixels became available, before conversion/queuing.
+    let readyMilliseconds: Double
+
     /// Derives dimensions from the retained buffer to prevent mismatched metadata.
     init(
         sourceID: String, sourceFrameIndex: Int, presentationTime: CMTime,
         preferredTransform: CGAffineTransform = .identity, loopIndex: Int = 0,
-        pixelBuffer: CVPixelBuffer
+        pixelBuffer: CVPixelBuffer,
+        readyMilliseconds: Double = InferenceClock.nowMilliseconds()
     ) throws {
         metadata = try VideoFrameMetadata(
             sourceID: sourceID, sourceFrameIndex: sourceFrameIndex,
@@ -95,5 +99,6 @@ nonisolated struct VideoFrame {
             height: CVPixelBufferGetHeight(pixelBuffer),
             preferredTransform: preferredTransform, loopIndex: loopIndex)
         self.pixelBuffer = pixelBuffer
+        self.readyMilliseconds = readyMilliseconds
     }
 }

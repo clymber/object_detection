@@ -45,6 +45,11 @@ struct VideoFrameReaderSmokeTests {
             precondition(frame.width == 64 && frame.height == 32)
             precondition(frame.preferredTransform == transform)
             precondition(abs(Int(snapshot!.blue) - (16 + 64 * index)) <= 8)
+            precondition(snapshot!.upright.image.width == 32)
+            precondition(snapshot!.upright.image.height == 64)
+            precondition(snapshot!.upright.metadata == frame)
+            precondition(snapshot!.upright.readyMilliseconds
+                         <= InferenceClock.nowMilliseconds())
         }
         let eof = try await reader.nextFrame { $0.metadata }
         let repeatedEOF = try await reader.nextFrame { $0.metadata }
@@ -316,6 +321,7 @@ struct VideoFrameReaderSmokeTests {
 nonisolated private struct FrameSnapshot: Sendable {
     let metadata: VideoFrameMetadata
     let blue: UInt8
+    let upright: UprightVideoFrame
 }
 
 /// Represents a downstream processing failure unrelated to video decoding.
@@ -327,6 +333,7 @@ nonisolated private enum FixtureFailure: Error { case encoding(String) }
 /// Inspects real decoded pixels inside the reader worker, away from the UI thread.
 nonisolated private func inspectFrame(_ frame: VideoFrame) throws -> FrameSnapshot {
     precondition(!Thread.isMainThread)
+    let upright = try VideoFrameConverter.convert(frame)
     precondition(CVPixelBufferGetPixelFormatType(frame.pixelBuffer)
                  == kCVPixelFormatType_32BGRA)
     precondition(CVPixelBufferLockBaseAddress(frame.pixelBuffer, .readOnly)
@@ -334,5 +341,5 @@ nonisolated private func inspectFrame(_ frame: VideoFrame) throws -> FrameSnapsh
     defer { CVPixelBufferUnlockBaseAddress(frame.pixelBuffer, .readOnly) }
     let blue = CVPixelBufferGetBaseAddress(frame.pixelBuffer)!
         .assumingMemoryBound(to: UInt8.self)[0]
-    return FrameSnapshot(metadata: frame.metadata, blue: blue)
+    return FrameSnapshot(metadata: frame.metadata, blue: blue, upright: upright)
 }

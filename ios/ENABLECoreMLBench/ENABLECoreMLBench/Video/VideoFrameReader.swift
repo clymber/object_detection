@@ -174,6 +174,7 @@ actor VideoFrameReader {
         }
         guard let reader, let output else { throw VideoReaderError.notReading }
         while let sample = output.copyNextSampleBuffer() {
+            let ready = InferenceClock.nowMilliseconds()
             try Task.checkCancellation()
             // Marker-only samples carry no frame and must not advance its index.
             if CMSampleBufferGetNumSamples(sample) == 0 { continue }
@@ -190,7 +191,7 @@ actor VideoFrameReader {
                     sourceID: sourceID, sourceFrameIndex: framesRead,
                     presentationTime: CMSampleBufferGetPresentationTimeStamp(sample),
                     preferredTransform: preferredTransform, loopIndex: loopIndex,
-                    pixelBuffer: pixels)
+                    pixelBuffer: pixels, readyMilliseconds: ready)
             } catch {
                 throw fail(.invalidFrame(
                     frameIndex: framesRead, reason: String(describing: error)))

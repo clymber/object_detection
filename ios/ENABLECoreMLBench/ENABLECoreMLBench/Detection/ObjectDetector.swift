@@ -14,4 +14,14 @@ nonisolated protocol ObjectDetector: Actor {
     /// candidate order for ties. Model adapters own filtering/NMS; this interface
     /// applies no additional thresholds, clipping or coordinate conversions.
     func detect(in image: CGImage) async throws -> [Detection]
+
+    /// Reports backend timing when the adapter can measure its exact boundaries.
+    func detectMeasured(in image: CGImage) async throws -> DetectorPrediction
+}
+
+extension ObjectDetector {
+    /// Keeps existing adapters usable and marks unavailable model timing explicitly.
+    func detectMeasured(in image: CGImage) async throws -> DetectorPrediction {
+        DetectorPrediction(detections: try await detect(in: image), modelTiming: nil)
+    }
 }

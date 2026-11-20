@@ -44,10 +44,19 @@ actor DetectorEngine: ObjectDetector {
 
     /// Rejects stale in-flight results if the selection changes during inference.
     func detect(in image: CGImage) async throws -> [Detection] {
+        do {
+            return try await detectMeasured(in: image).detections
+        } catch let failure as MeasuredPredictionFailure {
+            throw failure.underlying
+        }
+    }
+
+    /// Preserves adapter timing and the same generation/cancellation guarantees.
+    func detectMeasured(in image: CGImage) async throws -> DetectorPrediction {
         try Task.checkCancellation()
         guard let detector else { throw DetectorError.noModelSelected }
         let request = generation
-        let results = try await detector.detect(in: image)
+        let results = try await detector.detectMeasured(in: image)
         try Task.checkCancellation()
         guard request == generation else { throw DetectorError.selectionSuperseded }
         return results
