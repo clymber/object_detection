@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check the video frame contract without loading models or decoding a movie.
+# Check frame contracts and real video decoding without loading models.
 set -euo pipefail
 
 video_workspace=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -15,10 +15,12 @@ video_flags=(
   -module-cache-path outputs/cache/swift_module_cache
 )
 
-xcrun swiftc "${video_flags[@]}" "${video_sources[@]}" \
-  ios/ENABLECoreMLBench/tests/VideoFrameContractSmokeTests.swift \
-  -o "$video_build/VideoFrameContract"
-"$video_build/VideoFrameContract"
+for video_test in VideoFrameContract VideoFrameReader; do
+  xcrun swiftc "${video_flags[@]}" "${video_sources[@]}" \
+    "ios/ENABLECoreMLBench/tests/${video_test}SmokeTests.swift" \
+    -o "$video_build/$video_test"
+  "$video_build/$video_test"
+done
 
 video_sdk=$(xcrun --sdk iphoneos --show-sdk-path)
 xcrun swiftc "${video_flags[@]}" -typecheck -target arm64-apple-ios26.6 \
