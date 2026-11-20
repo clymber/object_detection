@@ -22,7 +22,8 @@ video_tests=("$@")
 if [[ $# -eq 0 ]]; then
   video_tests=(
     VideoFrameContract VideoFrameReader VideoFrameConversion
-    VideoFrameDetection VideoFrameResult VideoFrameTiming OfflineVideoRunner
+    VideoFrameDetection VideoFrameResult VideoFrameTiming
+    OfflineVideoCoverage OfflineVideoRunner
   )
 fi
 for video_test in "${video_tests[@]}"; do

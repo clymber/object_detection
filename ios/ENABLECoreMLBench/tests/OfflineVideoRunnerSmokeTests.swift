@@ -32,7 +32,9 @@ struct OfflineVideoRunnerSmokeTests {
         try await testPrefixCancellation(video, explicit: true)
         try await testConsumerCancellation(video)
         try await testDecodeFailure(video, directory: directory)
-        print("Offline video: 14 sequencing, outcome and interruption checks passed.")
+        try await testFrozenCoverage(video)
+        try await testCoverageGuard(video)
+        print("Offline video: 16 sequencing, outcome and coverage checks passed.")
     }
 
     /// Processes frames exceeding 200 ms without age-based dropping or overlap.
@@ -72,6 +74,8 @@ struct OfflineVideoRunnerSmokeTests {
         precondition(report.outcomes[2].result!.status == .failed)
         precondition(report.unfinishedFrames == 0 && report.issue == nil)
         precondition(report.endedMilliseconds! >= report.startedMilliseconds)
+        precondition(report.reachedEndOfSource && report.coverage.isFullyAccounted)
+        precondition(!report.coverage.isFullyProcessed)
     }
 
     /// Preserves sparse source indices and stops after the last selected frame.
@@ -90,6 +94,7 @@ struct OfflineVideoRunnerSmokeTests {
         precondition(received == [0, 2])
         let previous = await report(runner)
         precondition(previous.selectedFrameIndices == [0, 2])
+        precondition(!previous.reachedEndOfSource && previous.coverage.isFullyProcessed)
         let empty = try await runner.run(
             video, sourceID: "empty", model: .rfdetrSmall,
             selection: .indices([]), consume: { _ in
@@ -344,6 +349,8 @@ struct OfflineVideoRunnerSmokeTests {
         precondition(snapshot.outcomes[1].issue?.stage == .inference)
         precondition(snapshot.summary.completedFrames == 1)
         precondition(snapshot.unfinishedFrames == 1)
+        precondition(snapshot.coverage.sourceRemainderUnknown)
+        precondition(!snapshot.coverage.isFullyAccounted)
         precondition(prefix.status == .running && prefix.outcomes.count == 1)
         let delivered = await collector.records
         precondition(delivered.map { $0.metadata.sourceFrameIndex } == [0])
@@ -404,6 +411,53 @@ struct OfflineVideoRunnerSmokeTests {
             precondition(snapshot.issue?.stage == .sourceOpening)
             precondition(snapshot.outcomes.isEmpty)
         }
+    }
+
+    /// Uses independent exact frame references for an unpaced frozen selection.
+    private static func testFrozenCoverage(_ video: URL) async throws {
+        let plan = try OfflineVideoCoveragePlan(
+            sourceID: "frozen-video-fixture", loopIndex: 1, frames: [0, 2, 3].map {
+                OfflineVideoFrameReference(sourceFrameIndex: $0,
+                    presentationTime: CMTime(value: timestamps[$0], timescale: 30000))
+            })
+        let runner = makeRunner(OfflineFixtureDetector())
+        _ = try await runner.run(
+            video, sourceID: plan.sourceID, model: .rfdetrSmall,
+            selection: plan.selection, loopIndex: plan.loopIndex, consume: { _ in })
+        let snapshot = await report(runner)
+        let coverage = snapshot.coverage(using: plan)
+        precondition(coverage.basis == .referenceSequence)
+        precondition(coverage.isFullyAccounted && coverage.isFullyProcessed)
+        precondition(coverage.expectedFrameCount == 3)
+        precondition(coverage.observedFrameCount == 3)
+        precondition(coverage.timestampMismatchIndices.isEmpty)
+    }
+
+    /// Rejects a malformed converter's incorrect source identity at completion.
+    private static func testCoverageGuard(_ video: URL) async throws {
+        let runner = makeRunner(OfflineFixtureDetector(), converter: { raw in
+            let frame = try VideoFrameConverter.convert(raw)
+            let metadata = try VideoFrameMetadata(
+                sourceID: "wrong-source",
+                sourceFrameIndex: frame.metadata.sourceFrameIndex,
+                presentationTime: frame.metadata.presentationTime,
+                width: frame.metadata.width, height: frame.metadata.height)
+            return UprightVideoFrame(
+                metadata: metadata, image: frame.image,
+                bufferToImage: frame.bufferToImage,
+                readyMilliseconds: frame.readyMilliseconds)
+        })
+        do {
+            _ = try await runner.run(
+                video, sourceID: "coverage-guard", model: .rfdetrSmall,
+                selection: .indices([0]), consume: { _ in })
+            preconditionFailure("Incorrect identity passed the coverage gate")
+        } catch OfflineVideoError.coverageMismatch {}
+        let snapshot = await report(runner)
+        precondition(snapshot.status == .failed)
+        precondition(snapshot.issue?.stage == .reconciliation)
+        precondition(snapshot.coverage.invalidOutcomeIndices == [0])
+        precondition(!snapshot.coverage.isFullyAccounted)
     }
 
     /// Requires a retained value snapshot after both normal and exceptional exits.

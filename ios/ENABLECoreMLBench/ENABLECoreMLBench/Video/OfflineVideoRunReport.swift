@@ -4,6 +4,7 @@ import Foundation
 /// Identifies the stage at which a frame or run stopped.
 nonisolated enum OfflineVideoStage: String, Sendable {
     case modelLoading, sourceOpening, decoding, conversion, inference, consumption
+    case reconciliation
 }
 
 /// Keeps a stage and diagnostic without retaining a backend error or image buffer.
@@ -80,6 +81,7 @@ nonisolated struct OfflineVideoRunReport: Sendable {
     private(set) var endedMilliseconds: Double?
     private(set) var status = Status.running
     private(set) var decodedFrames = 0
+    private(set) var reachedEndOfSource = false
     private(set) var completedFrames = 0
     private(set) var failedFrames = 0
     private(set) var unfinishedFrames = 0
@@ -91,6 +93,13 @@ nonisolated struct OfflineVideoRunReport: Sendable {
             decodedFrames: decodedFrames,
             processedFrames: completedFrames + failedFrames,
             completedFrames: completedFrames, failedFrames: failedFrames)
+    }
+
+    var coverage: OfflineVideoCoverage { OfflineVideoCoverage(report: self) }
+
+    /// Checks a complete frozen selection, with exact source timestamps when available.
+    func coverage(using plan: OfflineVideoCoveragePlan) -> OfflineVideoCoverage {
+        OfflineVideoCoverage(report: self, plan: plan)
     }
 
     /// Binds a fresh report to the validated selection before loading any model.
@@ -113,6 +122,9 @@ nonisolated struct OfflineVideoRunReport: Sendable {
 
     /// Includes a decoded frame even if its conversion/callback was interrupted.
     mutating func recordDecodedFrames(_ count: Int) { decodedFrames = count }
+
+    /// Records actual reader EOF instead of guessing source length from a partial run.
+    mutating func recordEndOfSource() { reachedEndOfSource = true }
 
     /// Finalizes the snapshot before the runner returns or rethrows its error.
     mutating func finish(status: Status, issue: OfflineVideoIssue? = nil) {

@@ -20,6 +20,7 @@ nonisolated enum OfflineVideoError: Error, Equatable, LocalizedError {
     case alreadyRunning
     case invalidSelection
     case missingSelectedFrame(Int)
+    case coverageMismatch
 
     var errorDescription: String? {
         switch self {
@@ -28,6 +29,8 @@ nonisolated enum OfflineVideoError: Error, Equatable, LocalizedError {
             return "Frame indices must be nonnegative, unique and increasing."
         case .missingSelectedFrame(let index):
             return "Video ended before selected source frame \(index)."
+        case .coverageMismatch:
+            return "Offline outcomes do not reconcile with the selected frames."
         }
     }
 }
@@ -106,6 +109,8 @@ actor OfflineVideoRunner {
                         metadata: frame.metadata,
                         readyMilliseconds: frame.readyMilliseconds)
                     stage = .inference
+                } else if next == nil {
+                    latestReport?.recordEndOfSource()
                 }
                 try checkRequest(request)
                 guard let next else {
@@ -128,6 +133,12 @@ actor OfflineVideoRunner {
             }
             await reader.cancel()
             try checkRequest(request)
+            stage = .reconciliation
+            let coverage = latestReport!.coverage
+            try checkRequest(request)
+            guard coverage.hasCompleteOutcomeSet else {
+                throw OfflineVideoError.coverageMismatch
+            }
             latestReport?.finish(status: .completed)
             return latestReport!.summary
         } catch {
@@ -160,6 +171,8 @@ actor OfflineVideoRunner {
             }
             let decodedCount = await reader.framesRead
             latestReport?.recordDecodedFrames(decodedCount)
+            let readerState = await reader.state
+            if readerState == .completed { latestReport?.recordEndOfSource() }
             await reader.cancel()
             latestReport?.finish(status: cancelled ? .cancelled : .failed, issue: issue)
             if cancelled {
