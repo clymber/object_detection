@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check frame contracts and real video decoding without loading models.
+# Check video decoding, offline sessions and numerical metrics without real models.
 set -euo pipefail
 
 video_workspace=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -23,7 +23,7 @@ if [[ $# -eq 0 ]]; then
   video_tests=(
     VideoFrameContract VideoFrameReader VideoFrameConversion
     VideoFrameDetection VideoFrameResult VideoFrameTiming
-    OfflineVideoCoverage OfflineVideoRunner OfflineVideoSession
+    OfflineVideoCoverage OfflineVideoMetrics OfflineVideoRunner OfflineVideoSession
   )
 fi
 for video_test in "${video_tests[@]}"; do

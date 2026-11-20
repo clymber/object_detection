@@ -38,6 +38,7 @@ nonisolated enum OfflineVideoError: Error, Equatable, LocalizedError {
 /// Exposes worker-owned processing and reports to the UI session and test workers.
 nonisolated protocol OfflineVideoProcessing: Actor {
     var latestReport: OfflineVideoRunReport? { get }
+    var latestMetrics: OfflineVideoRunMetrics? { get }
 
     /// Delivers ordered outcomes while retaining the final report on every exit.
     func run(
@@ -46,6 +47,13 @@ nonisolated protocol OfflineVideoProcessing: Actor {
         trackID: CMPersistentTrackID?,
         consume: @escaping @Sendable (VideoFrameResult) async throws -> Void
     ) async throws -> OfflineVideoRunSummary
+}
+
+extension OfflineVideoProcessing {
+    /// Aggregates retained results on the worker actor after its run has ended.
+    var latestMetrics: OfflineVideoRunMetrics? {
+        latestReport.map { OfflineVideoRunMetrics(report: $0) }
+    }
 }
 
 /// Processes selected frames serially, without a playback clock or age-based skips.

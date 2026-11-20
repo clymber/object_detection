@@ -39,6 +39,9 @@ struct OfflineVideoSessionSmokeTests {
         precondition(session.status == .running && session.processedFrames == 1)
         precondition(session.completedFrames == 1 && session.failedFrames == 0)
         precondition(session.progressText == "1 frame processed")
+        precondition(session.metrics.frameLatency.meanMilliseconds == 1)
+        precondition(session.metrics.modelLatency.meanMilliseconds == nil)
+        precondition(session.metrics.runElapsedMilliseconds == nil)
         await worker.finish(.completed)
         try await wait { !session.isBusy }
         precondition(session.status == .completed && session.canStart)
@@ -47,6 +50,11 @@ struct OfflineVideoSessionSmokeTests {
         precondition(
             session.latestReport?.outcomes[0].result?.detections.isEmpty == true)
         precondition(session.latestReport?.coverage.isFullyProcessed == true)
+        precondition(session.metrics.frameLatency.p95Milliseconds == 1)
+        precondition(session.metrics.runElapsedMilliseconds != nil)
+        precondition(session.metrics.completedRunFramesPerSecond != nil)
+        precondition(session.metrics.inputFramesPerSecond
+                     == session.metrics.completedRunFramesPerSecond)
     }
 
     /// Keeps per-frame inference failures distinct from a clean completed run.
@@ -65,6 +73,7 @@ struct OfflineVideoSessionSmokeTests {
         precondition(session.message.contains("1 failed"))
         precondition(session.latestReport?.coverage.isFullyAccounted == true)
         precondition(session.latestReport?.coverage.isFullyProcessed == false)
+        precondition(session.metrics.frameLatency.sampleCount == 1)
     }
 
     /// Blocks restart while stopping and retains the accepted prefix/unfinished row.
@@ -84,13 +93,18 @@ struct OfflineVideoSessionSmokeTests {
             preconditionFailure("A callback published after Stop")
         } catch is CancellationError {}
         precondition(session.processedFrames == 1)
+        precondition(session.metrics.frameLatency.sampleCount == 1)
         await worker.finish(.cancelled, unfinishedIndex: 1)
         try await wait { !session.isBusy }
         precondition(session.status == .cancelled && session.canStart)
         precondition(session.processedFrames == 1 && session.unfinishedFrames == 1)
         precondition(session.latestReport?.status == .cancelled)
+        precondition(session.metrics.frameLatency.sampleCount == 1)
+        precondition(session.metrics.decodedFrames == 2)
         session.start(model: .yoloxNano)
         precondition(session.processedFrames == 0 && session.latestReport == nil)
+        precondition(session.metrics.frameLatency.meanMilliseconds == nil)
+        precondition(session.metrics.runElapsedMilliseconds == nil)
         try await wait { await worker.runCount == 2 }
         try await worker.emit(index: 0)
         await worker.finish(.completed)
@@ -134,6 +148,8 @@ struct OfflineVideoSessionSmokeTests {
         try await wait { !session.isBusy }
         precondition(session.status == .ready && session.sourceURL == replacement)
         precondition(session.latestReport == nil && session.processedFrames == 0)
+        precondition(session.metrics.frameLatency.meanMilliseconds == nil)
+        precondition(session.metrics.runElapsedMilliseconds == nil)
         session.select(nil)
         precondition(!session.canStart && session.sourceURL == nil)
     }
@@ -150,6 +166,8 @@ struct OfflineVideoSessionSmokeTests {
         precondition(session.status == .error && session.canStart)
         precondition(session.message.contains("Controlled model failure"))
         precondition(session.latestReport?.issue?.stage == .modelLoading)
+        precondition(session.metrics.frameLatency.meanMilliseconds == nil)
+        precondition(session.metrics.runElapsedMilliseconds != nil)
         session.start(model: .rfdetrNano)
         precondition(session.latestReport == nil && session.processedFrames == 0)
         try await wait { await worker.runCount == 2 }

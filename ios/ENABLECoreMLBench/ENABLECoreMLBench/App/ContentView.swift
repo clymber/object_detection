@@ -35,6 +35,11 @@ struct ContentView: View {
                 if inputSource == .video {
                     videoSection
                     videoDetectionSection
+                    VideoMetricsView(
+                        metrics: videoSession.metrics,
+                        completedFrames: videoSession.completedFrames,
+                        failedFrames: videoSession.failedFrames,
+                        unfinishedFrames: videoSession.unfinishedFrames)
                 } else {
                     Section {
                         FramePreview(

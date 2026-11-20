@@ -24,6 +24,7 @@ final class OfflineVideoSession {
     private(set) var failedFrames = 0
     private(set) var unfinishedFrames = 0
     private(set) var latestReport: OfflineVideoRunReport?
+    private(set) var metrics = OfflineVideoRunMetrics()
 
     @ObservationIgnored private let worker: any OfflineVideoProcessing
     @ObservationIgnored private var task: Task<Void, Never>?
@@ -90,7 +91,9 @@ final class OfflineVideoSession {
                 failure = error
             }
             let report = await worker.latestReport
-            self?.finish(report: report, error: failure, request: request)
+            let metrics = await worker.latestMetrics
+            self?.finish(
+                report: report, metrics: metrics, error: failure, request: request)
         }
     }
 
@@ -113,13 +116,15 @@ final class OfflineVideoSession {
         } else {
             failedFrames += 1
         }
+        metrics.record(result)
         status = .running
         message = "Processing every video frame in source order…"
     }
 
     /// Retains partial reports and prevents an old run from replacing a new input.
     private func finish(
-        report: OfflineVideoRunReport?, error: (any Error)?, request: UInt64
+        report: OfflineVideoRunReport?, metrics: OfflineVideoRunMetrics?,
+        error: (any Error)?, request: UInt64
     ) {
         guard activeRequest == request else { return }
         task = nil
@@ -129,6 +134,7 @@ final class OfflineVideoSession {
             return
         }
         latestReport = report
+        if let metrics { self.metrics = metrics }
         if let report {
             completedFrames = report.completedFrames
             failedFrames = report.failedFrames
@@ -163,6 +169,7 @@ final class OfflineVideoSession {
         failedFrames = 0
         unfinishedFrames = 0
         latestReport = nil
+        metrics = OfflineVideoRunMetrics()
     }
 
     /// Presents the currently selected input after old work has fully stopped.

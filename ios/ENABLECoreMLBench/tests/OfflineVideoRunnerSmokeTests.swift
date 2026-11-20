@@ -473,6 +473,9 @@ struct OfflineVideoRunnerSmokeTests {
         precondition(session.status == .preparing && !session.canStart)
         await gate.waitForRequest()
         precondition(session.status == .running && session.processedFrames == 1)
+        precondition(session.metrics.frameLatency.sampleCount == 1)
+        precondition(session.metrics.frameLatency.meanMilliseconds! > 0)
+        precondition(session.metrics.runElapsedMilliseconds == nil)
         await gate.finish()
         try await waitForSession(session)
         precondition(session.status == .completedWithFailures && session.canStart)
@@ -483,6 +486,14 @@ struct OfflineVideoRunnerSmokeTests {
             snapshot.model == .rfdetrNano && snapshot.sourceID == "session-progress")
         precondition(snapshot.coverage.isFullyAccounted)
         precondition(snapshot.outcomes[1].result!.detections.isEmpty)
+        precondition(session.metrics.frameLatency.sampleCount == 3)
+        precondition(session.metrics.frameLatency.p95Milliseconds != nil)
+        precondition(session.metrics.modelLatency.meanMilliseconds == nil)
+        let runMilliseconds = snapshot.endedMilliseconds! - snapshot.startedMilliseconds
+        precondition(session.metrics.runElapsedMilliseconds == runMilliseconds)
+        precondition(session.metrics.inputFramesPerSecond == 4000 / runMilliseconds)
+        precondition(
+            session.metrics.completedRunFramesPerSecond == 3000 / runMilliseconds)
     }
 
     /// Keeps Stop pending during an active prediction, then permits a fresh run.
@@ -503,12 +514,15 @@ struct OfflineVideoRunnerSmokeTests {
         let cancelled = session.latestReport!
         precondition(cancelled.status == .cancelled && cancelled.model == .rfdetrSmall)
         precondition(cancelled.outcomes[0].sourceFrameIndex == 0)
+        precondition(session.metrics.frameLatency.sampleCount == 0)
+        precondition(session.metrics.completedRunFramesPerSecond == 0)
         session.start(model: .yoloxNano)
         try await waitForSession(session)
         precondition(session.status == .completed && session.completedFrames == 4)
         precondition(session.latestReport!.id != cancelled.id)
         precondition(session.latestReport!.model == .yoloxNano)
         precondition(session.latestReport!.coverage.isFullyProcessed)
+        precondition(session.metrics.frameLatency.sampleCount == 4)
     }
 
     /// Surfaces a real reader startup failure without leaving controls busy.
@@ -521,6 +535,9 @@ struct OfflineVideoRunnerSmokeTests {
         precondition(session.processedFrames == 0 && !session.message.isEmpty)
         precondition(session.latestReport?.status == .failed)
         precondition(session.latestReport?.issue?.stage == .sourceOpening)
+        precondition(session.metrics.runElapsedMilliseconds != nil)
+        precondition(session.metrics.inputFramesPerSecond == 0)
+        precondition(session.metrics.completedRunFramesPerSecond == 0)
     }
 
     /// Bounds session completion checks while allowing actor handoffs to progress.
