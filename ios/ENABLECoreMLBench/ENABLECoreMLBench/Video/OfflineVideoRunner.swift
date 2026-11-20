@@ -7,7 +7,7 @@ nonisolated enum VideoFrameSelection: Sendable {
     case indices([Int])
 }
 
-/// Counts decoded inputs and attempted selected frames for a normally finished run.
+/// Counts decoded inputs and terminal selected-frame attempts, excluding unfinished.
 nonisolated struct OfflineVideoRunSummary: Equatable, Sendable {
     let decodedFrames: Int
     let processedFrames: Int
@@ -35,22 +35,29 @@ nonisolated enum OfflineVideoError: Error, Equatable, LocalizedError {
 /// Processes selected frames serially, without a playback clock or age-based skips.
 actor OfflineVideoRunner {
     typealias Consumer = @Sendable (VideoFrameResult) async throws -> Void
+    typealias Converter = @Sendable (VideoFrame) throws -> UprightVideoFrame
 
     private let engine: DetectorEngine
     private let detector: VideoFrameDetector
+    private let converter: Converter
     private var activeReader: VideoFrameReader?
     private var generation: UInt64 = 0
     private(set) var isRunning = false
+    private(set) var latestReport: OfflineVideoRunReport?
 
-    /// Owns model selection and permits an injected engine for controlled checks.
-    init(engine: DetectorEngine = DetectorEngine()) {
+    /// Permits engine/conversion injection while preserving the real reader pipeline.
+    init(
+        engine: DetectorEngine = DetectorEngine(),
+        converter: @escaping Converter = { try VideoFrameConverter.convert($0) }
+    ) {
         self.engine = engine
         detector = VideoFrameDetector(detector: engine)
+        self.converter = converter
     }
 
     /// Loads once, then awaits detection and consumption before reading another frame.
     /// The consumer receives success/empty/failure records and owns publication time.
-    /// Cancellation and input/consumer errors throw; partial accounting is separate.
+    /// Cancellation/input/consumer errors throw after finalizing latestReport.
     func run(
         _ url: URL, sourceID: String, model: DetectorModel,
         selection: VideoFrameSelection = .all, loopIndex: Int = 0,
@@ -59,11 +66,17 @@ actor OfflineVideoRunner {
         guard !isRunning else { throw OfflineVideoError.alreadyRunning }
         let indices = try validatedIndices(selection)
         let wanted = indices.map { Set($0) }
+        let convert = converter
         isRunning = true
         generation &+= 1
         let request = generation
         let reader = VideoFrameReader()
         activeReader = reader
+        latestReport = OfflineVideoRunReport(
+            sourceID: sourceID, model: model, loopIndex: loopIndex, indices: indices)
+        var stage = OfflineVideoStage.modelLoading
+        var activeFrame: VideoFrameReadInfo?
+        var decoded = 0
         defer {
             activeReader = nil
             isRunning = false
@@ -73,20 +86,26 @@ actor OfflineVideoRunner {
             // Loading/compilation completes before source-frame readiness is measured.
             try await engine.selectModel(model)
             try checkRequest(request)
+            stage = .sourceOpening
             try await reader.open(
                 url, sourceID: sourceID, loopIndex: loopIndex, trackID: trackID)
             try checkRequest(request)
-            var decoded = 0
             var processed = 0
-            var completed = 0
-            var failed = 0
             while indices == nil || processed < indices!.count {
+                stage = .decoding
                 try checkRequest(request)
                 let next = try await reader.nextFrame { frame -> SelectedFrame in
                     if let wanted, !wanted.contains(frame.metadata.sourceFrameIndex) {
                         return .unselected
                     }
-                    return .selected(try VideoFrameConverter.convert(frame))
+                    return .selected(try convert(frame))
+                }
+                // Retain admission before observing cancellation after an actor hop.
+                if case .selected(let frame) = next {
+                    activeFrame = VideoFrameReadInfo(
+                        metadata: frame.metadata,
+                        readyMilliseconds: frame.readyMilliseconds)
+                    stage = .inference
                 }
                 try checkRequest(request)
                 guard let next else {
@@ -96,22 +115,54 @@ actor OfflineVideoRunner {
                     break
                 }
                 decoded += 1
+                latestReport?.recordDecodedFrames(decoded)
                 guard case .selected(let frame) = next else { continue }
                 let result = try await detector.process(frame)
                 try checkRequest(request)
                 processed += 1
-                if result.status == .completed { completed += 1 } else { failed += 1 }
+                latestReport?.append(OfflineFrameOutcome(result: result))
+                activeFrame = nil
+                stage = .consumption
                 try await consume(result)
                 try checkRequest(request)
             }
             await reader.cancel()
             try checkRequest(request)
-            return OfflineVideoRunSummary(
-                decodedFrames: decoded, processedFrames: processed,
-                completedFrames: completed, failedFrames: failed)
+            latestReport?.finish(status: .completed)
+            return latestReport!.summary
         } catch {
+            let cancelled = error is CancellationError || Task.isCancelled
+                || request != generation
+            // The reader preserves metadata when cancellation hides a callback result.
+            if activeFrame == nil, stage == .decoding,
+                let info = await reader.lastFrameInfo,
+                info.metadata.sourceFrameIndex >= decoded,
+                wanted == nil || wanted!.contains(info.metadata.sourceFrameIndex)
+            {
+                activeFrame = info
+                stage = .conversion
+            }
+            let reported: any Error = cancelled ? CancellationError() : error
+            let issue = OfflineVideoIssue(stage: stage, error: reported)
+            if let activeFrame {
+                latestReport?.append(OfflineFrameOutcome(
+                    sourceFrameIndex: activeFrame.metadata.sourceFrameIndex,
+                    metadata: activeFrame.metadata,
+                    readyMilliseconds: activeFrame.readyMilliseconds,
+                    cancelled: cancelled, issue: issue))
+            } else if !cancelled, stage == .decoding,
+                let index = failedSourceIndex(error),
+                wanted == nil || wanted!.contains(index)
+            {
+                latestReport?.append(OfflineFrameOutcome(
+                    sourceFrameIndex: index, metadata: nil, readyMilliseconds: nil,
+                    cancelled: false, issue: issue))
+            }
+            let decodedCount = await reader.framesRead
+            latestReport?.recordDecodedFrames(decodedCount)
             await reader.cancel()
-            if error is CancellationError || Task.isCancelled || request != generation {
+            latestReport?.finish(status: cancelled ? .cancelled : .failed, issue: issue)
+            if cancelled {
                 throw CancellationError()
             }
             throw error
@@ -145,5 +196,15 @@ actor OfflineVideoRunner {
     private func checkRequest(_ request: UInt64) throws {
         try Task.checkCancellation()
         guard request == generation else { throw CancellationError() }
+    }
+
+    /// Uses explicit source indices from reader errors, never a guessed FPS timestamp.
+    private func failedSourceIndex(_ error: any Error) -> Int? {
+        switch error {
+        case VideoReaderError.decodeFailed(let index, _),
+             VideoReaderError.invalidFrame(let index, _),
+             OfflineVideoError.missingSelectedFrame(let index): return index
+        default: return nil
+        }
     }
 }

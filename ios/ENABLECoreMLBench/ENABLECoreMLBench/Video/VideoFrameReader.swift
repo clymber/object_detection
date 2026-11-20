@@ -4,6 +4,12 @@ import CoreMedia
 import CoreVideo
 import Foundation
 
+/// Describes the latest decoded frame even if its processing callback was cancelled.
+nonisolated struct VideoFrameReadInfo: Sendable {
+    let metadata: VideoFrameMetadata
+    let readyMilliseconds: Double
+}
+
 /// Reports reader failures separately from clean end-of-file and cancellation.
 nonisolated enum VideoReaderError: Error, Equatable, LocalizedError {
     case invalidInput(String)
@@ -42,6 +48,7 @@ actor VideoFrameReader {
     private(set) var failure: VideoReaderError?
     private(set) var selectedTrackID: CMPersistentTrackID?
     private(set) var framesRead = 0
+    private(set) var lastFrameInfo: VideoFrameReadInfo?
 
     private var reader: AVAssetReader?
     private var output: AVAssetReaderTrackOutput?
@@ -65,6 +72,7 @@ actor VideoFrameReader {
         selectedTrackID = nil
         framesRead = 0
         lastPresentationTime = nil
+        lastFrameInfo = nil
         do {
             try Task.checkCancellation()
             guard url.isFileURL else {
@@ -204,6 +212,8 @@ actor VideoFrameReader {
                     reason: "Presentation timestamps regressed."))
             }
             lastPresentationTime = frame.metadata.presentationTime
+            lastFrameInfo = VideoFrameReadInfo(
+                metadata: frame.metadata, readyMilliseconds: frame.readyMilliseconds)
             framesRead += 1
             return frame
         }

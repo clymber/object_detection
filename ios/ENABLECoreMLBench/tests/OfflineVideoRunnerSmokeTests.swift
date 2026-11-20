@@ -25,7 +25,14 @@ struct OfflineVideoRunnerSmokeTests {
         try await testCancellation(video, explicit: true)
         try await testConsumerFailure(video)
         try await testInvalidRequests(video)
-        print("Offline video: 7 selection, sequencing and error checks passed.")
+        try await testPreCancelledRun(video)
+        try await testInterruptedConversion(video)
+        try await testConversionFailure(video)
+        try await testPrefixCancellation(video, explicit: false)
+        try await testPrefixCancellation(video, explicit: true)
+        try await testConsumerCancellation(video)
+        try await testDecodeFailure(video, directory: directory)
+        print("Offline video: 14 sequencing, outcome and interruption checks passed.")
     }
 
     /// Processes frames exceeding 200 ms without age-based dropping or overlap.
@@ -56,6 +63,15 @@ struct OfflineVideoRunnerSmokeTests {
         precondition(maximum == 1 && loads == 1)
         let running = await runner.isRunning
         precondition(!running)
+        let report = await report(runner)
+        precondition(report.status == .completed && report.summary == summary)
+        precondition(report.outcomes.map(\.status) == [.completed, .completed,
+                                                     .failed, .completed])
+        precondition(report.outcomes[1].result!.detections.isEmpty)
+        precondition(report.outcomes[2].issue?.stage == .inference)
+        precondition(report.outcomes[2].result!.status == .failed)
+        precondition(report.unfinishedFrames == 0 && report.issue == nil)
+        precondition(report.endedMilliseconds! >= report.startedMilliseconds)
     }
 
     /// Preserves sparse source indices and stops after the last selected frame.
@@ -72,12 +88,17 @@ struct OfflineVideoRunnerSmokeTests {
         precondition(records.map { $0.metadata.presentationTime.value } == [0, 4004])
         let received = await backend.received
         precondition(received == [0, 2])
+        let previous = await report(runner)
+        precondition(previous.selectedFrameIndices == [0, 2])
         let empty = try await runner.run(
             video, sourceID: "empty", model: .rfdetrSmall,
             selection: .indices([]), consume: { _ in
                 preconditionFailure("Empty selection produced a result")
             })
         precondition(empty.processedFrames == 0 && empty.decodedFrames == 0)
+        let latest = await report(runner)
+        precondition(latest.id != previous.id && latest.outcomes.isEmpty)
+        precondition(previous.outcomes.count == 2)
     }
 
     /// Holds consumption to prove no next inference starts and overlapping runs reject.
@@ -93,11 +114,15 @@ struct OfflineVideoRunnerSmokeTests {
         await gate.waitForRequest()
         let received = await backend.received
         precondition(received == [0])
+        let active = await report(runner)
+        precondition(active.status == .running && active.outcomes.count == 1)
         do {
             _ = try await runner.run(
                 video, sourceID: "overlap", model: .rfdetrSmall, consume: { _ in })
             preconditionFailure("Overlapping runs were accepted")
         } catch OfflineVideoError.alreadyRunning {}
+        let unchanged = await report(runner)
+        precondition(unchanged.id == active.id)
         await gate.finish()
         let summary = try await pending.value
         precondition(summary.processedFrames == 4)
@@ -126,12 +151,26 @@ struct OfflineVideoRunnerSmokeTests {
         let records = await collector.records
         let running = await runner.isRunning
         precondition(records.isEmpty && !running)
+        let interrupted = await report(runner)
+        precondition(interrupted.status == .cancelled)
+        precondition(interrupted.outcomes.count == 1)
+        precondition(interrupted.unfinishedFrames == 1)
+        precondition(interrupted.outcomes[0].status == .unfinished)
+        precondition(interrupted.outcomes[0].metadata?.sourceFrameIndex == 0)
+        precondition(interrupted.outcomes[0].result == nil)
+        precondition(interrupted.outcomes[0].issue?.stage == .inference)
+        precondition(interrupted.summary.processedFrames == 0)
         let restarted = try await runner.run(
             video, sourceID: "restart", model: .rfdetrSmall,
             selection: .indices([0]), consume: { await collector.append($0) })
         precondition(restarted.processedFrames == 1)
         let retained = await collector.records
         precondition(retained.count == 1 && retained[0].metadata.sourceID == "restart")
+        let latest = await report(runner)
+        precondition(latest.status == .completed && latest.id != interrupted.id)
+        precondition(latest.outcomes.count == 1 && latest.unfinishedFrames == 0)
+        precondition(interrupted.status == .cancelled)
+        precondition(interrupted.unfinishedFrames == 1)
     }
 
     /// Stops on a consumer failure without continuing decode and permits another run.
@@ -147,6 +186,10 @@ struct OfflineVideoRunnerSmokeTests {
         let received = await backend.received
         let running = await runner.isRunning
         precondition(received == [0] && !running)
+        let failed = await report(runner)
+        precondition(failed.status == .failed && failed.issue?.stage == .consumption)
+        precondition(failed.outcomes.count == 1)
+        precondition(failed.outcomes[0].status == .completed)
         let restarted = try await runner.run(
             video, sourceID: "restart", model: .rfdetrSmall,
             selection: .indices([0]), consume: { _ in })
@@ -167,6 +210,8 @@ struct OfflineVideoRunnerSmokeTests {
         }
         let loads = await backend.loads
         precondition(loads == 0)
+        let rejected = await runner.latestReport
+        precondition(rejected == nil)
         let collector = OfflineCollector()
         do {
             _ = try await runner.run(
@@ -176,6 +221,14 @@ struct OfflineVideoRunnerSmokeTests {
         } catch OfflineVideoError.missingSelectedFrame(8) {}
         let partial = await collector.records
         precondition(partial.map { $0.metadata.sourceFrameIndex } == [0])
+        let missing = await report(runner)
+        precondition(missing.status == .failed && missing.decodedFrames == 4)
+        precondition(missing.outcomes.map(\.sourceFrameIndex) == [0, 8])
+        precondition(missing.outcomes[1].status == .failed)
+        precondition(missing.outcomes[1].metadata == nil)
+        precondition(missing.outcomes[1].presentationTime == nil)
+        precondition(missing.outcomes[1].readyMilliseconds == nil)
+        precondition(missing.outcomes[1].issue?.stage == .decoding)
         let failing = OfflineVideoRunner(engine: DetectorEngine(loader: { _ in
             throw DetectorError.missingModel("fixture model")
         }))
@@ -186,16 +239,194 @@ struct OfflineVideoRunnerSmokeTests {
         } catch DetectorError.missingModel {}
         let running = await failing.isRunning
         precondition(!running)
+        let failure = await report(failing)
+        precondition(failure.status == .failed && failure.issue?.stage == .modelLoading)
+        precondition(failure.outcomes.isEmpty)
+    }
+
+    /// Retains a cancelled run header without fabricating a frame before decoding.
+    private static func testPreCancelledRun(_ video: URL) async throws {
+        let runner = makeRunner(OfflineFixtureDetector())
+        let pending = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await runner.run(
+                video, sourceID: "pre-cancelled", model: .rfdetrSmall,
+                consume: { _ in })
+        }
+        do {
+            _ = try await pending.value
+            preconditionFailure("Pre-cancelled run succeeded")
+        } catch is CancellationError {}
+        let snapshot = await report(runner)
+        precondition(snapshot.status == .cancelled && snapshot.outcomes.isEmpty)
+        precondition(snapshot.decodedFrames == 0)
+        precondition(snapshot.issue?.stage == .modelLoading)
+    }
+
+    /// Keeps actual admission metadata when reader cancellation discards its callback.
+    private static func testInterruptedConversion(_ video: URL) async throws {
+        let backend = OfflineFixtureDetector()
+        let runner = makeRunner(backend, converter: { frame in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try VideoFrameConverter.convert(frame)
+        })
+        let pending = Task {
+            try await runner.run(
+                video, sourceID: "conversion-cancel", model: .rfdetrSmall,
+                consume: { _ in preconditionFailure("Cancelled conversion delivered") })
+        }
+        do {
+            _ = try await pending.value
+            preconditionFailure("Cancelled conversion succeeded")
+        } catch is CancellationError {}
+        let snapshot = await report(runner)
+        precondition(snapshot.status == .cancelled && snapshot.decodedFrames == 1)
+        precondition(snapshot.outcomes.count == 1 && snapshot.unfinishedFrames == 1)
+        let frame = snapshot.outcomes[0]
+        precondition(frame.issue?.stage == .conversion && frame.result == nil)
+        precondition(frame.metadata?.sourceFrameIndex == 0)
+        precondition(frame.presentationTime?.value == 0)
+        precondition(frame.presentationTime?.timescale == 30000)
+        precondition(frame.readyMilliseconds != nil)
+        let received = await backend.received
+        precondition(received.isEmpty)
+    }
+
+    /// Retains the completed prefix and exact metadata for a failed conversion.
+    private static func testConversionFailure(_ video: URL) async throws {
+        let runner = makeRunner(OfflineFixtureDetector(), converter: { frame in
+            if frame.metadata.sourceFrameIndex == 1 {
+                throw OfflineFixtureError.conversion
+            }
+            return try VideoFrameConverter.convert(frame)
+        })
+        do {
+            _ = try await runner.run(
+                video, sourceID: "conversion-failure", model: .rfdetrSmall,
+                consume: { _ in })
+            preconditionFailure("Conversion failure was lost")
+        } catch OfflineFixtureError.conversion {}
+        let snapshot = await report(runner)
+        precondition(snapshot.status == .failed && snapshot.decodedFrames == 2)
+        precondition(snapshot.outcomes.map(\.status) == [.completed, .failed])
+        let failed = snapshot.outcomes[1]
+        precondition(failed.sourceFrameIndex == 1)
+        precondition(failed.presentationTime?.value == 1001)
+        precondition(failed.issue?.stage == .conversion && failed.result == nil)
+    }
+
+    /// Preserves a completed prefix and marks the interrupted inference unfinished.
+    private static func testPrefixCancellation(
+        _ video: URL, explicit: Bool
+    ) async throws {
+        let gate = OfflineGate(request: 2)
+        let runner = makeRunner(OfflineFixtureDetector(gate: gate))
+        let collector = OfflineCollector()
+        let pending = Task {
+            try await runner.run(
+                video, sourceID: "prefix-cancel", model: .rfdetrSmall,
+                consume: { await collector.append($0) })
+        }
+        await gate.waitForRequest()
+        let prefix = await report(runner)
+        precondition(prefix.status == .running && prefix.outcomes.count == 1)
+        if explicit { await runner.cancel() } else { pending.cancel() }
+        await gate.finish()
+        do {
+            _ = try await pending.value
+            preconditionFailure("Cancelled prefix run succeeded")
+        } catch is CancellationError {}
+        let snapshot = await report(runner)
+        precondition(snapshot.status == .cancelled)
+        precondition(snapshot.outcomes.map(\.sourceFrameIndex) == [0, 1])
+        precondition(snapshot.outcomes.map(\.status) == [.completed, .unfinished])
+        precondition(snapshot.outcomes[1].presentationTime?.value == 1001)
+        precondition(snapshot.outcomes[1].issue?.stage == .inference)
+        precondition(snapshot.summary.completedFrames == 1)
+        precondition(snapshot.unfinishedFrames == 1)
+        precondition(prefix.status == .running && prefix.outcomes.count == 1)
+        let delivered = await collector.records
+        precondition(delivered.map { $0.metadata.sourceFrameIndex } == [0])
+    }
+
+    /// Does not relabel completed inference when cancellation interrupts consumption.
+    private static func testConsumerCancellation(_ video: URL) async throws {
+        let gate = OfflineGate(request: 2)
+        let runner = makeRunner(OfflineFixtureDetector())
+        let pending = Task {
+            try await runner.run(
+                video, sourceID: "consumer-cancel", model: .rfdetrSmall,
+                consume: { _ in await gate.holdOnce() })
+        }
+        await gate.waitForRequest()
+        pending.cancel()
+        await gate.finish()
+        do {
+            _ = try await pending.value
+            preconditionFailure("Cancelled consumer run succeeded")
+        } catch is CancellationError {}
+        let snapshot = await report(runner)
+        precondition(snapshot.status == .cancelled)
+        precondition(snapshot.issue?.stage == .consumption)
+        precondition(snapshot.outcomes.map(\.status) == [.completed, .completed])
+        precondition(snapshot.outcomes[1].result!.detections.isEmpty)
+        precondition(snapshot.unfinishedFrames == 0)
+    }
+
+    /// Leaves source time unknown for a decoder failure that yielded no valid pixels.
+    private static func testDecodeFailure(_ video: URL, directory: URL) async throws {
+        let damaged = directory.appendingPathComponent("report_damaged.mov")
+        try corruptMedia(video, to: damaged)
+        let runner = makeRunner(OfflineFixtureDetector())
+        var failedIndex: Int?
+        do {
+            _ = try await runner.run(
+                damaged, sourceID: "decode-failure", model: .rfdetrSmall,
+                consume: { _ in })
+            preconditionFailure("Damaged movie succeeded")
+        } catch let error as VideoReaderError {
+            switch error {
+            case .decodeFailed(let index, _), .invalidFrame(let index, _):
+                failedIndex = index
+            case .cannotStart: break
+            default: preconditionFailure("Unexpected damaged movie error: \(error)")
+            }
+        }
+        let snapshot = await report(runner)
+        precondition(snapshot.status == .failed)
+        if let failedIndex {
+            let failed = snapshot.outcomes.last!
+            precondition(failed.status == .failed && failed.issue?.stage == .decoding)
+            precondition(failed.sourceFrameIndex == failedIndex)
+            precondition(failed.metadata == nil && failed.presentationTime == nil)
+            precondition(failed.readyMilliseconds == nil)
+        } else {
+            precondition(snapshot.issue?.stage == .sourceOpening)
+            precondition(snapshot.outcomes.isEmpty)
+        }
+    }
+
+    /// Requires a retained value snapshot after both normal and exceptional exits.
+    private static func report(
+        _ runner: OfflineVideoRunner
+    ) async -> OfflineVideoRunReport {
+        guard let report = await runner.latestReport else {
+            preconditionFailure("Run report was not retained")
+        }
+        return report
     }
 
     /// Counts model loads independently of per-frame inference calls.
     private static func makeRunner(
-        _ backend: OfflineFixtureDetector
+        _ backend: OfflineFixtureDetector,
+        converter: @escaping OfflineVideoRunner.Converter = {
+            try VideoFrameConverter.convert($0)
+        }
     ) -> OfflineVideoRunner {
         OfflineVideoRunner(engine: DetectorEngine(loader: { _ in
             await backend.loaded()
             return backend
-        }))
+        }), converter: converter)
     }
 
     /// Generates an independent movie with irregular PTS, rotation and known pixels.
@@ -255,6 +486,36 @@ struct OfflineVideoRunnerSmokeTests {
             throw OfflineFixtureError.encoding(String(describing: writer.error))
         }
     }
+
+    /// Damages compressed samples while preserving track metadata and sample tables.
+    private static func corruptMedia(_ source: URL, to target: URL) throws {
+        var bytes = try Data(contentsOf: source)
+        var offset = 0
+        var corrupted = false
+        while offset + 8 <= bytes.count {
+            let shortSize = bytes[offset..<offset + 4].reduce(UInt64(0)) {
+                ($0 << 8) | UInt64($1)
+            }
+            let type = String(decoding: bytes[offset + 4..<offset + 8], as: UTF8.self)
+            let header = shortSize == 1 ? 16 : 8
+            precondition(offset + header <= bytes.count)
+            let size = shortSize == 1
+                ? bytes[offset + 8..<offset + 16].reduce(UInt64(0)) {
+                    ($0 << 8) | UInt64($1)
+                } : (shortSize == 0 ? UInt64(bytes.count - offset) : shortSize)
+            precondition(size >= UInt64(header) && size <= UInt64(bytes.count - offset))
+            let end = offset + Int(size)
+            if type == "mdat" {
+                bytes.replaceSubrange(
+                    offset + header..<end,
+                    with: repeatElement(UInt8(255), count: Int(size) - header))
+                corrupted = true
+            }
+            offset = end
+        }
+        precondition(corrupted)
+        try bytes.write(to: target)
+    }
 }
 
 /// Supplies measurable delays, controlled failures and overlap detection.
@@ -310,13 +571,20 @@ private actor OfflineCollector {
 
 /// Suspends exactly the first request without racing wall-clock sleeps.
 private actor OfflineGate {
+    private let request: Int
+    private var calls = 0
     private var held = false
     private var pending: CheckedContinuation<Void, Never>?
     private var notification: CheckedContinuation<Void, Never>?
 
+    /// Selects the exact call to suspend, including cancellation after a prefix.
+    init(request: Int = 1) { self.request = request }
+
     /// Blocks one inference/consumer call until the check releases it.
     func holdOnce() async {
         guard !held else { return }
+        calls += 1
+        guard calls == request else { return }
         held = true
         await withCheckedContinuation {
             pending = $0
@@ -340,6 +608,6 @@ private actor OfflineGate {
 
 /// Separates test encoder, model and consumer failures from reader failures.
 nonisolated private enum OfflineFixtureError: Error {
-    case inference, consumer
+    case inference, consumer, conversion
     case encoding(String)
 }
