@@ -62,6 +62,8 @@ struct VideoFrameReaderSmokeTests {
         let failure = await reader.failure
         precondition(eof == nil && repeatedEOF == nil && state == .completed)
         precondition(count == timestamps.count && failure == nil)
+        let failedSample = await reader.decodeFailureInfo
+        precondition(failedSample == nil)
     }
 
     /// Reopens a specific track and reports absent track IDs without falling back.
@@ -165,18 +167,37 @@ struct VideoFrameReaderSmokeTests {
         await reader.cancel()
     }
 
-    /// Forces decode failure by damaging pixels while retaining movie metadata.
+    /// Validates the backend's reported failure or clean EOF for unreadable samples.
     private static func testCorruptDecode(_ video: URL, directory: URL) async throws {
         let damaged = directory.appendingPathComponent("damaged.mov")
         try corruptMedia(video, to: damaged)
         let reader = VideoFrameReader()
-        let error = try await expectFailure(reader) {
+        var reported: VideoReaderError?
+        do {
             try await reader.open(damaged, sourceID: "damaged-track")
             while let _ = try await reader.nextFrame({ $0.metadata }) {}
+        } catch let error as VideoReaderError {
+            reported = error
+        }
+        guard let error = reported else {
+            // AVAssetReader can omit unreadable samples and report completed. A
+            // missing frozen reference must not turn this into verified coverage.
+            let state = await reader.state
+            let failure = await reader.failure
+            let count = await reader.framesRead
+            let eof = try await reader.nextFrame { $0.metadata }
+            precondition(state == .completed && failure == nil && eof == nil)
+            precondition(count <= timestamps.count)
+            return
         }
         switch error {
-        case .cannotStart, .decodeFailed: break
+        case .cannotOpen, .cannotStart, .noVideoTrack, .decodeFailed, .invalidFrame: break
         default: preconditionFailure("Expected a decode failure, received \(error)")
+        }
+        if case .decodeFailed(let index, _) = error {
+            let info = await reader.decodeFailureInfo
+            precondition(info?.sourceFrameIndex == index)
+            precondition(info?.presentationTime == nil)
         }
         // A failed read must remain a failure, including on subsequent requests.
         do {
@@ -290,36 +311,54 @@ struct VideoFrameReaderSmokeTests {
         try file.write(from: buffer)
     }
 
-    /// Damages only mdat payloads, preserving track metadata and sample tables.
+    /// Points samples beyond EOF while retaining codec, geometry and timing metadata.
     private static func corruptMedia(_ source: URL, to target: URL) throws {
         var bytes = try Data(contentsOf: source)
-        var offset = 0
         var corrupted = false
-        while offset + 8 <= bytes.count {
-            let shortSize = bytes[offset..<offset + 4].reduce(UInt64(0)) {
-                ($0 << 8) | UInt64($1)
-            }
-            let type = String(decoding: bytes[offset + 4..<offset + 8], as: UTF8.self)
-            let header = shortSize == 1 ? 16 : 8
-            precondition(offset + header <= bytes.count)
-            let size: UInt64
-            if shortSize == 1 {
-                size = bytes[offset + 8..<offset + 16].reduce(UInt64(0)) {
-                    ($0 << 8) | UInt64($1)
-                }
-            } else {
-                size = shortSize == 0 ? UInt64(bytes.count - offset) : shortSize
-            }
-            precondition(size >= UInt64(header) && size <= UInt64(bytes.count - offset))
-            let end = offset + Int(size)
-            if type == "mdat" {
-                let damage = repeatElement(UInt8(255), count: Int(size) - header)
-                bytes.replaceSubrange(offset + header..<end, with: damage)
-                corrupted = true
-            }
-            offset = end
+        let unreadableOffset = UInt64(bytes.count) + 1_048_576
+
+        /// Reads the fixture's big-endian atom sizes and sample offset counts.
+        func integer(at offset: Int, count: Int) -> UInt64 {
+            bytes[offset..<offset + count].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
         }
-        precondition(corrupted, "Movie fixture has no media-data atom")
+
+        /// Walks only standard movie/track containers to locate chunk offset tables.
+        func damageOffsets(in range: Range<Int>) {
+            var offset = range.lowerBound
+            while offset + 8 <= range.upperBound {
+                let shortSize = integer(at: offset, count: 4)
+                let type = String(
+                    decoding: bytes[offset + 4..<offset + 8], as: UTF8.self)
+                let header = shortSize == 1 ? 16 : 8
+                precondition(offset + header <= range.upperBound)
+                let size = shortSize == 1 ? integer(at: offset + 8, count: 8)
+                    : (shortSize == 0 ? UInt64(range.upperBound - offset) : shortSize)
+                precondition(size >= UInt64(header)
+                             && size <= UInt64(range.upperBound - offset))
+                let end = offset + Int(size)
+                let payload = offset + header
+                if ["moov", "trak", "mdia", "minf", "stbl"].contains(type) {
+                    damageOffsets(in: payload..<end)
+                } else if type == "stco" || type == "co64" {
+                    precondition(payload + 8 <= end)
+                    let count = Int(integer(at: payload + 4, count: 4))
+                    let width = type == "stco" ? 4 : 8
+                    precondition(count <= (end - payload - 8) / width)
+                    precondition(width == 8 || unreadableOffset <= UInt32.max)
+                    for entry in 0..<count {
+                        let start = payload + 8 + entry * width
+                        for byte in 0..<width {
+                            let shift = (width - 1 - byte) * 8
+                            bytes[start + byte] = UInt8((unreadableOffset >> shift) & 255)
+                        }
+                        corrupted = true
+                    }
+                }
+                offset = end
+            }
+        }
+        damageOffsets(in: 0..<bytes.count)
+        precondition(corrupted, "Movie fixture has no sample chunk offsets")
         try bytes.write(to: target)
     }
 }

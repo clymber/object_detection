@@ -67,16 +67,20 @@ struct PacedVideoSourceSmokeTests {
         precondition(abs(clock.now - 1900) < 1e-9)
         let state = await source.state
         precondition(state == .completed)
+        let report = await source.latestReport!
+        precondition(report.decodedFrames == 12 && report.deliveredFrames == 12)
+        precondition(report.completedLoops == 3 && report.endedMilliseconds == 1900)
+        precondition(report.decodeLosses.isEmpty && report.issue == nil)
     }
 
     /// Decode, callback and wake-up delays keep fixed deadlines and retain late frames.
     private static func testLateSourceDoesNotDrift(_ url: URL) async throws {
         let clock = TestPlaybackClock(oversleep: 7)
         let recorder = PacedFrameRecorder()
-        let source = PacedVideoSource(clock: clock.playbackClock) { frame in
+        let source = PacedVideoSource(clock: clock.playbackClock, converter: { frame in
             clock.advance(by: 5)
             return try VideoFrameConverter.convert(frame)
-        }
+        })
         _ = try await source.run(url, sourceID: "fixture", loopCount: 2) { event in
             recorder.append(event)
             if event.frame.metadata.sourceFrameIndex == 0 {
@@ -136,6 +140,10 @@ struct PacedVideoSourceSmokeTests {
         precondition(recorder.frames.count == 1)
         let state = await source.state
         precondition(state == .cancelled)
+        let report = await source.latestReport!
+        precondition(report.status == .cancelled && report.decodeLosses.isEmpty)
+        precondition(report.decodedFrames >= report.deliveredFrames)
+        precondition(report.issue?.cancelled == true)
         _ = try await source.run(restart, sourceID: "restarted") { _ in }
     }
 
@@ -161,10 +169,10 @@ struct PacedVideoSourceSmokeTests {
     /// Conversion, callback and source errors terminate without hiding accepted frames.
     private static func testFailures(_ url: URL) async throws {
         let clock = TestPlaybackClock()
-        let source = PacedVideoSource(clock: clock.playbackClock) { frame in
+        let source = PacedVideoSource(clock: clock.playbackClock, converter: { frame in
             if frame.metadata.sourceFrameIndex == 1 { throw FixtureFailure.expected }
             return try VideoFrameConverter.convert(frame)
-        }
+        })
         do {
             _ = try await source.run(url, sourceID: "conversion") { _ in }
             preconditionFailure("Conversion error was hidden")
@@ -172,6 +180,10 @@ struct PacedVideoSourceSmokeTests {
         let summary = await source.summary
         let state = await source.state
         precondition(summary.deliveredFrames == 1 && state == .failed)
+        let report = await source.latestReport!
+        precondition(report.decodedFrames == 2 && report.deliveredFrames == 1)
+        precondition(report.issue?.stage == .conversion && report.decodeLosses.isEmpty)
+        precondition(report.issue?.metadata?.sourceFrameIndex == 1)
         let normal = PacedVideoSource(clock: clock.playbackClock)
         do {
             _ = try await normal.run(url, sourceID: "consumer") { _ in

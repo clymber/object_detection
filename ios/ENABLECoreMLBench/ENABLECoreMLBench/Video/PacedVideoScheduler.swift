@@ -52,10 +52,12 @@ nonisolated struct PacedVideoQueueSnapshot: Sendable {
 
     let state: State
     let acceptedFrames: Int
+    let inputDeliveryMilliseconds: [Double]
     let activeFrames: Int
     let pendingFrames: Int
     let activePublications: Int
     let pendingPublications: Int
+    let publicationEnabled: Bool
     let outcomes: [PacedVideoFrameOutcome]
 }
 
@@ -205,6 +207,7 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
     private var pending: PacedVideoFrame?
     private var active = false
     private var accepted = 0
+    private var inputDeliveryMilliseconds: [Double] = []
     private var lastMetadata: VideoFrameMetadata?
     private var lastDue: Double?
     private var lastClockTime = 0.0
@@ -225,10 +228,13 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
     var snapshot: PacedVideoQueueSnapshot {
         lock.withLock {
             PacedVideoQueueSnapshot(
-                state: state, acceptedFrames: accepted, activeFrames: active ? 1 : 0,
+                state: state, acceptedFrames: accepted,
+                inputDeliveryMilliseconds: inputDeliveryMilliseconds,
+                activeFrames: active ? 1 : 0,
                 pendingFrames: pending == nil ? 0 : 1,
                 activePublications: activePublication == nil ? 0 : 1,
                 pendingPublications: pendingPublication == nil ? 0 : 1,
+                publicationEnabled: publicationEnabled,
                 outcomes: outcomes)
         }
     }
@@ -262,6 +268,7 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
             }
             pending = frame
             accepted += 1
+            inputDeliveryMilliseconds.append(frame.deliveredMilliseconds)
             lastMetadata = metadata
             lastDue = frame.dueMilliseconds
         }

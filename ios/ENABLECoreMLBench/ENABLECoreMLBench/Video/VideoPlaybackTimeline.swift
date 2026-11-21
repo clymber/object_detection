@@ -62,12 +62,18 @@ nonisolated struct VideoPlaybackTimeline: Sendable {
         guard metadata.sourceID == sourceID else {
             throw VideoPlaybackError.mismatchedSource
         }
-        let pts = metadata.presentationTime
+        return try dueMilliseconds(
+            presentationTime: metadata.presentationTime, loopIndex: metadata.loopIndex)
+    }
+
+    /// Maps a known failed sample's PTS without fabricating pixel dimensions/metadata.
+    func dueMilliseconds(presentationTime pts: CMTime, loopIndex: Int) throws -> Double {
         guard pts.epoch == sourceTimeRange.start.epoch,
+            pts.isNumeric,
             CMTimeRangeContainsTime(sourceTimeRange, time: pts)
         else { throw VideoPlaybackError.timestampOutsideTrack }
         return try hostTime(
-            loopIndex: metadata.loopIndex,
+            loopIndex: loopIndex,
             offset: CMTimeSubtract(pts, sourceTimeRange.start))
     }
 

@@ -23,6 +23,7 @@ if [[ $# -eq 0 ]]; then
   video_tests=(
     VideoFrameContract VideoFrameReader VideoFrameConversion BundledVideo
     VideoPlaybackTimeline PacedVideoSource PacedVideoScheduler PacedVideoPublication
+    PacedVideoMetrics PacedVideoRunner
     VideoFrameDetection VideoFrameResult VideoFrameTiming
     VideoPreview VideoPreviewRendering
     OfflineVideoCoverage OfflineVideoMetrics OfflineVideoRunner OfflineVideoSession

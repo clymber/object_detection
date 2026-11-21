@@ -10,6 +10,12 @@ nonisolated struct VideoFrameReadInfo: Sendable {
     let readyMilliseconds: Double
 }
 
+/// Keeps actual failed-sample timing separate from the last successful decoded frame.
+nonisolated struct VideoFrameDecodeFailureInfo: Sendable {
+    let sourceFrameIndex: Int
+    let presentationTime: CMTime?
+}
+
 /// Reports reader failures separately from clean end-of-file and cancellation.
 nonisolated enum VideoReaderError: Error, Equatable, LocalizedError {
     case invalidInput(String)
@@ -37,8 +43,31 @@ nonisolated enum VideoReaderError: Error, Equatable, LocalizedError {
     }
 }
 
+/// Allows deterministic read failures while keeping mutable pixels on a reader actor.
+nonisolated protocol VideoFrameReading: Actor {
+    var selectedTrackID: CMPersistentTrackID? { get }
+    var selectedTimeRange: CMTimeRange? { get }
+    var framesRead: Int { get }
+    var lastFrameInfo: VideoFrameReadInfo? { get }
+    var decodeFailureInfo: VideoFrameDecodeFailureInfo? { get }
+    var failure: VideoReaderError? { get }
+
+    /// Opens one source iteration without changing its source identity or time base.
+    func open(
+        _ url: URL, sourceID: String, loopIndex: Int, trackID: CMPersistentTrackID?
+    ) async throws
+
+    /// Invokes conversion on the reader actor and returns only Sendable data.
+    func nextFrame<Result: Sendable>(
+        _ process: @Sendable (VideoFrame) throws -> Result
+    ) throws -> Result?
+
+    /// Releases the reader while preserving any observed decode error details.
+    func cancel()
+}
+
 /// Decodes one local video track on demand, keeping mutable pixels on this actor.
-actor VideoFrameReader {
+actor VideoFrameReader: VideoFrameReading {
     /// Distinguishes clean exhaustion, explicit/task cancellation and failures.
     enum State: Equatable, Sendable {
         case idle, opening, reading, completed, cancelled, failed
@@ -50,6 +79,7 @@ actor VideoFrameReader {
     private(set) var selectedTimeRange: CMTimeRange?
     private(set) var framesRead = 0
     private(set) var lastFrameInfo: VideoFrameReadInfo?
+    private(set) var decodeFailureInfo: VideoFrameDecodeFailureInfo?
 
     private var reader: AVAssetReader?
     private var output: AVAssetReaderTrackOutput?
@@ -57,6 +87,7 @@ actor VideoFrameReader {
     private var loopIndex = 0
     private var preferredTransform = CGAffineTransform.identity
     private var lastPresentationTime: CMTime?
+    private var attemptedPresentationTime: CMTime?
     private var generation: UInt64 = 0
 
     /// Opens an app-owned local file, selecting the first video track by default.
@@ -75,6 +106,8 @@ actor VideoFrameReader {
         framesRead = 0
         lastPresentationTime = nil
         lastFrameInfo = nil
+        decodeFailureInfo = nil
+        attemptedPresentationTime = nil
         do {
             try Task.checkCancellation()
             guard url.isFileURL else {
@@ -186,11 +219,13 @@ actor VideoFrameReader {
         case .reading: break
         }
         guard let reader, let output else { throw VideoReaderError.notReading }
+        attemptedPresentationTime = nil
         while let sample = output.copyNextSampleBuffer() {
             let ready = InferenceClock.nowMilliseconds()
             try Task.checkCancellation()
             // Marker-only samples carry no frame and must not advance its index.
             if CMSampleBufferGetNumSamples(sample) == 0 { continue }
+            attemptedPresentationTime = CMSampleBufferGetPresentationTimeStamp(sample)
             guard CMSampleBufferGetNumSamples(sample) == 1,
                 CMSampleBufferDataIsReady(sample),
                 let pixels = CMSampleBufferGetImageBuffer(sample)
@@ -223,6 +258,7 @@ actor VideoFrameReader {
             return frame
         }
         try Task.checkCancellation()
+        attemptedPresentationTime = nil
         switch reader.status {
         case .completed:
             releaseReader()
@@ -250,6 +286,12 @@ actor VideoFrameReader {
 
     /// Retains the explicit error while releasing decoder resources.
     private func fail(_ error: VideoReaderError) -> VideoReaderError {
+        switch error {
+        case .decodeFailed(let index, _), .invalidFrame(let index, _):
+            decodeFailureInfo = VideoFrameDecodeFailureInfo(
+                sourceFrameIndex: index, presentationTime: attemptedPresentationTime)
+        default: break
+        }
         releaseReader()
         failure = error
         state = .failed
