@@ -2,9 +2,22 @@ import SwiftUI
 
 /// Displays source pixels and boxes using the same aspect-fit transform.
 struct FramePreview: View {
+    typealias DrawObserver = @MainActor @Sendable (Double) -> Void
     let image: CGImage?
     let detections: [Detection]
     let imageTitle: String
+    let didDraw: DrawObserver?
+
+    /// Enables draw acknowledgements for video without changing the still-image path.
+    init(
+        image: CGImage?, detections: [Detection], imageTitle: String,
+        didDraw: DrawObserver? = nil
+    ) {
+        self.image = image
+        self.detections = detections
+        self.imageTitle = imageTitle
+        self.didDraw = didDraw
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -38,23 +51,25 @@ struct FramePreview: View {
                     sourceSize: CGSize(width: image.width, height: image.height),
                     viewportSize: geometry.size
                 )
-                ZStack(alignment: .topLeading) {
-                    Image(decorative: image, scale: 1, orientation: .up)
-                        .resizable()
-                        .frame(
-                            width: layout.imageRect.width,
-                            height: layout.imageRect.height
-                        )
-                        .position(x: layout.imageRect.midX, y: layout.imageRect.midY)
-                    ForEach(detections.indices, id: \.self) { index in
-                        let detection = detections[index]
-                        if let box = layout.displayedBox(detection.boundingBox) {
-                            Rectangle()
-                                .stroke(.red, lineWidth: 2)
-                                .frame(width: box.width, height: box.height)
-                                .clipped()
-                                .position(x: box.midX, y: box.midY)
+                Group {
+                    if let didDraw {
+                        Canvas(rendersAsynchronously: false) { context, _ in
+                            context.draw(
+                                Image(decorative: image, scale: 1, orientation: .up),
+                                in: layout.imageRect)
+                            for detection in detections {
+                                if let box = layout.displayedBox(
+                                    detection.boundingBox) {
+                                    context.stroke(
+                                        Path(box), with: .color(.red), lineWidth: 2)
+                                }
+                            }
+                            let drawn = InferenceClock.nowMilliseconds()
+                            // Schedule state changes after this drawing pass completes.
+                            Task { @MainActor in didDraw(drawn) }
                         }
+                    } else {
+                        stillImage(image, layout: layout)
                     }
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
@@ -69,6 +84,26 @@ struct FramePreview: View {
         .frame(height: 280)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
         .accessibilityIdentifier("detectionPreview")
+    }
+
+    /// Preserves the established SwiftUI image/box rendering for still images.
+    private func stillImage(_ image: CGImage, layout: PreviewGeometry) -> some View {
+        ZStack(alignment: .topLeading) {
+            Image(decorative: image, scale: 1, orientation: .up)
+                .resizable()
+                .frame(width: layout.imageRect.width, height: layout.imageRect.height)
+                .position(x: layout.imageRect.midX, y: layout.imageRect.midY)
+            ForEach(detections.indices, id: \.self) { index in
+                let detection = detections[index]
+                if let box = layout.displayedBox(detection.boundingBox) {
+                    Rectangle()
+                        .stroke(.red, lineWidth: 2)
+                        .frame(width: box.width, height: box.height)
+                        .clipped()
+                        .position(x: box.midX, y: box.midY)
+                }
+            }
+        }
     }
 
 }

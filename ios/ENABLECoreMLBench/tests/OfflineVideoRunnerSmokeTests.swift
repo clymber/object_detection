@@ -37,7 +37,12 @@ struct OfflineVideoRunnerSmokeTests {
         try await testSessionProgress(video)
         try await testSessionStop(video)
         try await testSessionInputError(video)
-        print("Offline video: 19 sequencing, coverage and session checks passed.")
+        try await testPreviewPairs(video)
+        try await testPreviewCancellation(video)
+        try await testPreviewFailure(video)
+        try await testSessionPreview(video)
+        print(
+            "Offline video: 23 sequencing, coverage, preview and session checks passed.")
     }
 
     /// Processes frames exceeding 200 ms without age-based dropping or overlap.
@@ -549,6 +554,94 @@ struct OfflineVideoRunnerSmokeTests {
         precondition(!session.isBusy, "Offline video session did not finish")
     }
 
+    /// Ties real rotated frame pixels to their exact PTS/result, including failures.
+    private static func testPreviewPairs(_ video: URL) async throws {
+        let runner = makeRunner(OfflineFixtureDetector(failFrame: 2))
+        let collector = OfflinePreviewCollector()
+        _ = try await runner.run(
+            video, sourceID: "preview-pairs", model: .rfdetrSmall,
+            preview: { try await collector.append($0) }, consume: { _ in })
+        let previews = await collector.previews
+        let report = await report(runner)
+        precondition(report.previewEnabled && previews.count == 4)
+        for (index, preview) in previews.enumerated() {
+            let rgb = try RGBImage(preview.image)
+            let pixelIndex = (Int(rgb.pixels[0]) - 16 + 32) / 64
+            precondition(pixelIndex == index)
+            precondition(preview.result.metadata.sourceFrameIndex == index)
+            precondition(
+                preview.result.metadata.presentationTime.value == timestamps[index])
+            precondition(preview.image.width == 32 && preview.image.height == 64)
+            precondition(
+                preview.result.timings == report.outcomes[index].result!.timings)
+        }
+        precondition(previews[1].result.detections.isEmpty)
+        precondition(previews[2].result.status == .failed)
+    }
+
+    /// Applies backpressure/cancellation to preview delivery after inference is logged.
+    private static func testPreviewCancellation(_ video: URL) async throws {
+        let gate = OfflineGate()
+        let backend = OfflineFixtureDetector()
+        let runner = makeRunner(backend)
+        let pending = Task {
+            try await runner.run(
+                video, sourceID: "preview-cancel", model: .rfdetrSmall,
+                preview: { _ in await gate.holdOnce() }, consume: { _ in })
+        }
+        await gate.waitForRequest()
+        let received = await backend.received
+        precondition(received == [0], "Preview delivery overlapped inference")
+        pending.cancel()
+        await gate.finish()
+        do {
+            _ = try await pending.value
+            preconditionFailure("Cancelled preview run completed")
+        } catch is CancellationError {}
+        let report = await report(runner)
+        precondition(report.status == .cancelled && report.issue?.stage == .consumption)
+        precondition(report.completedFrames == 1 && report.unfinishedFrames == 0)
+    }
+
+    /// Keeps successful detections intact when the optional preview consumer fails.
+    private static func testPreviewFailure(_ video: URL) async throws {
+        let runner = makeRunner(OfflineFixtureDetector())
+        do {
+            _ = try await runner.run(
+                video, sourceID: "preview-failure", model: .rfdetrSmall,
+                preview: { _ in throw OfflineFixtureError.consumer }, consume: { _ in })
+            preconditionFailure("Preview failure was swallowed")
+        } catch OfflineFixtureError.consumer {}
+        let report = await report(runner)
+        precondition(report.status == .failed && report.issue?.stage == .consumption)
+        precondition(report.completedFrames == 1 && report.failedFrames == 0)
+    }
+
+    /// Publishes rotated real-frame images through the UI session, with draw receipts.
+    private static func testSessionPreview(_ video: URL) async throws {
+        let gate = OfflineGate(request: 2)
+        let session = OfflineVideoSession(worker: makeRunner(
+            OfflineFixtureDetector(gate: gate)))
+        session.select(video)
+        session.setPreviewEnabled(true)
+        session.start(model: .rfdetrSmall)
+        await gate.waitForRequest()
+        let preview = session.previewFrame!
+        precondition(preview.result.metadata.sourceFrameIndex == 0)
+        precondition(preview.image.width == 32 && preview.image.height == 64)
+        precondition(session.previewStatistics.drawnFrames == 0)
+        session.recordPreviewDraw(
+            preview.drawToken, generation: session.previewGeneration,
+            at: InferenceClock.nowMilliseconds())
+        precondition(session.previewStatistics.drawnFrames == 1)
+        await gate.finish()
+        try await waitForSession(session)
+        precondition(session.status == .completed && session.completedFrames == 4)
+        precondition(session.latestReport?.previewEnabled == true)
+        precondition(session.previewFrame?.result.metadata.sourceFrameIndex == 3)
+        precondition(session.previewStatistics.drawnFrames == 1)
+    }
+
     /// Requires a retained value snapshot after both normal and exceptional exits.
     private static func report(
         _ runner: OfflineVideoRunner
@@ -709,6 +802,19 @@ private actor OfflineCollector {
     /// Buffers successful, empty and failed outcomes for order and identity assertions.
     func append(_ result: VideoFrameResult) {
         records.append(result)
+    }
+}
+
+/// Holds only four tiny test images to inspect their association with results.
+private actor OfflinePreviewCollector {
+    private(set) var previews: [VideoFramePreview] = []
+
+    /// Simulates slow preview work and checks that processing timing stays frozen.
+    func append(_ preview: VideoFramePreview) async throws {
+        let before = preview.result.timings
+        try await Task.sleep(for: .milliseconds(20))
+        precondition(before == preview.result.timings)
+        previews.append(preview)
     }
 }
 

@@ -23,11 +23,16 @@ if [[ $# -eq 0 ]]; then
   video_tests=(
     VideoFrameContract VideoFrameReader VideoFrameConversion BundledVideo
     VideoFrameDetection VideoFrameResult VideoFrameTiming
+    VideoPreview VideoPreviewRendering
     OfflineVideoCoverage OfflineVideoMetrics OfflineVideoRunner OfflineVideoSession
   )
 fi
 for video_test in "${video_tests[@]}"; do
-  xcrun swiftc "${video_flags[@]}" "${video_sources[@]}" \
+  video_extra_sources=()
+  if [[ "$video_test" == VideoPreviewRendering ]]; then
+    video_extra_sources=(ios/ENABLECoreMLBench/ENABLECoreMLBench/App/FramePreview.swift)
+  fi
+  xcrun swiftc "${video_flags[@]}" "${video_sources[@]}" "${video_extra_sources[@]}" \
     "ios/ENABLECoreMLBench/tests/${video_test}SmokeTests.swift" \
     -o "$video_build/$video_test"
   "$video_build/$video_test" "$video_workspace"

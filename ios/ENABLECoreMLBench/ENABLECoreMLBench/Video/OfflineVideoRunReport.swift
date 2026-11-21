@@ -77,6 +77,7 @@ nonisolated struct OfflineVideoRunReport: Sendable {
     let model: DetectorModel
     let loopIndex: Int
     let selectedFrameIndices: [Int]?
+    let previewEnabled: Bool
     let startedMilliseconds = InferenceClock.nowMilliseconds()
     private(set) var endedMilliseconds: Double?
     private(set) var status = Status.running
@@ -103,11 +104,15 @@ nonisolated struct OfflineVideoRunReport: Sendable {
     }
 
     /// Binds a fresh report to the validated selection before loading any model.
-    init(sourceID: String, model: DetectorModel, loopIndex: Int, indices: [Int]?) {
+    init(
+        sourceID: String, model: DetectorModel, loopIndex: Int, indices: [Int]?,
+        previewEnabled: Bool = false
+    ) {
         self.sourceID = sourceID
         self.model = model
         self.loopIndex = loopIndex
         selectedFrameIndices = indices
+        self.previewEnabled = previewEnabled
     }
 
     /// Appends numerical outcomes in source order without retaining frame pixels.

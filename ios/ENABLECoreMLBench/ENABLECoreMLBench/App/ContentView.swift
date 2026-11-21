@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import CoreMedia
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -40,7 +41,10 @@ struct ContentView: View {
                         metrics: videoSession.metrics,
                         completedFrames: videoSession.completedFrames,
                         failedFrames: videoSession.failedFrames,
-                        unfinishedFrames: videoSession.unfinishedFrames)
+                        unfinishedFrames: videoSession.unfinishedFrames,
+                        previewEnabled: videoSession.previewEnabledForRun,
+                        previewFrames: videoSession.previewStatistics.drawnFrames,
+                        previewFPS: videoSession.previewStatistics.framesPerSecond)
                 } else {
                     Section {
                         FramePreview(
@@ -103,6 +107,9 @@ struct ContentView: View {
             videoSession.select(
                 inputSource.isVideo ? media.video?.file.url : nil,
                 sourceID: media.video?.sourceID)
+        }
+        .onChange(of: videoSession.isPreviewEnabled) { _, enabled in
+            if enabled { player?.pause() }
         }
         .onChange(of: photoSelection) { _, item in
             guard let item else { return }
@@ -249,11 +256,24 @@ struct ContentView: View {
     }
 
     private var videoSection: some View {
-        Section("Video preview") {
-            if let player, let video = media.video {
-                VideoPlayer(player: player).frame(height: 280)
-                    .disabled(videoSession.isBusy)
-                    .accessibilityIdentifier("videoPreview")
+        Section(
+            videoSession.isPreviewEnabled ? "Detection preview" : "Video playback"
+        ) {
+            if let video = media.video {
+                if videoSession.isPreviewEnabled {
+                    if let frame = videoSession.previewFrame {
+                        processedVideoPreview(frame, title: video.file.displayName)
+                    } else {
+                        ContentUnavailableView(
+                            "Start detection to preview frames",
+                            systemImage: "viewfinder")
+                            .frame(height: 280)
+                    }
+                } else if let player {
+                    VideoPlayer(player: player).frame(height: 280)
+                        .disabled(videoSession.isBusy)
+                        .accessibilityIdentifier("videoPreview")
+                }
                 Text(video.file.displayName)
                 LabeledContent(
                     "Duration",
@@ -267,8 +287,45 @@ struct ContentView: View {
         }
     }
 
+    /// Captures only a lightweight token in deferred draw callbacks, not frame pixels.
+    private func processedVideoPreview(
+        _ frame: VideoFramePreview, title: String
+    ) -> some View {
+        let token = frame.drawToken
+        let generation = videoSession.previewGeneration
+        let metadata = frame.result.metadata
+        return VStack(alignment: .leading, spacing: 8) {
+            FramePreview(
+                image: frame.image, detections: frame.result.detections,
+                imageTitle: "\(title), frame \(metadata.sourceFrameIndex)",
+                didDraw: { [weak receiver = videoSession] milliseconds in
+                    receiver?.recordPreviewDraw(
+                        token, generation: generation, at: milliseconds)
+                })
+            Text(
+                "Frame \(metadata.sourceFrameIndex) · PTS "
+                    + metadata.presentationTime.seconds.formatted(
+                        .number.precision(.fractionLength(3))) + " s")
+                .font(.caption).monospacedDigit()
+                .accessibilityIdentifier("processedVideoFrameIdentity")
+            if let failure = frame.result.failure {
+                Text("Frame inference failed: \(failure.message)")
+                    .font(.caption).foregroundStyle(.red)
+            } else if frame.result.detections.isEmpty {
+                Text("No detections in this frame.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityIdentifier("processedVideoPreview")
+    }
+
     private var videoDetectionSection: some View {
         Section {
+            Toggle("Show detection preview", isOn: Binding(
+                get: { videoSession.isPreviewEnabled },
+                set: { videoSession.setPreviewEnabled($0) }))
+                .disabled(videoSession.isBusy)
+                .accessibilityIdentifier("showVideoDetectionPreview")
             LabeledContent("Status", value: videoSession.status.rawValue)
                 .foregroundStyle(videoSession.status == .error ? Color.red : .primary)
                 .accessibilityIdentifier("videoDetectionStatus")
@@ -301,7 +358,9 @@ struct ContentView: View {
         } header: {
             Text("Video detection")
         } footer: {
-            Text("Processes every frame from the beginning at the detector’s speed.")
+            Text(
+                "Processes every frame from the beginning at the detector’s speed. "
+                    + "Set preview before Start; leave it off for baseline benchmarks.")
         }
     }
 

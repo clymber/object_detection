@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreMedia
 import Foundation
+import Observation
 
 /// Exercises UI state with callbacks deliberately delivered after cancellation.
 @main
@@ -16,7 +17,9 @@ struct OfflineVideoSessionSmokeTests {
         try await testStopDuringPreparation()
         try await testInputReplacement()
         try await testErrorAndRetry()
-        print("Video session: 6 control, progress and stale-callback checks passed.")
+        try await testPreviewLifecycle()
+        try await testPreviewReplacement()
+        print("Video session: 8 control, preview and stale-callback checks passed.")
     }
 
     /// Freezes URL/model and counts a successful empty frame as processed.
@@ -176,6 +179,86 @@ struct OfflineVideoSessionSmokeTests {
         precondition(session.status == .completed && session.completedFrames == 0)
     }
 
+    /// Shows paired frames, clears old boxes on empty/failure, and ignores late draws.
+    private static func testPreviewLifecycle() async throws {
+        let worker = VideoSessionWorker()
+        let session = OfflineVideoSession(worker: worker)
+        session.select(video)
+        precondition(!session.isPreviewEnabled && session.previewFrame == nil)
+        session.setPreviewEnabled(true)
+        session.start(model: .rfdetrSmall)
+        session.setPreviewEnabled(false)
+        precondition(session.isPreviewEnabled, "Preview setting changed mid-run")
+        try await wait { await worker.runCount == 1 }
+        try await worker.emit(index: 0, withDetection: true)
+        let first = session.previewFrame!
+        precondition(first.result.detections.count == 1)
+        precondition(session.previewStatistics.drawnFrames == 0)
+        let drawGeneration = session.previewGeneration
+        session.recordPreviewDraw(first.drawToken, generation: drawGeneration, at: 10)
+        let observation = PreviewObservation()
+        withObservationTracking {
+            _ = session.previewStatistics.drawnFrames
+        } onChange: {
+            MainActor.assumeIsolated { observation.changed = true }
+        }
+        session.recordPreviewDraw(first.drawToken, generation: drawGeneration, at: 20)
+        precondition(session.previewStatistics.drawnFrames == 1)
+        precondition(!observation.changed, "Duplicate draws invalidated the preview")
+        try await worker.emit(index: 1)
+        precondition(session.previewFrame!.result.metadata.sourceFrameIndex == 1)
+        precondition(session.previewFrame!.result.detections.isEmpty)
+        try await worker.emit(index: 2, failed: true)
+        let last = session.previewFrame!
+        precondition(last.result.status == .failed && last.result.detections.isEmpty)
+        session.stop()
+        do {
+            try await worker.emitPreviewOnly(index: 3)
+            preconditionFailure("Stopped run published a preview")
+        } catch is CancellationError {}
+        precondition(session.previewFrame?.id == last.id)
+        await worker.finish(.cancelled)
+        try await wait { !session.isBusy }
+        precondition(session.latestReport?.previewEnabled == true)
+        session.setPreviewEnabled(false)
+        precondition(session.previewFrame == nil)
+        session.recordPreviewDraw(last.drawToken, generation: drawGeneration, at: 30)
+        precondition(session.previewStatistics.drawnFrames == 1)
+        session.start(model: .yoloxNano)
+        precondition(session.previewStatistics.drawnFrames == 0)
+        try await wait { await worker.runCount == 2 }
+        try await worker.emit(index: 0)
+        precondition(session.previewFrame == nil)
+        await worker.finish(.completed)
+        try await wait { !session.isBusy }
+        precondition(session.latestReport?.previewEnabled == false)
+    }
+
+    /// Invalidates renderer callbacks and queued previews when input/model resets.
+    private static func testPreviewReplacement() async throws {
+        let worker = VideoSessionWorker()
+        let session = OfflineVideoSession(worker: worker)
+        session.select(video)
+        session.setPreviewEnabled(true)
+        session.start(model: .rfdetrSmall)
+        try await wait { await worker.runCount == 1 }
+        try await worker.emit(index: 0)
+        let old = session.previewFrame!
+        let oldGeneration = session.previewGeneration
+        session.select(video, sourceID: "new-selection")
+        precondition(session.previewFrame == nil)
+        do {
+            try await worker.emitPreviewOnly(index: 1)
+            preconditionFailure("Replaced input published a preview")
+        } catch is CancellationError {}
+        session.recordPreviewDraw(old.drawToken, generation: oldGeneration, at: 50)
+        precondition(session.previewStatistics.drawnFrames == 0)
+        await worker.finish(.completed)
+        try await wait { !session.isBusy }
+        precondition(session.previewFrame == nil && session.latestReport == nil)
+        precondition(session.previewEnabledForRun == nil)
+    }
+
     /// Bounds all asynchronous transitions so regressions fail instead of hanging.
     private static func wait(
         _ condition: @MainActor () async -> Bool
@@ -188,6 +271,12 @@ struct OfflineVideoSessionSmokeTests {
     }
 }
 
+/// Records whether a repeated paint pass would trigger another SwiftUI update.
+@MainActor
+private final class PreviewObservation {
+    var changed = false
+}
+
 /// Holds a run independently of cancellation to expose stale UI publication races.
 private actor VideoSessionWorker: OfflineVideoProcessing {
     private(set) var latestReport: OfflineVideoRunReport?
@@ -195,13 +284,15 @@ private actor VideoSessionWorker: OfflineVideoProcessing {
     private(set) var selectedModel: DetectorModel?
     private(set) var runCount = 0
     private var consumer: OfflineVideoRunner.Consumer?
+    private var previewConsumer: OfflineVideoRunner.PreviewConsumer?
     private var pending: CheckedContinuation<OfflineVideoRunSummary, any Error>?
 
     /// Retains the submitted configuration and waits for explicit test completion.
     func run(
         _ url: URL, sourceID: String, model: DetectorModel,
         selection: VideoFrameSelection, loopIndex: Int,
-        trackID: CMPersistentTrackID?, consume: @escaping OfflineVideoRunner.Consumer
+        trackID: CMPersistentTrackID?, preview: OfflineVideoRunner.PreviewConsumer?,
+        consume: @escaping OfflineVideoRunner.Consumer
     ) async throws -> OfflineVideoRunSummary {
         precondition(pending == nil, "Session overlapped worker runs")
         guard case .all = selection else {
@@ -212,27 +303,59 @@ private actor VideoSessionWorker: OfflineVideoProcessing {
         selectedURL = url
         selectedModel = model
         latestReport = OfflineVideoRunReport(
-            sourceID: sourceID, model: model, loopIndex: loopIndex, indices: nil)
+            sourceID: sourceID, model: model, loopIndex: loopIndex, indices: nil,
+            previewEnabled: preview != nil)
         consumer = consume
+        previewConsumer = preview
         return try await withCheckedThrowingContinuation { pending = $0 }
     }
 
     /// Delivers a valid success/empty or failed row, optionally simulating a late hop.
-    func emit(index: Int, failed: Bool = false, record: Bool = true) async throws {
-        let metadata = try metadata(index)
-        let result = VideoFrameResult(
-            metadata: metadata, sourceWidth: 8, sourceHeight: 8,
-            bufferToImage: .identity, status: failed ? .failed : .completed,
-            detections: [],
-            failure: failed
-                ? VideoInferenceFailure(DetectorError.noModelSelected) : nil,
-            timings: try VideoFrameTimings(
-                readyMilliseconds: 1, modelTiming: nil, doneMilliseconds: 2))
+    func emit(
+        index: Int, failed: Bool = false, record: Bool = true,
+        withDetection: Bool = false
+    ) async throws {
+        let result = try result(
+            index: index, failed: failed, withDetection: withDetection)
         if record {
             latestReport?.recordDecodedFrames(index + 1)
             latestReport?.append(OfflineFrameOutcome(result: result))
         }
         try await consumer!(result)
+        if let previewConsumer { try await previewConsumer(makePreview(result)) }
+    }
+
+    /// Simulates a queued preview without another progress callback first.
+    func emitPreviewOnly(index: Int) async throws {
+        try await previewConsumer!(makePreview(result(index: index)))
+    }
+
+    /// Builds the same upright input without copying mutable decoder storage.
+    private func makePreview(_ result: VideoFrameResult) throws -> VideoFramePreview {
+        let context = CGContext(
+            data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        return try VideoFramePreview(frame: UprightVideoFrame(
+            metadata: result.metadata, image: context.makeImage()!,
+            bufferToImage: .identity, readyMilliseconds: 1), result: result)
+    }
+
+    /// Keeps success/empty/failure construction independent of preview publication.
+    private func result(
+        index: Int, failed: Bool = false, withDetection: Bool = false
+    ) throws -> VideoFrameResult {
+        let metadata = try metadata(index)
+        return VideoFrameResult(
+            metadata: metadata, sourceWidth: 8, sourceHeight: 8,
+            bufferToImage: .identity, status: failed ? .failed : .completed,
+            detections: withDetection ? [try Detection(
+                boundingBox: CGRect(x: 1, y: 1, width: 2, height: 2),
+                confidence: 0.9, classID: 1)] : [],
+            failure: failed
+                ? VideoInferenceFailure(DetectorError.noModelSelected) : nil,
+            timings: try VideoFrameTimings(
+                readyMilliseconds: 1, modelTiming: nil, doneMilliseconds: 2))
     }
 
     /// Finalizes the report even when the caller task has already been cancelled.
@@ -260,6 +383,7 @@ private actor VideoSessionWorker: OfflineVideoProcessing {
         }
         pending = nil
         consumer = nil
+        previewConsumer = nil
     }
 
     /// Keeps callback identity tied to the input supplied at run creation.

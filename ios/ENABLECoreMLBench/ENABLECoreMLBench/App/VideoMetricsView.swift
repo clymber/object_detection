@@ -6,12 +6,18 @@ struct VideoMetricsView: View {
     let completedFrames: Int
     let failedFrames: Int
     let unfinishedFrames: Int
+    let previewEnabled: Bool?
+    let previewFrames: Int
+    let previewFPS: Double?
 
     var body: some View {
         Group {
             Section {
                 LabeledContent(
                     "Build configuration", value: Self.buildConfiguration)
+                LabeledContent(
+                    "Preview during run",
+                    value: previewEnabled.map { $0 ? "On" : "Off" } ?? "—")
                 LabeledContent(
                     "Run time", value: number(
                         metrics.runElapsedMilliseconds.map { $0 / 1000 }, unit: "s"))
@@ -69,7 +75,9 @@ struct VideoMetricsView: View {
                     "Completed FPS (run)",
                     value: number(metrics.completedRunFramesPerSecond, unit: "FPS"))
                     .accessibilityIdentifier("videoCompletedFPS")
-                LabeledContent("Display FPS", value: "Unmeasured")
+                LabeledContent("Preview frames drawn", value: String(previewFrames))
+                LabeledContent("Preview FPS (drawn)", value: previewRateText)
+                    .accessibilityIdentifier("videoPreviewFPS")
             } header: {
                 Text("Video throughput")
             } footer: {
@@ -77,11 +85,17 @@ struct VideoMetricsView: View {
                     "Model FPS uses total measured model time. End-to-end FPS includes "
                         + "gaps and decoding between frames. Input and completed run "
                         + "rates share the full run time and appear at run end. "
-                        + "Playback display FPS is separate and unmeasured."
+                        + "Preview FPS counts distinct frames drawn, separately from "
+                        + "processing. Physical screen refresh is unmeasured."
                 )
             }
         }
         .monospacedDigit()
+    }
+
+    private var previewRateText: String {
+        guard let previewEnabled else { return "—" }
+        return previewEnabled ? number(previewFPS, unit: "FPS") : "Off"
     }
 
     /// Shows the build being measured so Debug/Release comparisons stay explicit.

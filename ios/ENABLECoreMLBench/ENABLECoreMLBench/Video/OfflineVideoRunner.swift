@@ -45,6 +45,7 @@ nonisolated protocol OfflineVideoProcessing: Actor {
         _ url: URL, sourceID: String, model: DetectorModel,
         selection: VideoFrameSelection, loopIndex: Int,
         trackID: CMPersistentTrackID?,
+        preview: (@Sendable (VideoFramePreview) async throws -> Void)?,
         consume: @escaping @Sendable (VideoFrameResult) async throws -> Void
     ) async throws -> OfflineVideoRunSummary
 }
@@ -59,6 +60,7 @@ extension OfflineVideoProcessing {
 /// Processes selected frames serially, without a playback clock or age-based skips.
 actor OfflineVideoRunner: OfflineVideoProcessing {
     typealias Consumer = @Sendable (VideoFrameResult) async throws -> Void
+    typealias PreviewConsumer = @Sendable (VideoFramePreview) async throws -> Void
     typealias Converter = @Sendable (VideoFrame) throws -> UprightVideoFrame
 
     private let engine: DetectorEngine
@@ -85,7 +87,8 @@ actor OfflineVideoRunner: OfflineVideoProcessing {
     func run(
         _ url: URL, sourceID: String, model: DetectorModel,
         selection: VideoFrameSelection = .all, loopIndex: Int = 0,
-        trackID: CMPersistentTrackID? = nil, consume: @escaping Consumer
+        trackID: CMPersistentTrackID? = nil, preview: PreviewConsumer? = nil,
+        consume: @escaping Consumer
     ) async throws -> OfflineVideoRunSummary {
         guard !isRunning else { throw OfflineVideoError.alreadyRunning }
         let indices = try validatedIndices(selection)
@@ -97,7 +100,8 @@ actor OfflineVideoRunner: OfflineVideoProcessing {
         let reader = VideoFrameReader()
         activeReader = reader
         latestReport = OfflineVideoRunReport(
-            sourceID: sourceID, model: model, loopIndex: loopIndex, indices: indices)
+            sourceID: sourceID, model: model, loopIndex: loopIndex, indices: indices,
+            previewEnabled: preview != nil)
         var stage = OfflineVideoStage.modelLoading
         var activeFrame: VideoFrameReadInfo?
         var decoded = 0
@@ -151,6 +155,10 @@ actor OfflineVideoRunner: OfflineVideoProcessing {
                 stage = .consumption
                 try await consume(result)
                 try checkRequest(request)
+                if let preview {
+                    try await preview(VideoFramePreview(frame: frame, result: result))
+                    try checkRequest(request)
+                }
             }
             await reader.cancel()
             try checkRequest(request)

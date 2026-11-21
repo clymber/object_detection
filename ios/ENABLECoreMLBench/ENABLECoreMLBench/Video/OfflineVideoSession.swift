@@ -25,6 +25,11 @@ final class OfflineVideoSession {
     private(set) var unfinishedFrames = 0
     private(set) var latestReport: OfflineVideoRunReport?
     private(set) var metrics = OfflineVideoRunMetrics()
+    private(set) var isPreviewEnabled = false
+    private(set) var previewEnabledForRun: Bool?
+    private(set) var previewFrame: VideoFramePreview?
+    private(set) var previewStatistics = VideoPreviewStatistics()
+    private(set) var previewGeneration = UUID()
 
     @ObservationIgnored private let worker: any OfflineVideoProcessing
     @ObservationIgnored private var task: Task<Void, Never>?
@@ -44,6 +49,14 @@ final class OfflineVideoSession {
     /// Accepts a real offline runner or a controlled worker for lifecycle checks.
     init(worker: any OfflineVideoProcessing = OfflineVideoRunner()) {
         self.worker = worker
+    }
+
+    /// Configures the next run and releases pixels immediately when switched off.
+    func setPreviewEnabled(_ enabled: Bool) {
+        guard !isBusy, enabled != isPreviewEnabled else { return }
+        isPreviewEnabled = enabled
+        previewFrame = nil
+        previewGeneration = UUID()
     }
 
     /// Replaces input/results, waiting for cancelled work before enabling Start.
@@ -74,15 +87,23 @@ final class OfflineVideoSession {
         let request = generation
         activeRequest = request
         clearResults()
+        let previewEnabled = isPreviewEnabled
+        previewEnabledForRun = previewEnabled
         status = .preparing
         message = "Loading \(model.displayName) and opening the video…"
         let worker = worker
+        let preview: OfflineVideoRunner.PreviewConsumer? = previewEnabled
+            ? { @Sendable [weak self] frame in
+                guard let self else { throw CancellationError() }
+                try await self.receivePreview(frame, request: request)
+            } : nil
         task = Task { [weak self] in
             var failure: (any Error)?
             do {
                 _ = try await worker.run(
                     sourceURL, sourceID: sourceID, model: model,
                     selection: .all, loopIndex: 0, trackID: nil,
+                    preview: preview,
                     consume: { [weak self] result in
                         guard let self else { throw CancellationError() }
                         try await self.receive(result, request: request)
@@ -121,6 +142,26 @@ final class OfflineVideoSession {
         message = "Processing every video frame in source order…"
     }
 
+    /// Publishes a complete image/result pair and keeps at most one preview image.
+    private func receivePreview(_ frame: VideoFramePreview, request: UInt64) throws {
+        try Task.checkCancellation()
+        guard generation == request, activeRequest == request, isPreviewEnabled,
+            status == .running
+        else { throw CancellationError() }
+        previewStatistics.admit(frame.drawToken)
+        previewFrame = frame
+    }
+
+    /// Rejects old view callbacks after input changes, new runs or toggle changes.
+    func recordPreviewDraw(
+        _ token: VideoPreviewDrawToken, generation: UUID, at milliseconds: Double
+    ) {
+        guard generation == previewGeneration, isPreviewEnabled,
+            previewStatistics.canRecord(token, at: milliseconds)
+        else { return }
+        previewStatistics.record(token, at: milliseconds)
+    }
+
     /// Retains partial reports and prevents an old run from replacing a new input.
     private func finish(
         report: OfflineVideoRunReport?, metrics: OfflineVideoRunMetrics?,
@@ -136,6 +177,7 @@ final class OfflineVideoSession {
         latestReport = report
         if let metrics { self.metrics = metrics }
         if let report {
+            previewEnabledForRun = report.previewEnabled
             completedFrames = report.completedFrames
             failedFrames = report.failedFrames
             unfinishedFrames = report.unfinishedFrames
@@ -170,6 +212,10 @@ final class OfflineVideoSession {
         unfinishedFrames = 0
         latestReport = nil
         metrics = OfflineVideoRunMetrics()
+        previewEnabledForRun = nil
+        previewFrame = nil
+        previewStatistics = VideoPreviewStatistics()
+        previewGeneration = UUID()
     }
 
     /// Presents the currently selected input after old work has fully stopped.
