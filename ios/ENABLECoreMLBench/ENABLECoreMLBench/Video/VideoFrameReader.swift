@@ -47,6 +47,7 @@ actor VideoFrameReader {
     private(set) var state = State.idle
     private(set) var failure: VideoReaderError?
     private(set) var selectedTrackID: CMPersistentTrackID?
+    private(set) var selectedTimeRange: CMTimeRange?
     private(set) var framesRead = 0
     private(set) var lastFrameInfo: VideoFrameReadInfo?
 
@@ -70,6 +71,7 @@ actor VideoFrameReader {
         state = .opening
         failure = nil
         selectedTrackID = nil
+        selectedTimeRange = nil
         framesRead = 0
         lastPresentationTime = nil
         lastFrameInfo = nil
@@ -102,6 +104,8 @@ actor VideoFrameReader {
             }
             let transform = try await track.load(.preferredTransform)
             try checkRequest(request)
+            let timeRange = try await track.load(.timeRange)
+            try checkRequest(request)
             let decoding = try AVAssetReader(asset: asset)
             let trackOutput = AVAssetReaderTrackOutput(
                 track: track,
@@ -127,6 +131,7 @@ actor VideoFrameReader {
             self.loopIndex = loopIndex
             preferredTransform = transform
             selectedTrackID = track.trackID
+            selectedTimeRange = timeRange
             state = .reading
         } catch {
             // A superseded open must not overwrite or cancel the newer reader.

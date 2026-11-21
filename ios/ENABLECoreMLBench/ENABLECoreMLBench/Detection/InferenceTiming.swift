@@ -10,6 +10,12 @@ nonisolated enum InferenceClock {
         let elapsed = reference.duration(to: ContinuousClock.now).components
         return Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15
     }
+
+    /// Suspends until an absolute deadline on the same clock as inference timings.
+    static func sleep(untilMilliseconds deadline: Double) async throws {
+        try await ContinuousClock().sleep(
+            until: origin.advanced(by: .milliseconds(deadline)), tolerance: .zero)
+    }
 }
 
 /// Measures prepared-input submission through required CPU output readback.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check video decoding, offline sessions and numerical metrics without real models.
+# Check decoding, paced sources, offline sessions and metrics without real models.
 set -euo pipefail
 
 video_workspace=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -22,6 +22,7 @@ video_tests=("$@")
 if [[ $# -eq 0 ]]; then
   video_tests=(
     VideoFrameContract VideoFrameReader VideoFrameConversion BundledVideo
+    VideoPlaybackTimeline PacedVideoSource
     VideoFrameDetection VideoFrameResult VideoFrameTiming
     VideoPreview VideoPreviewRendering
     OfflineVideoCoverage OfflineVideoMetrics OfflineVideoRunner OfflineVideoSession

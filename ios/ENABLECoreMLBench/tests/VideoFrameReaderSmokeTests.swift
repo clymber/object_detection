@@ -35,6 +35,10 @@ struct VideoFrameReaderSmokeTests {
     private static func testFramesAndEOF(_ url: URL) async throws {
         let reader = VideoFrameReader()
         try await reader.open(url, sourceID: "fixture-track")
+        let timeRange = await reader.selectedTimeRange
+        precondition(timeRange?.start == .zero)
+        precondition(timeRange!.duration.isNumeric)
+        precondition(CMTimeCompare(timeRange!.duration, .zero) > 0)
         for index in timestamps.indices {
             let snapshot = try await reader.nextFrame { try inspectFrame($0) }
             let frame = snapshot!.metadata
@@ -73,6 +77,8 @@ struct VideoFrameReaderSmokeTests {
             try await reader.open(url, sourceID: "fixture-track", trackID: .max)
         }
         precondition(error == .trackNotFound(.max))
+        let failedRange = await reader.selectedTimeRange
+        precondition(failedRange == nil, "Failed reopen retained the old track range")
         await reader.cancel()
         let state = await reader.state
         precondition(state == .failed, "Cancellation erased a recorded failure")
@@ -199,11 +205,12 @@ struct VideoFrameReaderSmokeTests {
 
     /// Requires a retained reader error, distinguishing it from EOF and cancellation.
     private static func expectFailure(
-        _ reader: VideoFrameReader, operation: () async throws -> Void
+        _ reader: VideoFrameReader, context: String = #function,
+        operation: () async throws -> Void
     ) async throws -> VideoReaderError {
         do {
             try await operation()
-            preconditionFailure("Invalid video operation succeeded")
+            preconditionFailure("Invalid video operation succeeded in \(context)")
         } catch let error as VideoReaderError {
             let state = await reader.state
             let retained = await reader.failure
