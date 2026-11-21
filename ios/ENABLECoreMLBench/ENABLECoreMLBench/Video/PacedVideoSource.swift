@@ -45,7 +45,7 @@ actor PacedVideoSource {
     }
 
     /// Runs once by default; nil loopCount repeats until cancellation. No frames are
-    /// skipped here: queue admission and result freshness belong to the next stage.
+    /// skipped here: PacedVideoScheduler classifies admission; freshness is separate.
     func run(
         _ url: URL, sourceID: String, firstLoopIndex: Int = 0,
         loopCount: Int? = 1, trackID: CMPersistentTrackID? = nil,

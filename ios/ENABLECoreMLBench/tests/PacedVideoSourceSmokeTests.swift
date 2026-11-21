@@ -28,7 +28,8 @@ struct PacedVideoSourceSmokeTests {
         try await testFailures(video)
         try await testContinuousLoopCancellation(video)
         try await testRealClock(video)
-        print("Paced video source: all 8 checks passed.")
+        try await testBoundedDetectorHandoff(video)
+        print("Paced video source: all 9 checks passed.")
     }
 
     /// Checks actual PTS, rotation, frame identity and the complete final-frame span.
@@ -252,6 +253,54 @@ struct PacedVideoSourceSmokeTests {
         precondition(started.frames.count == 1, "Slow inference was never in flight")
     }
 
+    /// Decoded frames enter the bounded queue while a real detector adapter is held.
+    private static func testBoundedDetectorHandoff(_ url: URL) async throws {
+        let detector = PacedQueueDetectorFixture()
+        let queue = PacedVideoScheduler(
+            detector: VideoFrameDetector(detector: detector))
+        let worker = Task { try await queue.run() }
+        let source = PacedVideoSource()
+        let supplied = try await source.run(
+            url, sourceID: "queue-integration", firstLoopIndex: 6, loopCount: 2) {
+                try queue.offer($0)
+            }
+        precondition(supplied.deliveredFrames == timestamps.count * 2)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while await detector.calls == 0 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        let held = queue.snapshot
+        precondition(held.acceptedFrames == timestamps.count * 2
+                     && held.activeFrames == 1)
+        precondition(held.pendingFrames <= 1)
+        precondition(held.outcomes.allSatisfy { $0.status == .skippedSuperseded })
+        queue.finishInput()
+        await detector.release()
+        let result = try await worker.value
+        precondition(result.state == .completed
+                     && result.outcomes.count == timestamps.count * 2)
+        precondition(result.activeFrames == 0 && result.pendingFrames == 0)
+        let sorted = result.outcomes.sorted {
+            ($0.metadata.loopIndex, $0.metadata.sourceFrameIndex)
+                < ($1.metadata.loopIndex, $1.metadata.sourceFrameIndex)
+        }
+        for (offset, outcome) in sorted.enumerated() {
+            let index = offset % timestamps.count
+            precondition(outcome.metadata.sourceID == "queue-integration")
+            precondition(outcome.metadata.loopIndex == 6 + offset / timestamps.count)
+            precondition(outcome.metadata.sourceFrameIndex == index)
+            precondition(outcome.metadata.presentationTime
+                         == CMTime(value: timestamps[index], timescale: 30000))
+            if let inference = outcome.result {
+                precondition(inference.sourceWidth == 32
+                             && inference.sourceHeight == 64)
+                precondition(inference.status == .completed
+                             && inference.detections.isEmpty)
+                precondition(inference.timings.publishedMilliseconds == nil)
+            }
+        }
+    }
+
     /// Polls a locked observation with a bounded timeout while the source awaits PTS.
     private static func waitForFrames(
         _ recorder: PacedFrameRecorder, count: Int
@@ -348,3 +397,28 @@ nonisolated private final class PacedFrameRecorder: @unchecked Sendable {
 
 /// Separates deliberate downstream failures from fixture creation errors.
 nonisolated private enum FixtureFailure: Error { case expected, encoding }
+
+/// Keeps inference active while real source decoding and cadence continue to EOF.
+private actor PacedQueueDetectorFixture: ObjectDetector {
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var released = false
+    private var active = false
+    private(set) var calls = 0
+
+    /// Returns empty detections only after the test releases its first active request.
+    func detect(in image: CGImage) async throws -> [Detection] {
+        precondition(!active, "Real video handoff overlapped inference")
+        active = true
+        calls += 1
+        if !released { await withCheckedContinuation { waiting = $0 } }
+        active = false
+        return []
+    }
+
+    /// Lets the held inference finish and permits the queue to drain its pending tail.
+    func release() {
+        released = true
+        waiting?.resume()
+        waiting = nil
+    }
+}
