@@ -45,6 +45,13 @@ nonisolated struct PacedVideoRunCounts: Sendable {
     var skippedFrames: Int { skippedSupersededFrames + skippedStaleFrames }
     var unfinishedFrames: Int { activeFrames + pendingFrames + cancelledFrames }
 
+    /// Starts UI progress before the worker has admitted an input.
+    init() {
+        inputFrames = 0
+        activeFrames = 0
+        pendingFrames = 0
+    }
+
     /// Rebuilds counters from immutable logs off the UI actor, including empty results.
     init(queue: PacedVideoQueueSnapshot) {
         inputFrames = queue.acceptedFrames
@@ -106,7 +113,7 @@ nonisolated struct PacedVideoRunMetrics: Sendable {
     /// Total counters retain drain work; window rates exclude post-window outcomes.
     init(
         queue: PacedVideoQueueSnapshot, window: PacedVideoMeasurementWindow,
-        displaySamples: [PacedVideoDrawSample]? = nil
+        displaySamples: [PacedVideoDrawSample]? = nil, finalizeStatistics: Bool = true
     ) {
         self.window = window
         totals = PacedVideoRunCounts(queue: queue)
@@ -141,18 +148,25 @@ nonisolated struct PacedVideoRunMetrics: Sendable {
         postWindowPublications = published.filter {
             $0.publication.publishedMilliseconds! >= window.endedMilliseconds
         }.count
-        modelLatency = VideoLatencyStatistics(samples: inWindow.compactMap {
-            $0.result!.timings.modelLatencyMilliseconds
-        })
-        frameLatency = VideoLatencyStatistics(samples: inWindow.map {
-            $0.result!.timings.endToEndMilliseconds
-        })
-        completedAge = VideoLatencyStatistics(samples: inWindow.compactMap {
-            $0.completedAgeMilliseconds
-        })
-        publishedAge = VideoLatencyStatistics(samples: received.compactMap {
-            $0.publishedAgeMilliseconds
-        })
+        if finalizeStatistics {
+            modelLatency = VideoLatencyStatistics(samples: inWindow.compactMap {
+                $0.result!.timings.modelLatencyMilliseconds
+            })
+            frameLatency = VideoLatencyStatistics(samples: inWindow.map {
+                $0.result!.timings.endToEndMilliseconds
+            })
+            completedAge = VideoLatencyStatistics(samples: inWindow.compactMap {
+                $0.completedAgeMilliseconds
+            })
+            publishedAge = VideoLatencyStatistics(samples: received.compactMap {
+                $0.publishedAgeMilliseconds
+            })
+        } else {
+            modelLatency = VideoLatencyStatistics()
+            frameLatency = VideoLatencyStatistics()
+            completedAge = VideoLatencyStatistics()
+            publishedAge = VideoLatencyStatistics()
+        }
         displayFrames = displaySamples.map { samples in
             var firstDraws: [UUID: Double] = [:]
             for sample in samples where sample.drawnMilliseconds.isFinite

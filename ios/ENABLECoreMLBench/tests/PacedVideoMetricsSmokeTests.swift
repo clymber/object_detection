@@ -199,7 +199,8 @@ struct PacedVideoMetricsSmokeTests {
             acceptedFrames: inputs.count, inputDeliveryMilliseconds: inputs,
             activeFrames: active, pendingFrames: pending,
             activePublications: 0, pendingPublications: 0,
-            publicationEnabled: publicationEnabled, outcomes: outcomes)
+            publicationEnabled: publicationEnabled, previewEnabled: false,
+            outcomes: outcomes)
     }
 
     /// Preserves raw source identity while varying completion and publication timings.

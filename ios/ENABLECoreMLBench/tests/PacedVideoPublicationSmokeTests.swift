@@ -19,7 +19,8 @@ struct PacedVideoPublicationSmokeTests {
         try await testTicketLifetimeAndConsumerErrors()
         try await testFailedAndSkippedFrames()
         try await testInvalidReceiptClock()
-        print("Paced publication: 11 age, receipt and cancellation checks passed.")
+        try await testPreviewReceipt()
+        print("Paced publication: 12 age, receipt, preview and cancellation checks passed.")
     }
 
     /// Rechecks on MainActor after its hop, including exactly 200 ms and empty results.
@@ -149,7 +150,9 @@ struct PacedVideoPublicationSmokeTests {
         let queue = PacedVideoScheduler(nowMilliseconds: { clock.now }) {
             try result($0, done: clock.now)
         }
-        let worker = Task { try await queue.run { try await receiver.receive($0) } }
+        let worker = Task { try await queue.run(previewEnabled: true) {
+            try await receiver.receive($0)
+        } }
         try queue.offer(frame(index: 0, now: 1000))
         try await waitForReceiver(receiver)
         clock.set(1050)
@@ -308,6 +311,44 @@ struct PacedVideoPublicationSmokeTests {
         }
     }
 
+    /// Exact-frame preview uses the same gate; disabled preview leaves receipt available.
+    private static func testPreviewReceipt() async throws {
+        for enabled in [false, true] {
+            let clock = PublicationClock()
+            let recorder = PublicationPreviewRecorder()
+            let input = try frame(index: 0, now: 1000)
+            let queue = PacedVideoScheduler(nowMilliseconds: { clock.now }) {
+                try result($0, done: clock.now)
+            }
+            try queue.offer(input)
+            queue.finishInput()
+            let snapshot = try await queue.run(previewEnabled: enabled) { ticket in
+                try await recorder.receive(ticket)
+            }
+            precondition(snapshot.previewEnabled == enabled)
+            precondition(snapshot.outcomes[0].publication.status == .published)
+            precondition(recorder.previews.count == (enabled ? 1 : 0))
+            if enabled {
+                precondition(recorder.previews[0].image === input.frame.image)
+                precondition(recorder.previews[0].result.metadata == input.frame.metadata)
+                precondition(recorder.previews[0].result.timings.publishedMilliseconds == 1000)
+            }
+        }
+        let clock = PublicationClock()
+        let recorder = PublicationPreviewRecorder()
+        let queue = PacedVideoScheduler(nowMilliseconds: { clock.now }) {
+            try result($0, done: clock.now)
+        }
+        try queue.offer(frame(index: 0, now: 1000))
+        queue.finishInput()
+        let late = try await queue.run(previewEnabled: true) { ticket in
+            clock.set(1201)
+            try await recorder.receive(ticket)
+        }
+        precondition(recorder.previews.isEmpty)
+        precondition(late.outcomes[0].publication.status == .late)
+    }
+
     /// Waits for async scheduling independently of deterministic frame age.
     private static func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
@@ -344,6 +385,18 @@ private final class PublicationRecorder {
     }
 }
 
+/// Tests preview receipt without retaining or drawing any unchecked frame.
+@MainActor
+private final class PublicationPreviewRecorder {
+    var previews: [VideoFramePreview] = []
+
+    /// Uses numerical receipt when no preview was configured on the worker.
+    func receive(_ delivery: PacedVideoDelivery) throws {
+        if let preview = try delivery.receivePreview() { previews.append(preview) }
+        else { _ = try delivery.receive() }
+    }
+}
+
 /// Models a delayed actor handoff without blocking the independent inference worker.
 private actor HeldPublicationReceiver {
     private var waiting: CheckedContinuation<Void, Never>?
@@ -355,7 +408,8 @@ private actor HeldPublicationReceiver {
     func receive(_ ticket: PacedVideoDelivery) async throws {
         calls += 1
         if !released { await withCheckedContinuation { waiting = $0 } }
-        if let result = try ticket.receive() { received.append(result) }
+        if let preview = try ticket.receivePreview() { received.append(preview.result) }
+        else if let result = try ticket.receive() { received.append(result) }
     }
 
     /// Opens the receiving gate without changing the source clock or model work.

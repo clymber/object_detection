@@ -58,6 +58,7 @@ nonisolated struct PacedVideoQueueSnapshot: Sendable {
     let activePublications: Int
     let pendingPublications: Int
     let publicationEnabled: Bool
+    let previewEnabled: Bool
     let outcomes: [PacedVideoFrameOutcome]
 }
 
@@ -106,8 +107,10 @@ actor PacedVideoScheduler {
 
     /// Drains inference and optional bounded delivery independently. A consumer must
     /// receive its ticket after the actor hop; nil consumer records no publication.
-    func run(consume: Consumer? = nil) async throws -> PacedVideoQueueSnapshot {
-        try inbox.begin(publicationEnabled: consume != nil)
+    func run(
+        previewEnabled: Bool = false, consume: Consumer? = nil
+    ) async throws -> PacedVideoQueueSnapshot {
+        try inbox.begin(publicationEnabled: consume != nil, previewEnabled: previewEnabled)
         let inbox = self.inbox
         let publisher = consume.map { consume in
             Task.detached { try await Self.deliver(inbox: inbox, consume: consume) }
@@ -170,7 +173,9 @@ actor PacedVideoScheduler {
         do {
             for await _ in inbox.publicationSignals {
                 while let index = try inbox.takePublication() {
-                    let ticket = PacedVideoDelivery { try inbox.receive(index: index) }
+                    let ticket = PacedVideoDelivery(
+                        accept: { try inbox.receive(index: index) },
+                        preview: { try inbox.receivePreview(index: index) })
                     let failure: (any Error)?
                     do {
                         try await consume(ticket)
@@ -194,7 +199,8 @@ actor PacedVideoScheduler {
 }
 
 /// Protects all mutable admission state with one lock. Signals carry no pixels and
-/// coalesce to one wake-up; only pending and the worker's active frame retain images.
+/// coalesce to one wake-up. Preview optionally adds one active and one pending image
+/// to the bounded input images; numerical logs never retain images.
 nonisolated private final class PacedVideoInbox: @unchecked Sendable {
     private let lock = NSLock()
     private let nowMilliseconds: @Sendable () -> Double
@@ -215,6 +221,9 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
     private var publicationEnabled = false
     private var activePublication: Int?
     private var pendingPublication: Int?
+    private var previewEnabled = false
+    private var pendingPreview: UprightVideoFrame?
+    private var activePreview: UprightVideoFrame?
 
     /// Uses a bounded signal stream so producer traffic cannot create queued tasks.
     init(nowMilliseconds: @escaping @Sendable () -> Double) {
@@ -235,6 +244,7 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
                 activePublications: activePublication == nil ? 0 : 1,
                 pendingPublications: pendingPublication == nil ? 0 : 1,
                 publicationEnabled: publicationEnabled,
+                previewEnabled: previewEnabled,
                 outcomes: outcomes)
         }
     }
@@ -330,6 +340,7 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
                     }
                     setPublication(index, status: .pending)
                     pendingPublication = index
+                    pendingPreview = previewEnabled ? frame.frame : nil
                 }
             }
         }
@@ -337,11 +348,12 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
     }
 
     /// Permits only one drain task for this run, including after it has completed.
-    func begin(publicationEnabled: Bool) throws {
+    func begin(publicationEnabled: Bool, previewEnabled: Bool) throws {
         try lock.withLock {
             guard !started else { throw PacedVideoQueueError.alreadyStarted }
             started = true
             self.publicationEnabled = publicationEnabled
+            self.previewEnabled = publicationEnabled && previewEnabled
         }
     }
 
@@ -372,6 +384,8 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
                 }
             }
             pendingPublication = nil
+            pendingPreview = nil
+            activePreview = nil
         }
         wake.finish()
         publicationWake.finish()
@@ -384,13 +398,15 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
         publicationWake.finish()
     }
 
-    /// Claims a pending delivery without holding any source pixels or invoking UI.
+    /// Claims delivery, retaining an image only when preview was requested.
     func takePublication() throws -> Int? {
         try lock.withLock {
             guard state != .cancelled, let index = pendingPublication else {
                 return nil
             }
             pendingPublication = nil
+            let preview = pendingPreview
+            pendingPreview = nil
             let now: Double
             do {
                 now = try currentTime(
@@ -405,37 +421,50 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
             }
             precondition(activePublication == nil)
             activePublication = index
+            activePreview = preview
             return index
         }
     }
 
     /// Checks age and cancellation atomically at actual consumer receipt after its hop.
     func receive(index: Int) throws -> VideoFrameResult? {
+        try lock.withLock { try receiveLocked(index: index) }
+    }
+
+    /// Keeps image/result receipt atomic and validates the pair before handing it out.
+    func receivePreview(index: Int) throws -> VideoFramePreview? {
         try lock.withLock {
-            guard activePublication == index,
-                outcomes[index].publication.status == .pending else { return nil }
-            guard state != .cancelled, !Task.isCancelled else {
-                setPublication(index, status: .cancelled, at: try? currentTime())
-                return nil
-            }
-            let result = outcomes[index].result!
-            let now: Double
-            do {
-                now = try currentTime(notBefore: result.timings.doneMilliseconds)
-            } catch {
-                setPublication(index, status: .failed, failure: error)
-                throw error
-            }
-            guard now - outcomes[index].dueMilliseconds <= 200 else {
-                setPublication(index, status: .late, at: now)
-                return nil
-            }
-            let received = try result.published(at: now)
-            outcomes[index].publication = PacedVideoPublicationOutcome(
-                status: .published, checkedMilliseconds: now,
-                publishedMilliseconds: now)
-            return received
+            guard activePublication == index, let frame = activePreview else { return nil }
+            guard let result = try receiveLocked(index: index) else { return nil }
+            return try VideoFramePreview(frame: frame, result: result)
         }
+    }
+
+    /// Performs the single receipt decision under the existing inbox lock.
+    private func receiveLocked(index: Int) throws -> VideoFrameResult? {
+        guard activePublication == index,
+            outcomes[index].publication.status == .pending else { return nil }
+        guard state != .cancelled, !Task.isCancelled else {
+            setPublication(index, status: .cancelled, at: try? currentTime())
+            return nil
+        }
+        let result = outcomes[index].result!
+        let now: Double
+        do {
+            now = try currentTime(notBefore: result.timings.doneMilliseconds)
+        } catch {
+            setPublication(index, status: .failed, failure: error)
+            throw error
+        }
+        guard now - outcomes[index].dueMilliseconds <= 200 else {
+            setPublication(index, status: .late, at: now)
+            return nil
+        }
+        let received = try result.published(at: now)
+        outcomes[index].publication = PacedVideoPublicationOutcome(
+            status: .published, checkedMilliseconds: now,
+            publishedMilliseconds: now)
+        return received
     }
 
     /// Expires unclaimed tickets and retains receipt if later consumer work fails.
@@ -457,6 +486,7 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
                     failure: VideoInferenceFailure(failure))
             }
             activePublication = nil
+            activePreview = nil
         }
     }
 
@@ -476,6 +506,7 @@ nonisolated private final class PacedVideoInbox: @unchecked Sendable {
         lock.withLock {
             precondition(!active && pending == nil)
             precondition(activePublication == nil && pendingPublication == nil)
+            precondition(activePreview == nil && pendingPreview == nil)
             if state != .cancelled { state = .completed }
         }
     }

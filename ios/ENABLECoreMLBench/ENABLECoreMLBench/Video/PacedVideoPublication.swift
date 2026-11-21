@@ -29,13 +29,21 @@ nonisolated struct PacedVideoPublicationOutcome: Sendable {
 /// An opaque, single-use receipt; raw detections stay hidden until freshness passes.
 nonisolated struct PacedVideoDelivery: Sendable {
     private let accept: @Sendable () throws -> VideoFrameResult?
+    private let acceptPreview: (@Sendable () throws -> VideoFramePreview?)?
 
     /// Binds this receipt to the scheduler's cancellation and monotonic-clock gate.
-    init(accept: @escaping @Sendable () throws -> VideoFrameResult?) {
+    init(
+        accept: @escaping @Sendable () throws -> VideoFrameResult?,
+        preview: (@Sendable () throws -> VideoFramePreview?)? = nil
+    ) {
         self.accept = accept
+        acceptPreview = preview
     }
 
     /// Call on the receiving actor, then use the result synchronously without another
     /// await. Nil means late, cancelled, already received or an expired callback.
     func receive() throws -> VideoFrameResult? { try accept() }
+
+    /// Accepts the same fresh receipt with its exact image when preview was enabled.
+    func receivePreview() throws -> VideoFramePreview? { try acceptPreview?() }
 }

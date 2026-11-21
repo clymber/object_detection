@@ -11,7 +11,7 @@ struct ContentView: View {
     @State private var session = StillImageSession()
     @State private var batch = StillImageBatchSession()
     @State private var media = MediaImportSession()
-    @State private var videoSession = OfflineVideoSession()
+    @State private var videoSession = VideoSession()
     @State private var inputSource = MediaInputSource.testImages
     @State private var selectedModel = DetectorModel.rfdetrSmall
     @State private var selectedSample = BundledSample.testPositive6988
@@ -37,14 +37,18 @@ struct ContentView: View {
                 if inputSource.isVideo {
                     videoSection
                     videoDetectionSection
-                    VideoMetricsView(
-                        metrics: videoSession.metrics,
-                        completedFrames: videoSession.completedFrames,
-                        failedFrames: videoSession.failedFrames,
-                        unfinishedFrames: videoSession.unfinishedFrames,
-                        previewEnabled: videoSession.previewEnabledForRun,
-                        previewFrames: videoSession.previewStatistics.drawnFrames,
-                        previewFPS: videoSession.previewStatistics.framesPerSecond)
+                    if videoSession.mode == .offline {
+                        VideoMetricsView(
+                            metrics: videoSession.offline.metrics,
+                            completedFrames: videoSession.offline.completedFrames,
+                            failedFrames: videoSession.offline.failedFrames,
+                            unfinishedFrames: videoSession.offline.unfinishedFrames,
+                            previewEnabled: videoSession.offline.previewEnabledForRun,
+                            previewFrames: videoSession.offline.previewStatistics.drawnFrames,
+                            previewFPS: videoSession.offline.previewStatistics.framesPerSecond)
+                    } else {
+                        PacedVideoMetricsView(session: videoSession.paced)
+                    }
                 } else {
                     Section {
                         FramePreview(
@@ -321,6 +325,15 @@ struct ContentView: View {
 
     private var videoDetectionSection: some View {
         Section {
+            Picker("Processing", selection: Binding(
+                get: { videoSession.mode }, set: { videoSession.setMode($0) })) {
+                ForEach(VideoProcessingMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(isBusy)
+            .accessibilityIdentifier("videoProcessingModePicker")
             Toggle("Show detection preview", isOn: Binding(
                 get: { videoSession.isPreviewEnabled },
                 set: { videoSession.setPreviewEnabled($0) }))
@@ -334,7 +347,7 @@ struct ContentView: View {
             if videoSession.isBusy {
                 ProgressView { Text(videoSession.progressText) }
                     .accessibilityIdentifier("videoDetectionProgress")
-            } else if videoSession.latestReport != nil {
+            } else if videoSession.hasReport {
                 Text(videoSession.progressText)
                     .accessibilityIdentifier("videoDetectionProgress")
             }
@@ -358,9 +371,12 @@ struct ContentView: View {
         } header: {
             Text("Video detection")
         } footer: {
-            Text(
-                "Processes every frame from the beginning at the detector’s speed. "
-                    + "Set preview before Start; leave it off for baseline benchmarks.")
+            Text(videoSession.mode == .offline
+                ? "Processes every frame from the beginning at the detector’s speed. "
+                    + "Set preview before Start; leave it off for baseline benchmarks."
+                : "Runs once from the beginning at source cadence, skipping older waiting "
+                    + "frames. Results publish only within 200 ms of their source time. "
+                    + "Preview shows the exact accepted frame; leave it off for baseline runs.")
         }
     }
 

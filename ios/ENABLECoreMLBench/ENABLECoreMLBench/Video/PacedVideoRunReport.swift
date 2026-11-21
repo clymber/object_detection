@@ -4,6 +4,17 @@ import Foundation
 nonisolated struct PacedVideoRunProgress: Sendable {
     let source: PacedVideoSourceReport?
     let counts: PacedVideoRunCounts
+    let metrics: PacedVideoRunMetrics?
+
+    /// Allows controlled workers to omit live rates until a clock anchor exists.
+    init(
+        source: PacedVideoSourceReport?, counts: PacedVideoRunCounts,
+        metrics: PacedVideoRunMetrics? = nil
+    ) {
+        self.source = source
+        self.counts = counts
+        self.metrics = metrics
+    }
 }
 
 /// Combines source interruptions, skipped-frame logs and separate result publications.
@@ -15,6 +26,7 @@ nonisolated struct PacedVideoRunReport: Sendable {
     let model: DetectorModel
     let firstLoopIndex: Int
     let requestedLoopCount: Int?
+    let previewEnabled: Bool
     let startedMilliseconds = InferenceClock.nowMilliseconds()
     private(set) var endedMilliseconds: Double?
     private(set) var status = Status.running
@@ -48,11 +60,15 @@ nonisolated struct PacedVideoRunReport: Sendable {
     }
 
     /// Binds run identity before model loading, preserving failures with no input yet.
-    init(sourceID: String, model: DetectorModel, firstLoopIndex: Int, loopCount: Int?) {
+    init(
+        sourceID: String, model: DetectorModel, firstLoopIndex: Int, loopCount: Int?,
+        previewEnabled: Bool = false
+    ) {
         self.sourceID = sourceID
         self.model = model
         self.firstLoopIndex = firstLoopIndex
         requestedLoopCount = loopCount
+        self.previewEnabled = previewEnabled
     }
 
     /// Finalizes all logs only after active inference and delivery have unwound.

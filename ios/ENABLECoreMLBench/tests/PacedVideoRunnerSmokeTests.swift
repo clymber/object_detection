@@ -22,7 +22,8 @@ struct PacedVideoRunnerSmokeTests {
         try await testModelAndSourceFailures(video)
         try await testConversionAndConsumerFailures(video)
         try await testDecodeFailure(video)
-        print("Paced runner: 6 source, progress, report and lifecycle checks passed.")
+        try await testPacedUISession(video)
+        print("Paced runner: 7 source, UI, progress and lifecycle checks passed.")
     }
 
     /// Defaults to numerical receipt with preview off and measures the source interval.
@@ -222,6 +223,37 @@ struct PacedVideoRunnerSmokeTests {
             precondition((loss.dueMilliseconds != nil) == knownPTS)
             precondition(loss.observedMilliseconds != nil && !loss.cancelled)
         }
+    }
+
+    /// Real decoded frames reach the UI through gated preview receipt on MainActor.
+    private static func testPacedUISession(_ url: URL) async throws {
+        let detector = RunnerDetector()
+        let session = PacedVideoSession(
+            worker: PacedVideoRunner(engine: DetectorEngine(loader: { _ in detector })),
+            pollInterval: .milliseconds(10))
+        session.select(url, sourceID: "paced-ui")
+        session.setPreviewEnabled(true)
+        session.start(model: .rfdetrSmall)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while session.isBusy && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        precondition(session.status == .completed && session.canStart)
+        precondition(session.counts.inputFrames == 4)
+        precondition(session.latestReport?.previewEnabled == true)
+        precondition(session.latestReport?.queue?.previewEnabled == true)
+        let preview = session.previewFrame!
+        precondition(preview.image.width == 32 && preview.image.height == 64)
+        precondition(preview.result.metadata.sourceID == "paced-ui")
+        precondition(preview.result.timings.publishedMilliseconds != nil)
+        precondition(preview.result.detections.isEmpty)
+        precondition(session.metrics?.freshResultsPerSecond != nil)
+        precondition(session.previewStatistics.drawnFrames == 0)
+        let time = session.metrics!.window.endedMilliseconds - 0.001
+        session.recordPreviewDraw(
+            preview.drawToken, generation: session.previewGeneration, at: time)
+        precondition(session.previewStatistics.drawnFrames == 1)
+        precondition(session.displayFramesPerSecond! > 0)
     }
 
     /// Synchronizes cancellation only after inference has actually entered the backend.

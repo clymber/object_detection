@@ -24,6 +24,7 @@ if [[ $# -eq 0 ]]; then
     VideoFrameContract VideoFrameReader VideoFrameConversion BundledVideo
     VideoPlaybackTimeline PacedVideoSource PacedVideoScheduler PacedVideoPublication
     PacedVideoMetrics PacedVideoRunner
+    PacedVideoSession
     VideoFrameDetection VideoFrameResult VideoFrameTiming
     VideoPreview VideoPreviewRendering
     OfflineVideoCoverage OfflineVideoMetrics OfflineVideoRunner OfflineVideoSession

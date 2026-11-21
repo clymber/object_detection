@@ -1,8 +1,24 @@
 import CoreMedia
 import Foundation
 
+/// Exposes the paced lifecycle to a UI session and controlled lifecycle workers.
+nonisolated protocol PacedVideoProcessing: Actor {
+    var latestReport: PacedVideoRunReport? { get }
+    var latestMetrics: PacedVideoRunMetrics? { get }
+
+    /// Runs a frozen configuration with gated numerical or preview receipt.
+    func run(
+        _ url: URL, sourceID: String, model: DetectorModel,
+        firstLoopIndex: Int, loopCount: Int?, trackID: CMPersistentTrackID?,
+        previewEnabled: Bool, consume: PacedVideoScheduler.Consumer?
+    ) async throws -> PacedVideoRunReport
+
+    /// Returns pixel-free counts and live rates without final percentile sorting.
+    func progress() async -> PacedVideoRunProgress?
+}
+
 /// Loads once and combines source-clock, bounded queue and receipt logs for one run.
-actor PacedVideoRunner {
+actor PacedVideoRunner: PacedVideoProcessing {
     private let engine: DetectorEngine
     private let converter: PacedVideoSource.Converter
     private let readerFactory: PacedVideoSource.ReaderFactory
@@ -35,6 +51,7 @@ actor PacedVideoRunner {
         _ url: URL, sourceID: String, model: DetectorModel,
         firstLoopIndex: Int = 0, loopCount: Int? = 1,
         trackID: CMPersistentTrackID? = nil,
+        previewEnabled: Bool = false,
         consume: PacedVideoScheduler.Consumer? = { _ = try $0.receive() }
     ) async throws -> PacedVideoRunReport {
         guard !isRunning else { throw VideoPlaybackError.alreadyRunning }
@@ -43,7 +60,8 @@ actor PacedVideoRunner {
         let request = generation
         latestReport = PacedVideoRunReport(
             sourceID: sourceID, model: model,
-            firstLoopIndex: firstLoopIndex, loopCount: loopCount)
+            firstLoopIndex: firstLoopIndex, loopCount: loopCount,
+            previewEnabled: previewEnabled)
         let source = PacedVideoSource(
             readerFactory: readerFactory, converter: converter)
         let queue = PacedVideoScheduler(detector: VideoFrameDetector(detector: engine))
@@ -58,7 +76,9 @@ actor PacedVideoRunner {
             try checkRequest(request)
             try await engine.selectModel(model)
             try checkRequest(request)
-            let processing = Task { try await queue.run(consume: consume) }
+            let processing = Task {
+                try await queue.run(previewEnabled: previewEnabled, consume: consume)
+            }
             do {
                 try await withTaskCancellationHandler {
                     _ = try await source.run(
@@ -119,8 +139,19 @@ actor PacedVideoRunner {
         let request = generation
         let sourceReport = await source.latestReport
         guard isRunning, request == generation else { return nil }
+        let snapshot = queue.snapshot
+        let window = sourceReport?.timeline.flatMap { timeline in
+            try? PacedVideoMeasurementWindow(
+                startedMilliseconds: timeline.anchorMilliseconds,
+                endedMilliseconds: sourceReport?.endedMilliseconds
+                    ?? InferenceClock.nowMilliseconds())
+        }
+        let metrics = window.map {
+            PacedVideoRunMetrics(queue: snapshot, window: $0, finalizeStatistics: false)
+        }
         return PacedVideoRunProgress(
-            source: sourceReport, counts: PacedVideoRunCounts(queue: queue.snapshot))
+            source: sourceReport, counts: PacedVideoRunCounts(queue: snapshot),
+            metrics: metrics)
     }
 
     /// Rejects work completed after Stop while retaining the finalized diagnostic log.
