@@ -258,7 +258,12 @@ struct PacedVideoSourceSmokeTests {
         let detector = PacedQueueDetectorFixture()
         let queue = PacedVideoScheduler(
             detector: VideoFrameDetector(detector: detector))
-        let worker = Task { try await queue.run() }
+        let published = PacedResultRecorder()
+        let worker = Task {
+            try await queue.run { delivery in
+                try await published.receive(delivery)
+            }
+        }
         let source = PacedVideoSource()
         let supplied = try await source.run(
             url, sourceID: "queue-integration", firstLoopIndex: 6, loopCount: 2) {
@@ -277,6 +282,7 @@ struct PacedVideoSourceSmokeTests {
         queue.finishInput()
         await detector.release()
         let result = try await worker.value
+        precondition(!published.received.isEmpty)
         precondition(result.state == .completed
                      && result.outcomes.count == timestamps.count * 2)
         precondition(result.activeFrames == 0 && result.pendingFrames == 0)
@@ -297,6 +303,17 @@ struct PacedVideoSourceSmokeTests {
                 precondition(inference.status == .completed
                              && inference.detections.isEmpty)
                 precondition(inference.timings.publishedMilliseconds == nil)
+                precondition(outcome.publication.status == .published
+                             || outcome.publication.status == .late
+                             || outcome.publication.status == .superseded)
+            }
+            if outcome.publication.status == .published {
+                precondition(outcome.publishedAgeMilliseconds! <= 200)
+                let receipt = published.received.first {
+                    $0.metadata == outcome.metadata
+                }
+                precondition(receipt?.timings.publishedMilliseconds
+                             == outcome.publication.publishedMilliseconds)
             }
         }
     }
@@ -420,5 +437,16 @@ private actor PacedQueueDetectorFixture: ObjectDetector {
         released = true
         waiting?.resume()
         waiting = nil
+    }
+}
+
+/// Receives numerical results with preview off after the real MainActor handoff.
+@MainActor
+private final class PacedResultRecorder {
+    var received: [VideoFrameResult] = []
+
+    /// Grants receipt only while the scheduler still considers this result fresh.
+    func receive(_ delivery: PacedVideoDelivery) throws {
+        if let result = try delivery.receive() { received.append(result) }
     }
 }

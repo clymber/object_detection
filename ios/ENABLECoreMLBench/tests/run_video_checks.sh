@@ -22,7 +22,7 @@ video_tests=("$@")
 if [[ $# -eq 0 ]]; then
   video_tests=(
     VideoFrameContract VideoFrameReader VideoFrameConversion BundledVideo
-    VideoPlaybackTimeline PacedVideoSource PacedVideoScheduler
+    VideoPlaybackTimeline PacedVideoSource PacedVideoScheduler PacedVideoPublication
     VideoFrameDetection VideoFrameResult VideoFrameTiming
     VideoPreview VideoPreviewRendering
     OfflineVideoCoverage OfflineVideoMetrics OfflineVideoRunner OfflineVideoSession
