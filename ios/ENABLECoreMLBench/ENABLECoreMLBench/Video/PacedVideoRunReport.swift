@@ -27,6 +27,7 @@ nonisolated struct PacedVideoRunReport: Sendable {
     let firstLoopIndex: Int
     let requestedLoopCount: Int?
     let previewEnabled: Bool
+    let requestedTrackID: Int32?
     let startedMilliseconds = InferenceClock.nowMilliseconds()
     let startedAt = Date()
     private(set) var endedAt: Date?
@@ -64,13 +65,14 @@ nonisolated struct PacedVideoRunReport: Sendable {
     /// Binds run identity before model loading, preserving failures with no input yet.
     init(
         sourceID: String, model: DetectorModel, firstLoopIndex: Int, loopCount: Int?,
-        previewEnabled: Bool = false
+        previewEnabled: Bool = false, trackID: Int32? = nil
     ) {
         self.sourceID = sourceID
         self.model = model
         self.firstLoopIndex = firstLoopIndex
         requestedLoopCount = loopCount
         self.previewEnabled = previewEnabled
+        requestedTrackID = trackID
     }
 
     /// Finalizes all logs only after active inference and delivery have unwound.

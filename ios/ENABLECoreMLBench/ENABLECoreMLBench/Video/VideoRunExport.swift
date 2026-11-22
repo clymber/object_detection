@@ -40,6 +40,13 @@ nonisolated enum VideoRunExport: Sendable {
 /// Holds only the three completed files; a failed export never exposes partial files.
 nonisolated struct VideoExportFiles: Sendable {
     let directory: URL
+    let fingerprints: [String: String]
+
+    /// Retains independent hashes of all three files for checking a saved copy.
+    init(directory: URL, fingerprints: [String: String] = [:]) {
+        self.directory = directory
+        self.fingerprints = fingerprints
+    }
     var urls: [URL] {
         ["frames.jsonl", "timings.csv", "mobile_run.json"].map {
             directory.appendingPathComponent($0)

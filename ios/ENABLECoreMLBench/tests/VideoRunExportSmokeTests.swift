@@ -21,6 +21,7 @@ struct VideoRunExportSmokeTests {
         let offline = try offlineReport()
         let first = try await exporter.export(.offline(offline), sourceURL: source)
         try verifyOffline(first)
+        try await verifySavedCopy(first, folder: folder)
         let paced = try pacedReport()
         let second = try await exporter.export(.paced(paced), sourceURL: source)
         try verifyPaced(second)
@@ -62,6 +63,7 @@ struct VideoRunExportSmokeTests {
             preconditionFailure("Running report was exported")
         } catch {}
         try await verifyExportSession(run: .offline(offline), files: first, source: source)
+        try await verifyVerificationLifecycle(run: .offline(offline), files: first)
         let index: [String: String] = ["offline": first.directory.path,
             "paced": second.directory.path, "failed_before_frames": zero.directory.path]
         try JSONSerialization.data(withJSONObject: index).write(
@@ -166,7 +168,7 @@ struct VideoRunExportSmokeTests {
         precondition(rows[3]["status"] as! String == "unfinished")
         let metadata = try mobile(files)
         let validity = metadata["validity"] as! [String: Any]
-        precondition(validity["coverage_status"] as! String == "unverified")
+        precondition(validity["coverage_status"] as! String == "incomplete")
         let model = metadata["model_provenance"] as! [String: Any]
         precondition(model["runtime_model_sha256"] is NSNull)
         precondition(model["manifest"] is [String: Any])
@@ -207,6 +209,38 @@ struct VideoRunExportSmokeTests {
         }
     }
 
+    /// Exercises a transferred folder, fresh UI readback and byte-level tamper rejection.
+    @MainActor
+    static func verifySavedCopy(_ files: VideoExportFiles, folder: URL) async throws {
+        let saved = folder.appendingPathComponent("SavedCopy")
+        try FileManager.default.copyItem(at: files.directory, to: saved)
+        let verified = try VideoExportVerifier.verify(saved, expected: files.fingerprints)
+        precondition(verified.records == 4 && verified.fingerprints.count == 3)
+        let session = VideoExportSession(write: { _, _ in files })
+        session.start(.offline(try offlineReport()), sourceURL: folder)
+        while session.isBusy { await Task.yield() }
+        session.verifySaved(saved)
+        while session.isBusy { await Task.yield() }
+        precondition(session.verification?.records == 4)
+        precondition(session.verificationStatus == .verified)
+        let csv = saved.appendingPathComponent("timings.csv")
+        var bytes = try Data(contentsOf: csv)
+        bytes.append(0x20)
+        try bytes.write(to: csv)
+        session.verifySaved(saved)
+        while session.isBusy { await Task.yield() }
+        precondition(session.verification == nil)
+        precondition(session.verificationStatus == .failed)
+        precondition(session.verificationMessage!.contains("differs from the prepared file"))
+        do {
+            _ = try VideoExportVerifier.verify(saved)
+            preconditionFailure("Changed CSV passed its run-file hash")
+        } catch {}
+        session.reset()
+        precondition(session.verification == nil && session.files == nil)
+        try FileManager.default.removeItem(at: saved)
+    }
+
     /// Reads the exported run metadata from disk.
     static func mobile(_ files: VideoExportFiles) throws -> [String: Any] {
         try JSONSerialization.jsonObject(with: Data(contentsOf: files.urls[2])) as! [String: Any]
@@ -240,7 +274,7 @@ struct VideoRunExportSmokeTests {
     @MainActor
     static func verifyExportSession(run: VideoRunExport, files: VideoExportFiles, source: URL) async throws {
         let gate = ExportTestGate()
-        let session = VideoExportSession { _, _ in try await gate.wait() }
+        let session = VideoExportSession(write: { _, _ in try await gate.wait() })
         session.start(run, sourceURL: source)
         while !(await gate.isWaiting) { await Task.yield() }
         session.reset()
@@ -257,6 +291,76 @@ struct VideoRunExportSmokeTests {
         await gate.resume(.success(files))
         while session.isBusy { await Task.yield() }
         precondition(session.files?.directory == files.directory)
+    }
+
+    /// Keeps results through picker inactivity, then checks Stop and stale-reader rejection.
+    @MainActor
+    static func verifyVerificationLifecycle(run: VideoRunExport, files: VideoExportFiles) async throws {
+        let gate = VerificationTestGate()
+        let session = VideoExportSession(
+            read: { _, _ in try await gate.wait() }, write: { _, _ in files })
+        let coordinator = VideoSession(export: session)
+        let report = VideoExportVerification(
+            runID: "held-read", records: 4, fingerprints: files.fingerprints)
+        session.start(run, sourceURL: files.directory)
+        while session.isBusy { await Task.yield() }
+
+        session.verifySaved(files.directory)
+        while !(await gate.isWaiting) { await Task.yield() }
+        // ContentView uses this path for both picker-driven inactivity and disappearance.
+        coordinator.suspendDetection()
+        precondition(session.isBusy && session.files != nil)
+        precondition(session.verificationStatus == .checking)
+        await gate.resume(.success(report))
+        while session.isBusy { await Task.yield() }
+        coordinator.suspendDetection()
+        precondition(session.verificationStatus == .verified && session.verification != nil)
+        precondition(session.verificationMessage!.contains("4 frame records match"))
+        session.reportVerificationFailure(CocoaError(.userCancelled))
+        precondition(session.verificationStatus == .verified)
+
+        session.verifySaved(files.directory)
+        while !(await gate.isWaiting) { await Task.yield() }
+        coordinator.suspendDetection()
+        await gate.resume(.failure(CocoaError(.fileReadNoPermission)))
+        while session.isBusy { await Task.yield() }
+        coordinator.suspendDetection()
+        precondition(session.verificationStatus == .failed && session.verificationMessage != nil)
+        precondition(session.files?.directory == files.directory)
+
+        session.verifySaved(files.directory)
+        while !(await gate.isWaiting) { await Task.yield() }
+        coordinator.stop()
+        precondition(session.verificationStatus == .cancelled && !session.isBusy)
+        precondition(session.files?.directory == files.directory)
+        await gate.resume(.success(report))
+        for _ in 0..<20 { await Task.yield() }
+        precondition(session.verificationStatus == .cancelled && session.verification == nil)
+
+        session.verifySaved(files.directory)
+        while !(await gate.isWaiting) { await Task.yield() }
+        coordinator.select(nil)
+        await gate.resume(.failure(CocoaError(.fileReadNoPermission)))
+        for _ in 0..<20 { await Task.yield() }
+        precondition(session.verificationStatus == .idle && session.files == nil)
+        precondition(session.verificationMessage == nil)
+    }
+}
+
+/// Retains a read completion across inactivity and cancellation for deterministic checks.
+actor VerificationTestGate {
+    private var continuation: CheckedContinuation<VideoExportVerification, Error>?
+    var isWaiting: Bool { continuation != nil }
+
+    /// Suspends verification until the test injects a success or a provider error.
+    func wait() async throws -> VideoExportVerification {
+        try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+
+    /// Releases the reader even if its UI request has already been cancelled or reset.
+    func resume(_ result: Result<VideoExportVerification, Error>) {
+        continuation?.resume(with: result)
+        continuation = nil
     }
 }
 

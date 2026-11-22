@@ -5,6 +5,7 @@ Check framework-neutral reading and corruption rejection for mobile video export
 import csv
 import hashlib
 import json
+import shutil
 
 import pytest
 
@@ -12,6 +13,7 @@ from detection_evaluation.mobile_video import (
     CSV_COLUMNS,
     TIMING_NAMES,
     validate_mobile_video_export,
+    validate_transfer,
 )
 
 
@@ -81,6 +83,24 @@ def test_zero_frame_failure_is_readable(tmp_path):
     """
     write_export(tmp_path, empty=True)
     assert validate_mobile_video_export(tmp_path)["records"] == 0
+
+
+def test_saved_copy_preserves_all_run_metadata(tmp_path):
+    """
+    Detect changed settings in a copied metadata file even when its raw hashes match.
+    """
+    original = tmp_path / "original"
+    original.mkdir()
+    write_export(original)
+    saved = tmp_path / "saved"
+    shutil.copytree(original, saved)
+    assert validate_transfer(original, saved)["transfer"] == "passed"
+    path = saved / "mobile_run.json"
+    run = json.loads(path.read_text())
+    run["settings"]["preview_enabled"] = True
+    path.write_text(json.dumps(run))
+    with pytest.raises(ValueError, match="Saved file differs"):
+        validate_transfer(original, saved)
 
 
 def test_changed_file_hash_is_rejected(tmp_path):

@@ -27,6 +27,10 @@ struct BundledVideoResourcesSmokeTests {
             let url = try sample.resourceURL(in: bundle)
             let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
             precondition(hash(bytes) == entry["sha256"] as! String)
+            let reference = VideoCoverageReference(input: [
+                "source_id": sample.sourceID, "sha256": hash(bytes),
+                "manifest": ["entry": entry],
+            ])!
             let video = entry["video"] as! [String: Any]
             let base = video["time_base"] as! String
             let parts = base.split(separator: "/").map { Int32($0)! }
@@ -37,6 +41,7 @@ struct BundledVideoResourcesSmokeTests {
             while let metadata = try await reader.nextFrame({ $0.metadata }) {
                 precondition(metadata.sourceID == sample.sourceID)
                 precondition(metadata.sourceFrameIndex == pts.count)
+                precondition(reference.matches(metadata.presentationTime, index: pts.count))
                 precondition(metadata.width == video["width"] as! Int)
                 precondition(metadata.height == video["height"] as! Int)
                 // Core Media can express the same instant with a different time base.
@@ -65,6 +70,8 @@ struct BundledVideoResourcesSmokeTests {
             precondition(summary.completedFrames == 1)
             let report = await runner.latestReport
             precondition(report?.coverage.isFullyProcessed == true)
+            let coverage = VideoRunCoverage(run: .offline(report!), reference: reference)
+            precondition(coverage.status == "complete" && coverage.expected == 1)
             print(
                 "Bundled video \(sample.title): \(pts.count) frames, exact times "
                     + "and detection handoff passed.")

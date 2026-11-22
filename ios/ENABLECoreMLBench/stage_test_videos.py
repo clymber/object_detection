@@ -159,6 +159,9 @@ def stage(root: Path, ffmpeg: str, ffprobe: str) -> None:
             "source_sha256": file_hash(source),
             "resource_path": resource.relative_to(root).as_posix(),
             "source_video": summary(source_metadata), "video": summary(metadata),
+            "frame_reference": {
+                "time_base": metadata["time_base"], "pts": metadata["pts"],
+            },
             "conversion": conversion,
         })
         print(f"Staged {resource_name}: {len(metadata['pts'])} frames")

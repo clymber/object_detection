@@ -19,7 +19,8 @@ final class VideoSession {
     private var sourceURL: URL?
     private var sourceID: String?
 
-    var isBusy: Bool { offline.isBusy || paced.isBusy || export.isBusy }
+    var isDetecting: Bool { offline.isBusy || paced.isBusy }
+    var isBusy: Bool { isDetecting || export.isBusy }
     var canStart: Bool { !isBusy && (mode == .offline ? offline.canStart : paced.canStart) }
     var status: OfflineVideoSession.Status {
         mode == .offline ? offline.status : paced.status
@@ -87,11 +88,16 @@ final class VideoSession {
         else { paced.start(model: model) }
     }
 
-    /// Cancels on Stop, disappearance or backgrounding before old results can publish.
-    func stop() {
+    /// Stops inference during system UI transitions without erasing file verification.
+    func suspendDetection() {
         offline.stop()
         paced.stop()
-        if export.isBusy { export.reset() }
+    }
+
+    /// Cancels explicit Stop while retaining prepared files and verification feedback.
+    func stop() {
+        suspendDetection()
+        export.cancel()
     }
 
     /// Exports either final report, including failed/cancelled attempts, on demand.

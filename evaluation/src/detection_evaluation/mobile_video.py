@@ -11,6 +11,8 @@ import json
 import math
 from pathlib import Path
 
+from .mobile_video_coverage import validate_recalculated
+
 
 TIMING_NAMES = (
     "ready", "due", "delivered", "decided", "model_submitted", "model_completed",
@@ -185,8 +187,12 @@ def validate_mobile_video_export(directory: Path) -> dict:
         raise ValueError("File record count mismatch")
     if run["frame_records"] != len(frames):
         raise ValueError("Run record count mismatch")
+    coverage, metrics = validate_recalculated(run, frames)
     return {"run_id": run["run_id"], "mode": run["mode"], "records": len(frames),
-            "integrity": "passed", "validity": run["validity"]}
+            "integrity": "passed", "validity": run["validity"],
+            "coverage_status": coverage["status"],
+            "accounting_balanced": coverage["accounting_balanced"],
+            "metrics_recalculated": bool(metrics)}
 
 
 def main():
@@ -195,8 +201,27 @@ def main():
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directories", type=Path, nargs="+")
-    for directory in parser.parse_args().directories:
-        print(json.dumps(validate_mobile_video_export(directory), sort_keys=True))
+    parser.add_argument("--original", type=Path,
+                        help="Compare a saved copy with an original three-file export")
+    args = parser.parse_args()
+    if args.original is not None and len(args.directories) != 1:
+        parser.error("--original requires exactly one saved directory")
+    for directory in args.directories:
+        report = (validate_transfer(args.original, directory) if args.original is not None
+                  else validate_mobile_video_export(directory))
+        print(json.dumps(report, sort_keys=True))
+
+
+def validate_transfer(original: Path, saved: Path) -> dict:
+    """
+    Validate both packages and require exact transfer of all metadata and raw results.
+    """
+    validate_mobile_video_export(original)
+    result = validate_mobile_video_export(saved)
+    for name in ("frames.jsonl", "timings.csv", "mobile_run.json"):
+        if (Path(original) / name).read_bytes() != (Path(saved) / name).read_bytes():
+            raise ValueError(f"Saved file differs from original: {name}")
+    return result | {"transfer": "passed"}
 
 
 if __name__ == "__main__":

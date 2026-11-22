@@ -101,7 +101,7 @@ actor OfflineVideoRunner: OfflineVideoProcessing {
         activeReader = reader
         latestReport = OfflineVideoRunReport(
             sourceID: sourceID, model: model, loopIndex: loopIndex, indices: indices,
-            previewEnabled: preview != nil)
+            previewEnabled: preview != nil, trackID: trackID)
         var stage = OfflineVideoStage.modelLoading
         var activeFrame: VideoFrameReadInfo?
         var decoded = 0
@@ -199,6 +199,8 @@ actor OfflineVideoRunner: OfflineVideoProcessing {
                     cancelled: false, issue: issue))
             }
             let decodedCount = await reader.framesRead
+            latestReport?.recordDecodeFailure(
+                await reader.decodeFailureInfo, error: await reader.failure)
             latestReport?.recordDecodedFrames(decodedCount)
             let readerState = await reader.state
             if readerState == .completed { latestReport?.recordEndOfSource() }

@@ -7,6 +7,19 @@ import UniformTypeIdentifiers
 
 /// Selects frozen inputs, personal photos or videos without mixing their results.
 struct ContentView: View {
+    /// Freezes file routing before presentation, including after the picker dismisses.
+    private enum FileImportPurpose: Equatable {
+        case photo, video, savedVideoResults
+
+        var contentTypes: [UTType] {
+            switch self {
+            case .photo: [.image]
+            case .video: [.movie]
+            case .savedVideoResults: [.folder]
+            }
+        }
+    }
+
     @Environment(\.scenePhase) private var scenePhase
     @State private var session = StillImageSession()
     @State private var batch = StillImageBatchSession()
@@ -19,6 +32,7 @@ struct ContentView: View {
     @State private var photoSelection: PhotosPickerItem?
     @State private var videoSelection: PhotosPickerItem?
     @State private var showingFiles = false
+    @State private var fileImportPurpose = FileImportPurpose.photo
     @State private var player: AVPlayer?
 
     private var isBusy: Bool {
@@ -73,18 +87,9 @@ struct ContentView: View {
         .task { loadSelectedImage() }
         .fileImporter(
             isPresented: $showingFiles,
-            allowedContentTypes: inputSource.isVideo ? [.movie] : [.image]
-        ) {
-            result in
-            switch result {
-            case .success(let url):
-                prepareForImport()
-                media.importFile(url, as: inputSource.isVideo ? .video : .photo)
-            case .failure(let error):
-                if (error as NSError).code != NSUserCancelledError {
-                    media.report(error)
-                }
-            }
+            allowedContentTypes: fileImportPurpose.contentTypes
+        ) { [purpose = fileImportPurpose] result in
+            handleFileImport(result, purpose: purpose)
         }
         .onChange(of: inputSource) { _, _ in
             stopPlayback()
@@ -139,7 +144,7 @@ struct ContentView: View {
         .onDisappear {
             session.stop()
             batch.stop()
-            videoSession.stop()
+            videoSession.suspendDetection()
             media.cancel()
             player?.pause()
         }
@@ -147,7 +152,7 @@ struct ContentView: View {
             if phase != .active {
                 session.stop()
                 batch.stop()
-                videoSession.stop()
+                videoSession.suspendDetection()
                 media.cancel()
                 player?.pause()
             } else if !inputSource.isVideo && session.image == nil && !isBusy {
@@ -241,7 +246,10 @@ struct ContentView: View {
     }
 
     private var filesButton: some View {
-        Button("Choose from Files", systemImage: "folder") { showingFiles = true }
+        Button("Choose from Files", systemImage: "folder") {
+            fileImportPurpose = inputSource.isVideo ? .video : .photo
+            showingFiles = true
+        }
             .disabled(isBusy)
             .accessibilityIdentifier("chooseMediaFile")
     }
@@ -344,7 +352,7 @@ struct ContentView: View {
                 .accessibilityIdentifier("videoDetectionStatus")
             Text(videoSession.message).font(.footnote).foregroundStyle(.secondary)
                 .accessibilityIdentifier("videoDetectionMessage")
-            if videoSession.isBusy {
+            if videoSession.isDetecting {
                 ProgressView { Text(videoSession.progressText) }
                     .accessibilityIdentifier("videoDetectionProgress")
             } else if videoSession.hasReport {
@@ -383,6 +391,28 @@ struct ContentView: View {
                     SharePreview(url.lastPathComponent)
                 }
                 .accessibilityIdentifier("shareVideoResults")
+                Button("Verify saved results", systemImage: "checkmark.shield") {
+                    fileImportPurpose = .savedVideoResults
+                    showingFiles = true
+                }
+                .disabled(isBusy)
+                .accessibilityIdentifier("verifySavedVideoResults")
+                if videoSession.export.verificationStatus != .idle {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if videoSession.export.verificationStatus == .checking {
+                            ProgressView("Checking saved files…")
+                        } else {
+                            Label(videoSession.export.verificationStatus.rawValue,
+                                  systemImage: verificationSymbol)
+                                .font(.headline)
+                                .foregroundStyle(verificationColor)
+                        }
+                        if let detail = videoSession.export.verificationMessage {
+                            Text(detail).font(.footnote).textSelection(.enabled)
+                        }
+                    }
+                    .accessibilityIdentifier("savedVideoVerificationStatus")
+                }
             }
         } header: {
             Text("Video detection")
@@ -393,6 +423,22 @@ struct ContentView: View {
                 : "Runs once from the beginning at source cadence, skipping older waiting "
                     + "frames. Results publish only within 200 ms of their source time. "
                     + "Preview shows the exact accepted frame; leave it off for baseline runs.")
+        }
+    }
+
+    private var verificationSymbol: String {
+        switch videoSession.export.verificationStatus {
+        case .verified: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        default: "info.circle"
+        }
+    }
+
+    private var verificationColor: Color {
+        switch videoSession.export.verificationStatus {
+        case .verified: .green
+        case .failed: .red
+        default: .secondary
         }
     }
 
@@ -462,6 +508,24 @@ struct ContentView: View {
                 session.clear(message: "Choose a photo, then tap Start.")
             }
         case .testVideos, .video: session.clear()
+        }
+    }
+
+    /// Routes the captured purpose without resetting a video run for saved-file checks.
+    private func handleFileImport(_ result: Result<URL, Error>, purpose: FileImportPurpose) {
+        if purpose == .savedVideoResults {
+            switch result {
+            case .success(let directory): videoSession.export.verifySaved(directory)
+            case .failure(let error): videoSession.export.reportVerificationFailure(error)
+            }
+            return
+        }
+        switch result {
+        case .success(let url):
+            prepareForImport()
+            media.importFile(url, as: purpose == .video ? .video : .photo)
+        case .failure(let error):
+            if (error as NSError).code != NSUserCancelledError { media.report(error) }
         }
     }
 

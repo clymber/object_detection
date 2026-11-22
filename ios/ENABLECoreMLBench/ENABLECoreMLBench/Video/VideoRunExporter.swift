@@ -33,7 +33,17 @@ actor VideoRunExporter {
         do {
             let count = try writeRecords(run, runID: runID, to: staging)
             var metadata = mobileRun(run, runID: runID, recordCount: count)
-            metadata["input"] = try inputReference(run, url: sourceURL)
+            let input = try inputReference(run, url: sourceURL)
+            metadata["input"] = input
+            let coverage = VideoRunCoverage(run: run, reference: VideoCoverageReference(input: input))
+            metadata["coverage"] = coverage.json
+            var validity = metadata["validity"] as! [String: Any]
+            validity["coverage_status"] = coverage.status
+            validity["reasons"] = coverage.reasons + [
+                "Video parity has not been verified",
+                "Diagnostic run without benchmark warm-up or repetitions",
+                "Sustained-run conditions have not been verified"]
+            metadata["validity"] = validity
             metadata["model_provenance"] = try modelReference(run.model)
             metadata["files"] = [
                 "frames.jsonl": [
@@ -45,9 +55,10 @@ actor VideoRunExporter {
             ]
             try Self.json(metadata, pretty: true).write(
                 to: staging.appendingPathComponent("mobile_run.json"))
+            let verified = try VideoExportVerifier.verify(staging)
             try Task.checkCancellation()
             try manager.moveItem(at: staging, to: target)
-            return VideoExportFiles(directory: target)
+            return VideoExportFiles(directory: target, fingerprints: verified.fingerprints)
         } catch {
             try? manager.removeItem(at: staging)
             throw error
@@ -137,6 +148,7 @@ actor VideoRunExporter {
                 "frame_indices": VideoExportRecord.nullable(r.selectedFrameIndices),
                 "frame_selection": r.selectedFrameIndices == nil ? "all" : "indices",
                 "selected_track_id": NSNull(),
+                "requested_track_id": VideoExportRecord.nullable(r.requestedTrackID),
                 "track_unavailable_reason": "Offline report does not retain track ID",
             ]
             value["host_window_ms"] = [
@@ -148,6 +160,12 @@ actor VideoRunExporter {
             value["issue"] = r.issue.map {
                 ["stage": $0.stage.rawValue, "details": VideoExportRecord.failure($0.details)]
             } as Any? ?? NSNull()
+            value["decode_loss"] = r.decodeFailure.map {
+                ["attempted_frame_index": $0.sourceFrameIndex,
+                 "pts": VideoExportRecord.time($0.presentationTime),
+                 "details": VideoExportRecord.failure(r.decodeFailureDetails),
+                 "lost_frame_count": NSNull()] as [String: Any]
+            } as Any? ?? NSNull()
             value["metrics"] = offlineMetrics(r)
         case .paced(let r):
             value["selection"] = [
@@ -155,6 +173,7 @@ actor VideoRunExporter {
                 "loop_count": VideoExportRecord.nullable(r.requestedLoopCount),
                 "frame_selection": "source cadence with bounded latest-frame queue",
                 "selected_track_id": VideoExportRecord.nullable(r.source?.selectedTrackID),
+                "requested_track_id": VideoExportRecord.nullable(r.requestedTrackID),
             ]
             value["host_window_ms"] = ["started": r.startedMilliseconds,
                 "ended": VideoExportRecord.nullable(r.endedMilliseconds)]

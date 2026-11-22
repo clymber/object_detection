@@ -78,6 +78,7 @@ nonisolated struct OfflineVideoRunReport: Sendable {
     let loopIndex: Int
     let selectedFrameIndices: [Int]?
     let previewEnabled: Bool
+    let requestedTrackID: CMPersistentTrackID?
     let startedMilliseconds = InferenceClock.nowMilliseconds()
     let startedAt = Date()
     private(set) var endedAt: Date?
@@ -90,6 +91,8 @@ nonisolated struct OfflineVideoRunReport: Sendable {
     private(set) var unfinishedFrames = 0
     private(set) var outcomes: [OfflineFrameOutcome] = []
     private(set) var issue: OfflineVideoIssue?
+    private(set) var decodeFailure: VideoFrameDecodeFailureInfo?
+    private(set) var decodeFailureDetails: VideoInferenceFailure?
 
     var summary: OfflineVideoRunSummary {
         OfflineVideoRunSummary(
@@ -108,13 +111,22 @@ nonisolated struct OfflineVideoRunReport: Sendable {
     /// Binds a fresh report to the validated selection before loading any model.
     init(
         sourceID: String, model: DetectorModel, loopIndex: Int, indices: [Int]?,
-        previewEnabled: Bool = false
+        previewEnabled: Bool = false, trackID: CMPersistentTrackID? = nil
     ) {
         self.sourceID = sourceID
         self.model = model
         self.loopIndex = loopIndex
         selectedFrameIndices = indices
         self.previewEnabled = previewEnabled
+        requestedTrackID = trackID
+    }
+
+    /// Retains genuine decoder loss independently of cancellation or converter errors.
+    mutating func recordDecodeFailure(
+        _ info: VideoFrameDecodeFailureInfo?, error: VideoReaderError?
+    ) {
+        decodeFailure = info
+        decodeFailureDetails = info == nil ? nil : error.map { VideoInferenceFailure($0) }
     }
 
     /// Appends numerical outcomes in source order without retaining frame pixels.

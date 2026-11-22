@@ -61,7 +61,7 @@ actor PacedVideoRunner: PacedVideoProcessing {
         latestReport = PacedVideoRunReport(
             sourceID: sourceID, model: model,
             firstLoopIndex: firstLoopIndex, loopCount: loopCount,
-            previewEnabled: previewEnabled)
+            previewEnabled: previewEnabled, trackID: trackID)
         let source = PacedVideoSource(
             readerFactory: readerFactory, converter: converter)
         let queue = PacedVideoScheduler(detector: VideoFrameDetector(detector: engine))

@@ -174,7 +174,7 @@ struct PacedVideoSessionSmokeTests {
         try await wait { await paced.runCount == 1 }
         let model = await paced.model
         precondition(model == .rfdetrNano)
-        session.stop()
+        session.suspendDetection()
         await paced.finish(.cancelled)
         try await wait { !session.isBusy }
         session.setMode(.offline)
