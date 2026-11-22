@@ -79,6 +79,8 @@ nonisolated struct OfflineVideoRunReport: Sendable {
     let selectedFrameIndices: [Int]?
     let previewEnabled: Bool
     let startedMilliseconds = InferenceClock.nowMilliseconds()
+    let startedAt = Date()
+    private(set) var endedAt: Date?
     private(set) var endedMilliseconds: Double?
     private(set) var status = Status.running
     private(set) var decodedFrames = 0
@@ -136,5 +138,6 @@ nonisolated struct OfflineVideoRunReport: Sendable {
         self.status = status
         self.issue = issue
         endedMilliseconds = InferenceClock.nowMilliseconds()
+        endedAt = Date()
     }
 }

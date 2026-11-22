@@ -28,6 +28,8 @@ nonisolated struct PacedVideoRunReport: Sendable {
     let requestedLoopCount: Int?
     let previewEnabled: Bool
     let startedMilliseconds = InferenceClock.nowMilliseconds()
+    let startedAt = Date()
+    private(set) var endedAt: Date?
     private(set) var endedMilliseconds: Double?
     private(set) var status = Status.running
     private(set) var source: PacedVideoSourceReport?
@@ -81,5 +83,6 @@ nonisolated struct PacedVideoRunReport: Sendable {
         self.queue = queue
         issue = error.map { VideoInferenceFailure($0) }
         endedMilliseconds = InferenceClock.nowMilliseconds()
+        endedAt = Date()
     }
 }

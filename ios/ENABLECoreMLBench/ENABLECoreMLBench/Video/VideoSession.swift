@@ -14,11 +14,12 @@ nonisolated enum VideoProcessingMode: String, CaseIterable, Identifiable, Sendab
 final class VideoSession {
     let offline: OfflineVideoSession
     let paced: PacedVideoSession
+    let export: VideoExportSession
     private(set) var mode = VideoProcessingMode.offline
     private var sourceURL: URL?
     private var sourceID: String?
 
-    var isBusy: Bool { offline.isBusy || paced.isBusy }
+    var isBusy: Bool { offline.isBusy || paced.isBusy || export.isBusy }
     var canStart: Bool { !isBusy && (mode == .offline ? offline.canStart : paced.canStart) }
     var status: OfflineVideoSession.Status {
         mode == .offline ? offline.status : paced.status
@@ -42,19 +43,22 @@ final class VideoSession {
 
     /// Permits controlled child sessions without changing default app behaviour.
     init(
-        offline: OfflineVideoSession? = nil, paced: PacedVideoSession? = nil
+        offline: OfflineVideoSession? = nil, paced: PacedVideoSession? = nil,
+        export: VideoExportSession? = nil
     ) {
         let engine = DetectorEngine()
         self.offline = offline ?? OfflineVideoSession(
             worker: OfflineVideoRunner(engine: engine))
         self.paced = paced ?? PacedVideoSession(
             worker: PacedVideoRunner(engine: engine))
+        self.export = export ?? VideoExportSession()
     }
 
     /// Clears old mode results and rejects interactive switches while work is active.
     func setMode(_ mode: VideoProcessingMode) {
         guard !isBusy, self.mode != mode else { return }
         self.mode = mode
+        export.reset()
         offline.select(sourceURL, sourceID: sourceID)
         paced.select(sourceURL, sourceID: sourceID)
     }
@@ -68,6 +72,7 @@ final class VideoSession {
 
     /// Invalidates both modes on input/model changes, preserving the mode choice.
     func select(_ url: URL?, sourceID: String? = nil) {
+        export.reset()
         sourceURL = url
         self.sourceID = sourceID
         offline.select(url, sourceID: sourceID)
@@ -77,6 +82,7 @@ final class VideoSession {
     /// Starts only the selected mode with a frozen model and one source pass.
     func start(model: DetectorModel) {
         guard !isBusy else { return }
+        export.reset()
         if mode == .offline { offline.start(model: model) }
         else { paced.start(model: model) }
     }
@@ -85,6 +91,22 @@ final class VideoSession {
     func stop() {
         offline.stop()
         paced.stop()
+        if export.isBusy { export.reset() }
+    }
+
+    /// Exports either final report, including failed/cancelled attempts, on demand.
+    func exportResults() {
+        guard !isBusy, let sourceURL else { return }
+        switch mode {
+        case .offline:
+            if let report = offline.latestReport {
+                export.start(.offline(report), sourceURL: sourceURL)
+            }
+        case .paced:
+            if let report = paced.latestReport {
+                export.start(.paced(report), sourceURL: sourceURL)
+            }
+        }
     }
 
     /// Routes only a current generation's renderer acknowledgement to the active mode.

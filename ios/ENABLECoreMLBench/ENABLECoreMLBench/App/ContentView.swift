@@ -368,6 +368,22 @@ struct ContentView: View {
                     .disabled(!videoSession.isBusy || videoSession.status == .stopping)
                     .accessibilityIdentifier("stopVideoDetection")
             }
+            if videoSession.hasReport {
+                Button("Prepare export", systemImage: "doc.badge.gearshape") {
+                    videoSession.exportResults()
+                }
+                .disabled(isBusy)
+                .accessibilityIdentifier("prepareVideoExport")
+            }
+            if let message = videoSession.export.message {
+                Text(message).font(.footnote).foregroundStyle(.secondary)
+            }
+            if let files = videoSession.export.files {
+                ShareLink("Save or share results", items: files.urls) { url in
+                    SharePreview(url.lastPathComponent)
+                }
+                .accessibilityIdentifier("shareVideoResults")
+            }
         } header: {
             Text("Video detection")
         } footer: {
