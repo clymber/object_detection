@@ -9,9 +9,9 @@ import SwiftUI
 struct CameraView: View {
     @Bindable var session: CameraSession
     @Binding var configuration: CameraConfiguration
-    let model: DetectorModel
     let otherBusy: Bool
     let verifySaved: () -> Void
+    let showFullScreen: () -> Void
 
     var body: some View {
         Group {
@@ -80,12 +80,25 @@ struct CameraView: View {
             if let frame = session.previewFrame,
                 session.configurationForRun?.detectionPreview == true
             {
-                Section("Processed camera frame") {
-                    detectionFrame(frame)
+                Section {
+                    ProcessedCameraFrame(
+                        session: session, frame: frame, presentation: .inline)
                     Text("Capture callback \(frame.result.metadata.sourceFrameIndex)")
                         .font(.caption).monospacedDigit()
                     if frame.result.detections.isEmpty {
                         Text("No detections in this frame.").font(.caption)
+                    }
+                } header: {
+                    HStack {
+                        Text("Processed camera frame")
+                        Spacer()
+                        Button(action: showFullScreen) {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Show processed camera frame full screen")
+                        .accessibilityIdentifier("expandCameraPreview")
                     }
                 }
             } else if session.isCapturing
@@ -102,21 +115,6 @@ struct CameraView: View {
                 Text(session.message).font(.footnote)
                     .foregroundStyle(session.status == .error ? Color.red : .secondary)
                     .accessibilityIdentifier("cameraMessage")
-                HStack {
-                    Button("Start", systemImage: "play.fill") {
-                        session.start(configuration: configuration, model: model)
-                    }
-                    .buttonStyle(.borderedProminent).disabled(
-                        session.isBusy || otherBusy
-                    )
-                    .accessibilityIdentifier("startCameraDetection")
-                    Spacer()
-                    Button("Stop", systemImage: "stop.fill") { session.stop() }
-                        .buttonStyle(.bordered).disabled(
-                            !session.isCapturing || session.status == .stopping
-                        )
-                        .accessibilityIdentifier("stopCameraDetection")
-                }
                 if session.authorization == .denied
                     || session.authorization == .restricted
                 {
@@ -217,18 +215,6 @@ struct CameraView: View {
         }
     }
 
-    /// Uses the same source-pixel box geometry and distinct-draw receipts as video.
-    private func detectionFrame(_ frame: VideoFramePreview) -> some View {
-        let generation = session.previewGeneration
-        let token = frame.drawToken
-        return FramePreview(
-            image: frame.image, detections: frame.result.detections,
-            imageTitle: "Processed camera frame",
-            didDraw: { [weak session] time in
-                session?.recordDraw(token, generation: generation, at: time)
-            })
-    }
-
     /// Leaves unavailable rates visibly distinct from measured zero.
     private func rate(_ value: Double?) -> String { number(value, unit: "FPS") }
     /// Formats finite scalar measurements without changing retained export precision.
@@ -242,6 +228,117 @@ struct CameraView: View {
             return "—"
         }
         return number(p50, unit: "") + "/ " + number(p95, unit: "ms")
+    }
+}
+
+/// Renders the same frame/result pair and draw identity in either presentation.
+private struct ProcessedCameraFrame: View {
+    @Bindable var session: CameraSession
+    let frame: VideoFramePreview
+    let presentation: FramePreview.Presentation
+
+    var body: some View {
+        let generation = session.previewGeneration
+        let token = frame.drawToken
+        return FramePreview(
+            image: frame.image, detections: frame.result.detections,
+            imageTitle: "Processed camera frame",
+            didDraw: { [weak session] time in
+                session?.recordDraw(token, generation: generation, at: time)
+            }, presentation: presentation)
+    }
+}
+
+#if os(iOS)
+    /// Expands processed frames without changing the capture run or its frozen settings.
+    struct CameraFullScreenView: View {
+        @Bindable var session: CameraSession
+        let configuration: CameraConfiguration
+        let model: DetectorModel
+        let otherBusy: Bool
+        @Environment(\.dismiss) private var dismiss
+        @Environment(\.scenePhase) private var scenePhase
+
+        var body: some View {
+            Group {
+                if let frame = session.previewFrame {
+                    ProcessedCameraFrame(
+                        session: session, frame: frame, presentation: .fullScreen)
+                } else {
+                    ContentUnavailableView(
+                        "Waiting for a processed frame", systemImage: "camera")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Processed camera frame").font(.headline)
+                        Text(session.status.rawValue)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1)
+                    Spacer()
+                    Button("Close", systemImage: "xmark") { dismiss() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        .accessibilityIdentifier("closeCameraFullScreen")
+                }
+                .padding().background(.bar)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                CameraControlBar(
+                    session: session, configuration: configuration,
+                    model: model, otherBusy: otherBusy)
+            }
+            .preferredColorScheme(.dark)
+            .onChange(of: scenePhase) { _, phase in
+                session.setActivity(
+                    active: phase == .active, background: phase == .background)
+            }
+        }
+    }
+#endif
+
+/// Keeps one run action reachable while the detection list changes height.
+struct CameraControlBar: View {
+    @Bindable var session: CameraSession
+    let configuration: CameraConfiguration
+    let model: DetectorModel
+    let otherBusy: Bool
+
+    var body: some View {
+        HStack {
+            Button {
+                if session.isCapturing {
+                    session.stop()
+                } else {
+                    session.start(configuration: configuration, model: model)
+                }
+            } label: {
+                Label(
+                    session.status == .stopping ? "Stopping…"
+                        : session.isCapturing ? "Stop" : "Start",
+                    systemImage: session.isCapturing ? "stop.fill" : "play.fill"
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .tint(session.isCapturing ? .red : .accentColor)
+            .disabled(
+                session.isCapturing ? session.status == .stopping
+                    : session.isBusy || otherBusy)
+            .accessibilityIdentifier(
+                session.isCapturing ? "stopCameraDetection" : "startCameraDetection")
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("cameraControlBar")
     }
 }
 

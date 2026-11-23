@@ -30,8 +30,25 @@ struct PreviewGeometrySmokeTests {
             portrait.imageRect == CGRect(x: 87.5, y: 0, width: 225, height: 400))
         let empty = PreviewGeometry(sourceSize: .zero, viewportSize: .zero)
         precondition(empty.displayedBox(box) == nil)
+        precondition(
+            landscape.labelRect(
+                above: CGRect(x: 40, y: 180, width: 80, height: 45),
+                size: CGSize(width: 120, height: 24))
+                == CGRect(x: 40, y: 154, width: 120, height: 24))
+        precondition(
+            landscape.labelRect(
+                above: CGRect(x: 390, y: 87.5, width: 10, height: 20),
+                size: CGSize(width: 120, height: 24))
+                == CGRect(x: 280, y: 87.5, width: 120, height: 24),
+            "Top/right edge labels must stay inside the letterboxed image")
+        precondition(
+            portrait.labelRect(
+                above: CGRect(x: 300, y: 100, width: 10, height: 20),
+                size: CGSize(width: 500, height: 24))
+                == CGRect(x: 87.5, y: 74, width: 225, height: 24),
+            "Wide labels must fit the portrait image rather than the viewport")
         print(
-            "Preview geometry: source coordinates, aspect fit, letterboxing and display clipping passed."
+            "Preview geometry: aspect fit, display clipping and edge label placement passed."
         )
     }
 }

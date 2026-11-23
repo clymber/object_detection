@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var videoSession: VideoSession
     @State private var cameraSession: CameraSession
     @State private var cameraConfiguration = CameraConfiguration()
+    @State private var showingCameraFullScreen = false
     @State private var inputSource = MediaInputSource.testImages
     @State private var selectedModel = DetectorModel.rfdetrSmall
     @State private var selectedSample = BundledSample.testPositive6988
@@ -59,12 +60,11 @@ struct ContentView: View {
                 modelSection
                 if inputSource == .camera {
                     CameraView(session: cameraSession, configuration: $cameraConfiguration,
-                        model: selectedModel,
                         otherBusy: session.isBusy || batch.isBusy || media.isBusy || videoSession.isBusy,
                         verifySaved: {
                             fileImportPurpose = .savedVideoResults
                             showingFiles = true
-                        })
+                        }, showFullScreen: { showingCameraFullScreen = true })
                 } else if inputSource.isVideo {
                     videoSection
                     videoDetectionSection
@@ -98,8 +98,25 @@ struct ContentView: View {
                         detectionCount: session.detections.count)
                 }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if inputSource == .camera {
+                    CameraControlBar(
+                        session: cameraSession, configuration: cameraConfiguration,
+                        model: selectedModel,
+                        otherBusy: session.isBusy || batch.isBusy || media.isBusy
+                            || videoSession.isBusy)
+                }
+            }
             .navigationTitle("ENABLE Core ML Bench")
             .toolbarTitleDisplayMode(.inline)
+        }
+        .fullScreenCover(isPresented: $showingCameraFullScreen) {
+            CameraFullScreenView(
+                session: cameraSession,
+                configuration: cameraSession.configurationForRun ?? cameraConfiguration,
+                model: selectedModel,
+                otherBusy: session.isBusy || batch.isBusy || media.isBusy
+                    || videoSession.isBusy)
         }
         .onAppear {
             cameraSession.setActivity(active: scenePhase == .active, background: scenePhase == .background)
@@ -167,7 +184,11 @@ struct ContentView: View {
             session.stop()
             batch.stop()
             videoSession.suspendDetection()
-            cameraSession.setActivity(active: false, background: scenePhase == .background)
+            // A full-screen preview covers this view without ending capture.
+            if !showingCameraFullScreen {
+                cameraSession.setActivity(
+                    active: false, background: scenePhase == .background)
+            }
             media.cancel()
             player?.pause()
         }

@@ -39,4 +39,14 @@ nonisolated struct PreviewGeometry {
             width: visible.width * scale, height: visible.height * scale
         )
     }
+
+    /// Places a label above its displayed box, keeping it within the image edges.
+    func labelRect(above box: CGRect, size: CGSize) -> CGRect {
+        let width = min(size.width, imageRect.width)
+        let height = min(size.height, imageRect.height)
+        return CGRect(
+            x: min(max(box.minX, imageRect.minX), imageRect.maxX - width),
+            y: max(imageRect.minY, box.minY - height - 2),
+            width: width, height: height)
+    }
 }

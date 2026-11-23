@@ -19,8 +19,57 @@ struct VideoPreviewRenderingSmokeTests {
             box: CGRect(x: 20, y: 40, width: 20, height: 40),
             border: CGPoint(x: 125, y: 85), interior: CGPoint(x: 140, y: 100),
             padding: CGPoint(x: 20, y: 100))
+        try checkFullScreen(
+            width: 160, height: 80, viewport: CGSize(width: 320, height: 480),
+            box: CGRect(x: 40, y: 20, width: 40, height: 20),
+            border: CGPoint(x: 80, y: 210), interior: CGPoint(x: 120, y: 220),
+            labelRegion: CGRect(x: 80, y: 160, width: 160, height: 40))
+        try checkFullScreen(
+            width: 80, height: 160, viewport: CGSize(width: 480, height: 320),
+            box: CGRect(x: 20, y: 40, width: 20, height: 40),
+            border: CGPoint(x: 200, y: 100), interior: CGPoint(x: 220, y: 120),
+            labelRegion: CGRect(x: 160, y: 0, width: 160, height: 80))
         print(
-            "Video rendering: landscape/portrait boxes, pixels and draw receipts passed.")
+            "Video rendering: inline/full-screen geometry, labels and draw receipts passed.")
+    }
+
+    /// Verifies full-size rendering and white-on-red text above boxes in both orientations.
+    private static func checkFullScreen(
+        width: Int, height: Int, viewport: CGSize, box: CGRect,
+        border: CGPoint, interior: CGPoint, labelRegion: CGRect
+    ) throws {
+        let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let detection = try Detection(boundingBox: box, confidence: 0.9, classID: 1)
+        let view = FramePreview(
+            image: context.makeImage()!, detections: [detection], imageTitle: "Fixture",
+            presentation: .fullScreen
+        ).frame(width: viewport.width, height: viewport.height)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 1
+        guard let image = renderer.cgImage else {
+            preconditionFailure("Full-screen preview could not be rasterized")
+        }
+        let rgb = try RGBImage(image)
+        let red = pixel(rgb, at: border)
+        let blue = pixel(rgb, at: interior)
+        precondition(red[0] > 180 && red[2] < 80, "Full-screen box is misaligned")
+        precondition(blue[2] > 180 && blue[0] < 80, "Full-screen image was resized wrongly")
+        var whitePixels = 0
+        var redPixels = 0
+        for y in Int(labelRegion.minY)..<Int(labelRegion.maxY) {
+            for x in Int(labelRegion.minX)..<Int(labelRegion.maxX) {
+                let value = pixel(rgb, at: CGPoint(x: x, y: y))
+                if value.allSatisfy({ $0 > 200 }) { whitePixels += 1 }
+                if value[0] > 180 && value[1] < 80 && value[2] < 80 { redPixels += 1 }
+            }
+        }
+        precondition(whitePixels > 20, "Class/confidence text is missing above the box")
+        precondition(redPixels > 100, "Label background is missing above the box")
     }
 
     /// Checks independently calculated display coordinates in a 320-by-280 image area.
