@@ -17,17 +17,18 @@ def main():
     root = Path(__file__).resolve().parents[3]
     output = root / "outputs/ios_builds/video_pipeline"
     checked = 0
-    for group in ("export_checks", "coverage_exports"):
+    for group in ("export_checks", "coverage_exports", "camera_exports"):
         paths = json.loads((output / group / "fixture_index.json").read_text())
         with tempfile.TemporaryDirectory(prefix="roundtrip_", dir=output) as temporary:
             for name, path in paths.items():
                 saved = Path(temporary) / name
                 shutil.copytree(path, saved)
                 report = validate_transfer(Path(path), saved)
-                expected = ("complete" if group == "coverage_exports"
-                            and name != "short" else "incomplete")
+                expected = ("complete" if (group == "coverage_exports" and name != "short")
+                            or (group == "camera_exports" and name in {"session", "stale"})
+                            else "incomplete")
                 assert report["coverage_status"] == expected, report
-                assert report["metrics_recalculated"], report
+                assert report["metrics_recalculated"] == (name != "denied"), report
                 print(f"{group}/{name}: {report['records']} records; "
                       f"coverage {expected}; transfer and metrics passed")
                 checked += 1

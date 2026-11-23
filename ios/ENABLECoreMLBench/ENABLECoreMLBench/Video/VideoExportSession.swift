@@ -14,7 +14,7 @@ nonisolated enum VideoExportVerificationStatus: String, Sendable {
 @MainActor
 @Observable
 final class VideoExportSession {
-    typealias Writer = @Sendable (VideoRunExport, URL) async throws -> VideoExportFiles
+    typealias Writer = @Sendable (VideoRunExport, URL?) async throws -> VideoExportFiles
     typealias Reader = @Sendable (URL, [String: String]) async throws -> VideoExportVerification
     private let write: Writer
     private let read: Reader
@@ -44,7 +44,7 @@ final class VideoExportSession {
     }
 
     /// Freezes a finished report while disk work runs outside the UI actor.
-    func start(_ run: VideoRunExport, sourceURL: URL) {
+    func start(_ run: VideoRunExport, sourceURL: URL? = nil) {
         guard !isBusy else { return }
         reset()
         let request = generation

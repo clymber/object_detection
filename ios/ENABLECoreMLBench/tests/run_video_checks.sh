@@ -9,6 +9,7 @@ mkdir -p "$video_build" outputs/cache/swift_module_cache
 video_sources=(
   ios/ENABLECoreMLBench/ENABLECoreMLBench/Detection/*.swift
   ios/ENABLECoreMLBench/ENABLECoreMLBench/Video/*.swift
+  ios/ENABLECoreMLBench/ENABLECoreMLBench/Camera/*.swift
 )
 video_flags=(
   -parse-as-library -swift-version 5 -default-isolation MainActor
@@ -26,7 +27,7 @@ if [[ $# -eq 0 ]]; then
     PacedVideoMetrics PacedVideoRunner
     PacedVideoSession
     VideoFrameDetection VideoFrameResult VideoFrameTiming
-    VideoPreview VideoPreviewRendering VideoRunExport VideoRunCoverage
+    VideoPreview VideoPreviewRendering VideoRunExport VideoRunCoverage CameraPipeline
     OfflineVideoCoverage OfflineVideoMetrics OfflineVideoRunner OfflineVideoSession
   )
 fi

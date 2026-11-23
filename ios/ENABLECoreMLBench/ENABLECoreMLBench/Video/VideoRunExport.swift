@@ -6,33 +6,36 @@ import Foundation
 nonisolated enum VideoRunExport: Sendable {
     case offline(OfflineVideoRunReport)
     case paced(PacedVideoRunReport)
+    case camera(CameraRunReport)
 
     var sourceID: String {
-        switch self { case .offline(let r): r.sourceID; case .paced(let r): r.sourceID }
+        switch self { case .offline(let r): r.sourceID; case .paced(let r): r.sourceID; case .camera(let r): r.sourceID }
     }
     var model: DetectorModel {
-        switch self { case .offline(let r): r.model; case .paced(let r): r.model }
+        switch self { case .offline(let r): r.model; case .paced(let r): r.model; case .camera(let r): r.model }
     }
-    var mode: String { switch self { case .offline: "offline"; case .paced: "paced" } }
+    var mode: String { switch self { case .offline: "offline"; case .paced: "paced"; case .camera: "camera" } }
     var id: UUID {
-        switch self { case .offline(let r): r.id; case .paced(let r): r.id }
+        switch self { case .offline(let r): r.id; case .paced(let r): r.id; case .camera(let r): r.id }
     }
     var startedAt: Date {
-        switch self { case .offline(let r): r.startedAt; case .paced(let r): r.startedAt }
+        switch self { case .offline(let r): r.startedAt; case .paced(let r): r.startedAt; case .camera(let r): r.startedAt }
     }
     var endedAt: Date? {
-        switch self { case .offline(let r): r.endedAt; case .paced(let r): r.endedAt }
+        switch self { case .offline(let r): r.endedAt; case .paced(let r): r.endedAt; case .camera(let r): r.endedAt }
     }
     var status: String {
         switch self {
         case .offline(let r): r.status.rawValue
         case .paced(let r): r.status.rawValue
+        case .camera(let r): r.status
         }
     }
     var previewEnabled: Bool {
         switch self {
         case .offline(let r): r.previewEnabled
         case .paced(let r): r.previewEnabled
+        case .camera(let r): r.configuration.detectionPreview || r.configuration.livePreview
         }
     }
 }
@@ -151,6 +154,8 @@ nonisolated enum VideoExportRecord {
                     decided: outcome.decidedMilliseconds,
                     issue: outcome.failure, publication: outcome.publication))
             }
+        case .camera(let report):
+            try CameraExportRecord.forEachFrame(report, body: body)
         }
     }
 

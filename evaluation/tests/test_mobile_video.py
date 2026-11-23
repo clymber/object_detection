@@ -114,6 +114,22 @@ def test_changed_file_hash_is_rejected(tmp_path):
         validate_mobile_video_export(tmp_path)
 
 
+def test_cross_format_float_rounding_keeps_pts_exact(tmp_path):
+    """
+    Permit one-ULP decimal timing differences while rejecting material timing changes.
+    """
+    _, run = write_export(tmp_path)
+    path = tmp_path / "timings.csv"
+    text = path.read_text().replace("1000.0", "1000.0000000000001")
+    path.write_text(text)
+    save_run(tmp_path, run)
+    assert validate_mobile_video_export(tmp_path)["integrity"] == "passed"
+    path.write_text(text.replace("1000.0000000000001", "1000.001"))
+    save_run(tmp_path, run)
+    with pytest.raises(ValueError, match="mismatch"):
+        validate_mobile_video_export(tmp_path)
+
+
 @pytest.mark.parametrize("mutation", ["pts", "missing_time", "zero_time", "status"])
 def test_csv_mismatch_is_rejected(tmp_path, mutation):
     """

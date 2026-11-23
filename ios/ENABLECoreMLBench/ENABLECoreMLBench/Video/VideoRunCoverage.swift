@@ -118,6 +118,16 @@ nonisolated struct VideoRunCoverage: Sendable {
       decodeLossEvents =
         r.decodeFailure != nil
           || (r.issue?.stage == .decoding && r.status == .failed) ? 1 : 0
+    case .camera(let r):
+      input = r.counts.inputFrames
+      completed = r.counts.completedFrames
+      failed = r.counts.failedFrames
+      skipped = r.counts.skippedFrames
+      unfinished = r.counts.unfinishedFrames
+      for outcome in r.queue?.outcomes ?? [] {
+        rows.append((0, outcome.metadata.sourceFrameIndex, outcome.metadata))
+      }
+      loops = nil // Camera coverage uses observed callbacks, never a frozen video extent.
     case .paced(let r):
       firstLoop = r.firstLoopIndex
       loops = r.requestedLoopCount

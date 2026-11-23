@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 
 from .mobile_video_coverage import validate_recalculated
+from .mobile_camera import validate_camera
 
 
 TIMING_NAMES = (
@@ -26,6 +27,7 @@ CSV_COLUMNS = (
 STATUSES = {
     "completed", "failed", "unfinished", "cancelled", "skipped_superseded",
     "skipped_stale",
+    "capture_dropped", "capture_failed",
 }
 PUBLICATION_STATUSES = {
     "not_applicable", "not_requested", "not_recorded", "pending", "published",
@@ -83,6 +85,8 @@ def _validate_frame(row, run):
             raise ValueError(f"Invalid {name}")
     if row.get("status") not in STATUSES:
         raise ValueError("Invalid frame status")
+    if row["status"].startswith("capture_") and run["mode"] != "camera":
+        raise ValueError("Capture-only status in a video run")
     if row.get("publication_status") not in PUBLICATION_STATUSES:
         raise ValueError("Invalid publication status")
     pts = row["pts"]
@@ -144,7 +148,7 @@ def _validate_csv(rows, frames):
             if value is None:
                 valid = actual == ""
             elif name.endswith("_ms"):
-                valid = float(actual) == value
+                valid = math.isclose(float(actual), value, rel_tol=1e-12, abs_tol=1e-9)
             elif type(value) is int:
                 valid = int(actual) == value
             elif type(value) is float:
@@ -161,8 +165,8 @@ def validate_mobile_video_export(directory: Path) -> dict:
     """
     directory = Path(directory)
     run = _json((directory / "mobile_run.json").read_text())
-    if (run.get("schema_version") != 1 or run.get("scope") != "video_diagnostic"
-            or run.get("mode") not in {"offline", "paced"}
+    if (run.get("schema_version") != 1 or run.get("scope") not in {"video_diagnostic", "camera_diagnostic"}
+            or run.get("mode") not in {"offline", "paced", "camera"}
             or run.get("status") not in {"completed", "failed", "cancelled"}):
         raise ValueError("Unsupported video run schema, scope, mode or status")
     for name in ("runtime", "settings", "selection", "counts", "metrics", "validity",
@@ -187,7 +191,8 @@ def validate_mobile_video_export(directory: Path) -> dict:
         raise ValueError("File record count mismatch")
     if run["frame_records"] != len(frames):
         raise ValueError("Run record count mismatch")
-    coverage, metrics = validate_recalculated(run, frames)
+    coverage, metrics = (validate_camera(run, frames) if run["mode"] == "camera"
+                         else validate_recalculated(run, frames))
     return {"run_id": run["run_id"], "mode": run["mode"], "records": len(frames),
             "integrity": "passed", "validity": run["validity"],
             "coverage_status": coverage["status"],

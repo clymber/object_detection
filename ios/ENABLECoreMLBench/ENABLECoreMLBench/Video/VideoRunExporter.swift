@@ -18,7 +18,7 @@ actor VideoRunExporter {
     }
 
     /// Publishes a unique directory only after every file has been written and hashed.
-    func export(_ run: VideoRunExport, sourceURL: URL) throws -> VideoExportFiles {
+    func export(_ run: VideoRunExport, sourceURL: URL?) throws -> VideoExportFiles {
         guard run.status != "running", run.endedAt != nil else {
             throw CocoaError(.fileWriteUnknown, userInfo: [
                 NSLocalizedDescriptionKey: "Wait for the video worker to finish."])
@@ -33,14 +33,34 @@ actor VideoRunExporter {
         do {
             let count = try writeRecords(run, runID: runID, to: staging)
             var metadata = mobileRun(run, runID: runID, recordCount: count)
-            let input = try inputReference(run, url: sourceURL)
-            metadata["input"] = input
-            let coverage = VideoRunCoverage(run: run, reference: VideoCoverageReference(input: input))
-            metadata["coverage"] = coverage.json
+            let coverageStatus: String
+            let reasons: [String]
+            if case .camera(let r) = run {
+                let manifest: [String: Any] = ["source_type": "camera", "source_id": r.sourceID,
+                    "configuration": CameraExportRecord.configuration(r.configuration),
+                    "actual_capture_settings": r.capture?.actual ?? [:], "category_mapping": ["0": 1],
+                    "timestamp_mapping": "CMSyncConvertTime to host; calibration in mobile_run.capture"]
+                let manifestData = try Self.json(manifest)
+                metadata["input"] = ["source_id": r.sourceID, "source_type": "camera",
+                    "sha256": NSNull(), "sha256_unavailable_reason": "Live camera has no fixed input file",
+                    "manifest": manifest, "manifest_json": String(data: manifestData, encoding: .utf8)!,
+                    "manifest_sha256": Self.digest(manifestData)]
+                let coverage = CameraExportRecord.coverage(r)
+                metadata["coverage"] = coverage
+                coverageStatus = coverage["status"] as! String
+                reasons = coverage["reasons"] as! [String]
+            } else {
+                guard let sourceURL else { throw CameraError.configuration("Video export needs its source URL.") }
+                let input = try inputReference(run, url: sourceURL)
+                metadata["input"] = input
+                let coverage = VideoRunCoverage(run: run, reference: VideoCoverageReference(input: input))
+                metadata["coverage"] = coverage.json
+                coverageStatus = coverage.status; reasons = coverage.reasons
+            }
             var validity = metadata["validity"] as! [String: Any]
-            validity["coverage_status"] = coverage.status
-            validity["reasons"] = coverage.reasons + [
-                "Video parity has not been verified",
+            validity["coverage_status"] = coverageStatus
+            validity["reasons"] = reasons + [
+                "Model/video parity and camera ground-truth evaluation are not established by this diagnostic run",
                 "Diagnostic run without benchmark warm-up or repetitions",
                 "Sustained-run conditions have not been verified"]
             metadata["validity"] = validity
@@ -97,7 +117,7 @@ actor VideoRunExporter {
     ) -> [String: Any] {
         let model = run.model
         var value: [String: Any] = [
-            "schema_version": 1, "scope": "video_diagnostic", "run_id": runID,
+            "schema_version": 1, "scope": run.mode == "camera" ? "camera_diagnostic" : "video_diagnostic", "run_id": runID,
             "execution_id": run.id.uuidString, "protocol_id": "enable_ios_detection",
             "protocol_version": "0.3-draft", "mode": run.mode, "status": run.status,
             "started_at": Self.utc(run.startedAt),
@@ -113,8 +133,8 @@ actor VideoRunExporter {
                 "nms_iou": model.isRFDETR ? NSNull() : 0.65,
                 "box_convention": "unclipped upright source-pixel top-left xywh",
                 "preview_enabled": run.previewEnabled, "max_in_flight": 1,
-                "max_pending": run.mode == "paced" ? 1 : 0,
-                "max_result_age_ms": run.mode == "paced" ? 200 : NSNull(),
+                "max_pending": run.mode != "offline" ? 1 : 0,
+                "max_result_age_ms": run.mode != "offline" ? 200 : NSNull(),
                 "warmup_frames": 0, "preloaded_frames": false,
                 "repetition": NSNull(), "repetition_unavailable_reason": "Ad hoc diagnostic run",
             ],
@@ -142,6 +162,25 @@ actor VideoRunExporter {
             ],
         ]
         switch run {
+        case .camera(let r):
+            value["selection"] = ["first_loop_index": 0, "loop_count": 1,
+                "frame_selection": "live capture callbacks with bounded latest-frame queue"]
+            value["host_window_ms"] = ["started": r.startedMilliseconds,
+                "ended": VideoExportRecord.nullable(r.endedMilliseconds)]
+            value["capture"] = CameraExportRecord.capture(r)
+            value["counts"] = CameraExportRecord.counts(r)
+            value["issue"] = VideoExportRecord.failure(r.issue)
+            value["metrics"] = pacedMetrics(r.metrics)
+            let conditions: [String: Any] = [
+                "scene_notes": r.configuration.sceneNotes.isEmpty ? NSNull() : r.configuration.sceneNotes,
+                "unavailable_reason": r.configuration.sceneNotes.isEmpty ? "Not supplied" : NSNull()]
+            value["conditions"] = conditions
+            value["record_order"] = "queue outcomes followed by source-only capture callbacks"
+            value["capture_preview_enabled"] = r.configuration.livePreview
+            value["detection_preview_enabled"] = r.configuration.detectionPreview
+            value["validity"] = ["benchmark_status": "not_validated", "coverage_status": "unverified",
+                "parity_status": "pending", "f1": NSNull(),
+                "f1_unavailable_reason": "No live-camera ground truth"]
         case .offline(let r):
             value["selection"] = [
                 "first_loop_index": r.loopIndex, "loop_count": 1,
@@ -202,7 +241,12 @@ actor VideoRunExporter {
 
     /// Preserves the half-open source window and post-window drain counters.
     private func pacedMetrics(_ r: PacedVideoRunReport) -> Any {
-        guard let m = r.metrics else {
+        pacedMetrics(r.metrics)
+    }
+
+    /// Shares the same event window and latency calculations with live camera.
+    private func pacedMetrics(_ metrics: PacedVideoRunMetrics?) -> Any {
+        guard let m = metrics else {
             return ["value": NSNull(), "unavailable_reason": "No paced measurement window"]
         }
         return ["window_start_ms": m.window.startedMilliseconds,

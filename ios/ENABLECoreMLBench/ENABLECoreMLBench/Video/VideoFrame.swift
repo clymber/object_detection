@@ -5,18 +5,18 @@ import Foundation
 
 /// Immutable source metadata that can cross actors without retaining frame pixels.
 nonisolated struct VideoFrameMetadata: Equatable, Sendable {
-    /// Stable input-manifest source/track ID, resolved there to the clip's hash.
+    /// Stable source ID: a manifest clip identity or a unique camera capture attempt.
     /// Use the same ID after copying a clip; an import-cache URL is not an ID.
     let sourceID: String
 
-    /// Zero-based playback iteration; the original source timestamp stays unchanged.
+    /// Zero-based video playback iteration, or zero for live camera capture.
     let loopIndex: Int
 
-    /// Zero-based presentation-order index in the source, before frame selection.
+    /// Video presentation-order index or observed camera callback ordinal.
     /// Selected or skipped frames never cause later frames to be renumbered.
     let sourceFrameIndex: Int
 
-    /// Actual sample PTS, preserving value, timescale, flags and epoch exactly.
+    /// Actual source-clock sample PTS, preserving value, timescale, flags and epoch.
     /// This is source media time, not a host-clock timestamp or index/FPS estimate.
     let presentationTime: CMTime
 

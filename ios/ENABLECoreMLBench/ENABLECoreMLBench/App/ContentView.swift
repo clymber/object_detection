@@ -24,7 +24,9 @@ struct ContentView: View {
     @State private var session = StillImageSession()
     @State private var batch = StillImageBatchSession()
     @State private var media = MediaImportSession()
-    @State private var videoSession = VideoSession()
+    @State private var videoSession: VideoSession
+    @State private var cameraSession: CameraSession
+    @State private var cameraConfiguration = CameraConfiguration()
     @State private var inputSource = MediaInputSource.testImages
     @State private var selectedModel = DetectorModel.rfdetrSmall
     @State private var selectedSample = BundledSample.testPositive6988
@@ -36,7 +38,14 @@ struct ContentView: View {
     @State private var player: AVPlayer?
 
     private var isBusy: Bool {
-        session.isBusy || batch.isBusy || media.isBusy || videoSession.isBusy
+        session.isBusy || batch.isBusy || media.isBusy || videoSession.isBusy || cameraSession.isBusy
+    }
+
+    /// Shares one loaded detector between mutually exclusive video and camera runs.
+    init() {
+        let engine = DetectorEngine()
+        _videoSession = State(initialValue: VideoSession(engine: engine))
+        _cameraSession = State(initialValue: CameraSession(worker: CameraRunner(engine: engine)))
     }
     private var previewTitle: String {
         inputSource == .photo
@@ -48,7 +57,15 @@ struct ContentView: View {
             Form {
                 inputSection
                 modelSection
-                if inputSource.isVideo {
+                if inputSource == .camera {
+                    CameraView(session: cameraSession, configuration: $cameraConfiguration,
+                        model: selectedModel,
+                        otherBusy: session.isBusy || batch.isBusy || media.isBusy || videoSession.isBusy,
+                        verifySaved: {
+                            fileImportPurpose = .savedVideoResults
+                            showingFiles = true
+                        })
+                } else if inputSource.isVideo {
                     videoSection
                     videoDetectionSection
                     if videoSession.mode == .offline {
@@ -84,6 +101,9 @@ struct ContentView: View {
             .navigationTitle("ENABLE Core ML Bench")
             .toolbarTitleDisplayMode(.inline)
         }
+        .onAppear {
+            cameraSession.setActivity(active: scenePhase == .active, background: scenePhase == .background)
+        }
         .task { loadSelectedImage() }
         .fileImporter(
             isPresented: $showingFiles,
@@ -94,6 +114,7 @@ struct ContentView: View {
         .onChange(of: inputSource) { _, _ in
             stopPlayback()
             videoSession.select(nil)
+            cameraSession.reset()
             session.clear()
             batch.reset()
             media.reset()
@@ -116,6 +137,7 @@ struct ContentView: View {
             videoSession.select(
                 inputSource.isVideo ? media.video?.file.url : nil,
                 sourceID: media.video?.sourceID)
+            cameraSession.reset()
         }
         .onChange(of: videoSession.isPreviewEnabled) { _, enabled in
             if enabled { player?.pause() }
@@ -145,10 +167,12 @@ struct ContentView: View {
             session.stop()
             batch.stop()
             videoSession.suspendDetection()
+            cameraSession.setActivity(active: false, background: scenePhase == .background)
             media.cancel()
             player?.pause()
         }
         .onChange(of: scenePhase) { _, phase in
+            cameraSession.setActivity(active: phase == .active, background: phase == .background)
             if phase != .active {
                 session.stop()
                 batch.stop()
@@ -218,6 +242,8 @@ struct ContentView: View {
                 .disabled(isBusy)
                 .accessibilityIdentifier("chooseVideo")
                 filesButton
+            case .camera:
+                Text("Live camera settings are frozen when Start is tapped.").font(.footnote)
             }
             if media.isBusy {
                 ProgressView("Importing media…")
@@ -241,6 +267,8 @@ struct ContentView: View {
                 Text("Detect basketballs in a photo from Photos or Files.")
             case .video:
                 Text("Choose a video from Photos or Files, then tap Start.")
+            case .camera:
+                Text("Detect basketballs using the camera. No audio is captured.")
             }
         }
     }
@@ -507,16 +535,17 @@ struct ContentView: View {
             } else {
                 session.clear(message: "Choose a photo, then tap Start.")
             }
-        case .testVideos, .video: session.clear()
+        case .testVideos, .video, .camera: session.clear()
         }
     }
 
     /// Routes the captured purpose without resetting a video run for saved-file checks.
     private func handleFileImport(_ result: Result<URL, Error>, purpose: FileImportPurpose) {
         if purpose == .savedVideoResults {
+            let export = inputSource == .camera ? cameraSession.export : videoSession.export
             switch result {
-            case .success(let directory): videoSession.export.verifySaved(directory)
-            case .failure(let error): videoSession.export.reportVerificationFailure(error)
+            case .success(let directory): export.verifySaved(directory)
+            case .failure(let error): export.reportVerificationFailure(error)
             }
             return
         }

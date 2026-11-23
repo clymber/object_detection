@@ -13,6 +13,7 @@ nonisolated enum MediaInputSource: String, CaseIterable, Identifiable {
     case testVideos = "Test videos"
     case photo = "Photo"
     case video = "Video"
+    case camera = "Live camera"
 
     var id: String { rawValue }
     var isVideo: Bool { self == .testVideos || self == .video }

@@ -148,7 +148,7 @@ def recalculate_metrics(run, frames):
     timings = [row["timing_ms"] for row in frames]
     successful = [row["timing_ms"] for row in frames if row["status"] == "completed"]
     saved = run["metrics"]
-    if run["mode"] == "paced":
+    if run["mode"] in {"paced", "camera"}:
         if saved.get("window_start_ms") is None:
             return {}
         start, end = saved["window_start_ms"], saved["window_end_ms"]

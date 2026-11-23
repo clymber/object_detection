@@ -83,11 +83,15 @@ nonisolated enum VideoExportVerifier {
         } else if let text = value as? String {
           guard cell == text else { throw Invalid.files("CSV identity/status differs") }
         } else if let number = value as? NSNumber {
-          let equal =
-            index >= 10
-            ? Double(cell) == number.doubleValue
-            : Int64(cell) == number.int64Value
-          guard equal else { throw Invalid.files("CSV timing/PTS differs") }
+          let equal: Bool
+          if index >= 10, let actual = Double(cell), actual.isFinite {
+            // JSONSerialization/CSV can round the same Double one ULP apart.
+            // Saved-copy fingerprints still require exact bytes for all files.
+            equal = abs(actual - number.doubleValue) <= max(1e-9, abs(number.doubleValue) * 1e-12)
+          } else { equal = index < 10 && Int64(cell) == number.int64Value }
+          guard equal else {
+            throw Invalid.files("CSV \(VideoExportRecord.csvColumns[index]) differs: \(cell) vs \(String(format: "%.17g", number.doubleValue))")
+          }
         } else {
           throw Invalid.files("Unexpected CSV value type")
         }

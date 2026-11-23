@@ -45,9 +45,8 @@ final class VideoSession {
     /// Permits controlled child sessions without changing default app behaviour.
     init(
         offline: OfflineVideoSession? = nil, paced: PacedVideoSession? = nil,
-        export: VideoExportSession? = nil
+        export: VideoExportSession? = nil, engine: DetectorEngine = DetectorEngine()
     ) {
-        let engine = DetectorEngine()
         self.offline = offline ?? OfflineVideoSession(
             worker: OfflineVideoRunner(engine: engine))
         self.paced = paced ?? PacedVideoSession(
