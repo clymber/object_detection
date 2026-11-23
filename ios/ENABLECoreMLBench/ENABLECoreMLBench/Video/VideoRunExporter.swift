@@ -119,7 +119,7 @@ actor VideoRunExporter {
         var value: [String: Any] = [
             "schema_version": 1, "scope": run.mode == "camera" ? "camera_diagnostic" : "video_diagnostic", "run_id": runID,
             "execution_id": run.id.uuidString, "protocol_id": "enable_ios_detection",
-            "protocol_version": "0.3-draft", "mode": run.mode, "status": run.status,
+            "protocol_version": "0.4-draft", "mode": run.mode, "status": run.status,
             "started_at": Self.utc(run.startedAt),
             "ended_at": VideoExportRecord.nullable(run.endedAt.map { Self.utc($0) }),
             "exported_at": Self.utc(Date()), "runtime": runtime(),
