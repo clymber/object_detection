@@ -36,6 +36,41 @@ The notebook also combines the basketball, football, and Gaelic football COCO
 exports into `DATA_ROOT/composed/ball-v0.1/coco/`, with the single class `ball`.
 This merge preserves source splits, digest filenames, and background images.
 
+## Animated annotated test video
+
+Create a three-minute 720p H.264 video at 30 FPS from a COCO test split:
+
+```bash
+conda run -p .conda/envs/object-detection-dataset \
+  python -m dataset_builder.animated_coco_video \
+  data/composed/basketball-v0.1/coco/annotations/instances_test.json \
+  --output data/processed/ios_benchmark/annotated_test_video_v2/basketball_test.mp4 \
+  --ffmpeg .conda/envs/object-detection-evaluation/bin/ffmpeg \
+  --ffprobe .conda/envs/object-detection-evaluation/bin/ffprobe
+```
+
+Images default to the COCO root's `images/test/`; override with `--images-dir`.
+The fixed seed selects 360 distinct images, preserving the positive/background
+ratio. Each image moves between randomly selected opposite canvas corners for
+0.5 seconds, zooming in or out between 75% and 100% of the largest size that fits.
+The full image stays visible. The seed fixes both image selection and motion.
+The program streams frames directly to FFmpeg and verifies both completed videos.
+
+Outputs beside the clean MP4 are `_boxes.mp4` for inspecting ground-truth boxes,
+`_annotations.json` with final boxes for evaluation, `_generation_manifest.json`
+with source details and rendering transforms, and `_README.md` with instructions.
+The generation manifest is optional for evaluation. Annotation schema version 2
+keeps source IDs, transforms and animation settings out of the evaluation JSON.
+The JSON uses COCO-style boxes; its `images` entries identify video frames rather
+than image files. Frame indices start at zero; annotation `image_id` equals frame
+index + 1. Do not run inference on the boxed preview. Existing output files are
+never overwritten.
+
+Use `--duration`, `--seconds-per-image`, `--fps`, `--width`, `--height` and `--seed`
+to change the defaults. Durations must produce whole frames and image segments;
+the split must contain enough distinct source images. Animated subset F1 is a
+separate result from full-test-image F1 and natural-video tracking quality.
+
 ## Platform environments
 
 The setup command selects environment-macos-mps.yml on Apple Silicon and

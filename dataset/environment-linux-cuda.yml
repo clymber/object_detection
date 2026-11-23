@@ -9,6 +9,7 @@ dependencies:
   - pandas>=2.3,<3
   - jinja2
   - pillow
+  - ffmpeg
   - scikit-learn
   - ipykernel
   - ipywidgets
