@@ -27,6 +27,7 @@ final class CameraSession {
     private(set) var knownLostFrames: Int? = 0
     private(set) var sourceFailures = 0
     private(set) var captureFPS: Double?
+    private(set) var elapsedSeconds: Double?
     private(set) var actual: [String: String] = [:]
     private(set) var previewFrame: VideoFramePreview?
     private(set) var previewGeneration = UUID()
@@ -210,7 +211,14 @@ final class CameraSession {
                     self.status == .preparing || self.status == .running
                 {
                     self.apply(progress)
-                    if progress.isCapturing {
+                    if progress.durationLimitReached {
+                        self.status = .stopping
+                        let recording = self.configurationForRun?.recordAnnotatedVideo
+                            == true
+                        self.message = recording
+                            ? "Time limit reached. Finishing inference and MP4…"
+                            : "Time limit reached. Finishing active inference…"
+                    } else if progress.isCapturing {
                         self.status = .running
                         self.message = "Capturing live frames…"
                     }
@@ -229,6 +237,9 @@ final class CameraSession {
         knownLostFrames = progress.knownLostFrames
         sourceFailures = progress.sourceFailures
         captureFPS = progress.captureFramesPerSecond
+        elapsedSeconds = (progress.metrics?.window.durationMilliseconds).map {
+            $0 / 1000
+        }
         actual = progress.actual
     }
 
@@ -254,6 +265,9 @@ final class CameraSession {
             report?.status == "failed"
             ? (report?.issue?.message ?? error?.localizedDescription ?? "Camera failed.")
             : "Stopped. \(counts.processedFrames) processed; \(captureDrops) capture drops; \(counts.skippedFrames) queue skips."
+        if report?.durationLimitReached == true, status != .error {
+            message = "Time limit reached. " + message
+        }
     }
 
     /// Releases previous images and export baselines before a different run can begin.
@@ -271,6 +285,7 @@ final class CameraSession {
         knownLostFrames = 0
         sourceFailures = 0
         captureFPS = nil
+        elapsedSeconds = nil
         actual = [:]
         previewFrame = nil
         previewStatistics = .init()

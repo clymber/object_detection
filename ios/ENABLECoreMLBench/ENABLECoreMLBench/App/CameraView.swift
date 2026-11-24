@@ -44,6 +44,7 @@ struct CameraView: View {
                     "Record annotated video",
                     isOn: $configuration.recordAnnotatedVideo)
                     .accessibilityIdentifier("recordAnnotatedCameraVideo")
+                durationControls
                 TextField(
                     "Lighting, distance and basketball activity",
                     text: $configuration.sceneNotes,
@@ -119,6 +120,9 @@ struct CameraView: View {
                 Text(session.message).font(.footnote)
                     .foregroundStyle(session.status == .error ? Color.red : .secondary)
                     .accessibilityIdentifier("cameraMessage")
+                LabeledContent(
+                    "Elapsed capture time",
+                    value: number(session.elapsedSeconds, unit: "s"))
                 if session.authorization == .denied
                     || session.authorization == .restricted
                 {
@@ -249,6 +253,26 @@ struct CameraView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Applies the same configurable duration to recorded and unrecorded camera runs.
+    @ViewBuilder
+    private var durationControls: some View {
+        Toggle("Limit run duration", isOn: $configuration.durationLimitEnabled)
+            .accessibilityIdentifier("limitCameraRunDuration")
+        if configuration.durationLimitEnabled {
+            LabeledContent("Duration (seconds)") {
+                TextField("Seconds", value: $configuration.durationLimitSeconds,
+                          format: .number)
+                    .multilineTextAlignment(.trailing)
+                    .accessibilityIdentifier("cameraRunDurationSeconds")
+                    #if os(iOS)
+                        .keyboardType(.decimalPad)
+                    #endif
+            }
+            Text("Starts when camera capture begins. Applies with recording on or off.")
+                .font(.footnote).foregroundStyle(.secondary)
         }
     }
 

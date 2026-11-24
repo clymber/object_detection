@@ -9,6 +9,7 @@ struct CameraPipelineSmokeTests {
     /// Leaves real camera-schema artifacts for independent Python readback.
     static func main() async throws {
         try testClock()
+        try testDurationConfiguration()
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let output = root.appendingPathComponent(
             "outputs/ios_builds/video_pipeline/camera_exports")
@@ -23,6 +24,13 @@ struct CameraPipelineSmokeTests {
             exporter: exporter, directory: output).directory.path
         paths["recording_failure"] = try await testRecording(
             exporter: exporter, directory: output, failRecording: true).directory.path
+        for recording in [false, true] {
+            let files = try await testAutomaticStop(
+                recording: recording, exporter: exporter, directory: output)
+            paths[recording ? "timed_recorded" : "timed_live"] = files.directory.path
+        }
+        try await testIdleDurationLimit()
+        try await testCancelledDurationLimit()
         try await testBackgroundPermissionCancellation()
         for (name, report) in [
             "drops": try await testBoundedCapture(),
@@ -61,6 +69,121 @@ struct CameraPipelineSmokeTests {
             _ = try CameraClockMapping(host: .zero, before: 2, after: 1)
             preconditionFailure("Reversed calibration accepted")
         } catch CameraError.invalidTimestamp {}
+    }
+
+    /// Allows a 180-second setting and rejects unusable limits before capture starts.
+    static func testDurationConfiguration() throws {
+        var config = CameraConfiguration()
+        precondition(config.durationLimitSeconds == 180)
+        config.durationLimitEnabled = true
+        try config.validate()
+        for invalid in [0, -1, Double.nan, Double.infinity, 86_401] {
+            config.durationLimitSeconds = invalid
+            do {
+                try config.validate()
+                preconditionFailure("Invalid duration limit was accepted")
+            } catch CameraError.configuration {}
+        }
+        config.durationLimitEnabled = false
+        try config.validate()
+    }
+
+    /// Excludes permission/loading and stops both modes while active inference is held.
+    static func testAutomaticStop(
+        recording: Bool, exporter: VideoRunExporter, directory: URL
+    ) async throws -> VideoExportFiles {
+        let source = FakeCameraCapture(authorization: .unknown)
+        let detector = CameraTestDetector(held: true)
+        let worker = CameraRunner(
+            engine: DetectorEngine(loader: { _ in
+                try await Task.sleep(for: .milliseconds(300))
+                return detector
+            }), capture: source,
+            recordingDirectory: directory.appendingPathComponent("timed_recordings"))
+        let session = CameraSession(worker: worker)
+        var config = CameraConfiguration()
+        config.durationLimitEnabled = true
+        config.durationLimitSeconds = 0.12
+        config.recordAnnotatedVideo = recording
+        session.start(configuration: config, model: .yoloxNano)
+        try await wait { source.permissionPending }
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(session.isCapturing && source.runs == 0)
+        source.resolvePermission(true)
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(session.isCapturing && source.runs == 0)
+        try await wait { source.running }
+        try source.emit()
+        try await wait { await detector.active == 1 }
+        try await wait { !source.running }
+        precondition(session.isCapturing, "Limit did not wait for active inference")
+        try await wait { session.status == .stopping }
+        await detector.release()
+        try await wait { !session.isCapturing }
+        let report = session.latestReport!
+        precondition(report.status == "completed" && report.durationLimitReached)
+        precondition(session.message.contains("Time limit reached"))
+        precondition(report.counts.completedFrames == 1)
+        precondition(report.metrics?.postWindowCompletions == 1)
+        let elapsed = session.elapsedSeconds!
+        precondition(elapsed >= config.durationLimitSeconds && elapsed < 0.35)
+        precondition(report.window!.durationMilliseconds / 1000 == elapsed)
+        if recording {
+            precondition(report.recording?.status == .completed)
+            precondition(report.recording?.encodedFrames == 1)
+        } else {
+            precondition(report.recording == nil)
+        }
+        let files = try await exporter.export(.camera(report), sourceURL: nil)
+        let metadata = try JSONSerialization.jsonObject(with: Data(
+            contentsOf: files.directory.appendingPathComponent("mobile_run.json")))
+            as! [String: Any]
+        let capture = metadata["capture"] as! [String: Any]
+        let settings = capture["configuration"] as! [String: Any]
+        precondition(settings["duration_limit_seconds"] as! Double == 0.12)
+        precondition(capture["duration_limit_reached"] as! Bool)
+        precondition(capture["duration_seconds"] as! Double == elapsed)
+        session.reset()
+        return files
+    }
+
+    /// A stalled camera with no delivered frames still stops when its duration expires.
+    static func testIdleDurationLimit() async throws {
+        let source = FakeCameraCapture()
+        let detector = CameraTestDetector()
+        let worker = CameraRunner(
+            engine: DetectorEngine(loader: { _ in detector }), capture: source)
+        var config = CameraConfiguration()
+        config.durationLimitEnabled = true
+        config.durationLimitSeconds = 0.05
+        try await worker.run(configuration: config, model: .yoloxNano)
+        let report = await worker.latestReport!
+        precondition(report.status == "completed" && report.durationLimitReached)
+        precondition(report.counts.inputFrames == 0 && !source.running)
+    }
+
+    /// Cancelling a timer cannot stop a subsequent unlimited run using the same source.
+    static func testCancelledDurationLimit() async throws {
+        let source = FakeCameraCapture()
+        let detector = CameraTestDetector()
+        let session = CameraSession(worker: CameraRunner(
+            engine: DetectorEngine(loader: { _ in detector }), capture: source))
+        var config = CameraConfiguration()
+        config.durationLimitEnabled = true
+        config.durationLimitSeconds = 0.1
+        session.start(configuration: config, model: .yoloxNano)
+        try await wait { source.running }
+        session.stop()
+        try await wait { !session.isCapturing }
+        precondition(session.latestReport?.durationLimitReached == false)
+        config.durationLimitEnabled = false
+        session.start(configuration: config, model: .rfdetrSmall)
+        try await wait { source.running }
+        try await Task.sleep(for: .milliseconds(180))
+        precondition(source.running, "A cancelled timer stopped the next run")
+        session.stop()
+        try await wait { !session.isCapturing }
+        precondition(session.latestReport?.durationLimitReached == false)
     }
 
     /// Waits for permission/foreground, draws paired frames and blocks publication after Stop.
@@ -376,13 +499,15 @@ nonisolated final class FakeCameraCapture: CameraCapturing, @unchecked Sendable 
     /// Waits for Stop while accepting synchronous frame offers from the test.
     func run(
         configuration: CameraConfiguration, sourceID: String,
+        started: @escaping @Sendable (Double) -> Void,
         deliver: @escaping @Sendable (PacedVideoFrame) throws -> Void
     ) async throws {
         try Task.checkCancellation()
+        let startTime = InferenceClock.nowMilliseconds()
         lock.withLock {
             report = CameraCaptureReport(
                 sourceID: sourceID, configuration: configuration)
-            report?.startedMilliseconds = InferenceClock.nowMilliseconds()
+            report?.startedMilliseconds = startTime
             report?.mapping = try! CameraClockMapping(host: .zero, before: 0, after: 0)
             report?.actual = [
                 "buffer_width": "16", "buffer_height": "16", "pixel_format": "BGRA32",
@@ -392,6 +517,7 @@ nonisolated final class FakeCameraCapture: CameraCapturing, @unchecked Sendable 
             runCount += 1
             self.deliver = deliver
         }
+        started(startTime)
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { pending in
                 let alreadyStopped = lock.withLock { () -> Bool in

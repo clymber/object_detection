@@ -12,6 +12,9 @@ nonisolated enum CameraExportRecord {
             "live_preview_enabled": c.livePreview,
             "detection_preview_enabled": c.detectionPreview,
             "annotated_video_enabled": c.recordAnnotatedVideo,
+            "duration_limit_enabled": c.durationLimitEnabled,
+            "duration_limit_seconds": c.durationLimitEnabled
+                ? c.durationLimitSeconds : NSNull(),
             "scene_notes": c.sceneNotes.isEmpty ? NSNull() : c.sceneNotes,
             "scene_notes_unavailable_reason": c.sceneNotes.isEmpty
                 ? "Not supplied" : NSNull(),
@@ -36,6 +39,9 @@ nonisolated enum CameraExportRecord {
                 "observed capture callback ordinal, including drop callbacks",
             "started_ms": VideoExportRecord.nullable(s?.startedMilliseconds),
             "ended_ms": VideoExportRecord.nullable(s?.endedMilliseconds),
+            "duration_seconds": VideoExportRecord.nullable(
+                r.window.map { $0.durationMilliseconds / 1000 }),
+            "duration_limit_reached": r.durationLimitReached,
             "timestamp_mapping": s?.mapping.map { m in
                 [
                     "method":

@@ -38,12 +38,22 @@ nonisolated struct CameraConfiguration: Sendable, Equatable {
     var livePreview = true
     var detectionPreview = false
     var recordAnnotatedVideo = false
+    var durationLimitEnabled = false
+    var durationLimitSeconds = 180.0
     var sceneNotes = ""
 
     /// Rejects unsupported diagnostic requests before opening the camera.
     func validate() throws {
         guard [15, 30].contains(framesPerSecond) else {
             throw CameraError.configuration("Choose 15 or 30 FPS.")
+        }
+        if durationLimitEnabled {
+            guard durationLimitSeconds.isFinite, durationLimitSeconds > 0,
+                durationLimitSeconds <= 86_400
+            else {
+                throw CameraError.configuration(
+                    "Choose a duration greater than 0 and at most 86400 seconds.")
+            }
         }
     }
 }
@@ -155,6 +165,7 @@ nonisolated protocol CameraCapturing: Sendable {
     /// Delivers bounded synchronous callbacks until capture stops or fails.
     func run(
         configuration: CameraConfiguration, sourceID: String,
+        started: @escaping @Sendable (Double) -> Void,
         deliver: @escaping @Sendable (PacedVideoFrame) throws -> Void) async throws
     func stop()
 }

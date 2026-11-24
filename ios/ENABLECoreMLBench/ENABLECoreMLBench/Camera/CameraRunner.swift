@@ -13,6 +13,7 @@ nonisolated struct CameraRunReport: Sendable {
     var status = "running"
     var capture: CameraCaptureReport?
     var recording: CameraRecordingReport?
+    var durationLimitReached = false
     var queue: PacedVideoQueueSnapshot?
     var issue: VideoInferenceFailure?
 
@@ -50,11 +51,13 @@ nonisolated struct CameraRunProgress: Sendable {
     let captureFramesPerSecond: Double?
     let actual: [String: String]
     let isCapturing: Bool
+    let durationLimitReached: Bool
 
     /// Reduces retained source logs on the worker before crossing to MainActor.
     init(
         capture: CameraCaptureReport?, queue: PacedVideoQueueSnapshot,
-        window: PacedVideoMeasurementWindow?, final: Bool
+        window: PacedVideoMeasurementWindow?, final: Bool,
+        durationLimitReached: Bool
     ) {
         counts = PacedVideoRunCounts(queue: queue)
         metrics = window.map {
@@ -70,6 +73,7 @@ nonisolated struct CameraRunProgress: Sendable {
             capture?.events.filter { $0.failure != nil && !$0.cancelled }.count ?? 0
         actual = capture?.actual ?? [:]
         isCapturing = capture?.isRunning ?? false
+        self.durationLimitReached = durationLimitReached
         if let window, window.durationMilliseconds > 0 {
             let count =
                 capture?.events.filter {
@@ -105,6 +109,7 @@ actor CameraRunner: CameraRunning {
     private var queue: PacedVideoScheduler?
     private(set) var latestReport: CameraRunReport?
     private var isRunning = false
+    private var durationTimer: CameraDurationTimer?
     nonisolated var preview: CameraPreviewHandle? { capture.preview }
     nonisolated var authorization: CameraAuthorization { capture.authorization }
 
@@ -133,6 +138,11 @@ actor CameraRunner: CameraRunning {
         latestReport = CameraRunReport(model: model, configuration: configuration)
         let sourceID = latestReport!.sourceID
         let capture = self.capture
+        let timer = CameraDurationTimer(
+            seconds: configuration.durationLimitEnabled
+                ? configuration.durationLimitSeconds : nil,
+            stop: { capture.stop() })
+        durationTimer = timer
         let recorder = configuration.recordAnnotatedVideo
             ? CameraVideoRecorder(
                 framesPerSecond: configuration.framesPerSecond,
@@ -147,6 +157,8 @@ actor CameraRunner: CameraRunning {
         }
         self.queue = queue
         defer {
+            timer.cancel()
+            durationTimer = nil
             self.queue = nil
             isRunning = false
         }
@@ -166,18 +178,21 @@ actor CameraRunner: CameraRunning {
                         previewEnabled: configuration.detectionPreview, consume: consume
                     )
                 }
-                try await capture.run(configuration: configuration, sourceID: sourceID)
-                {
-                    try queue.offer($0)
-                }
+                try await capture.run(
+                    configuration: configuration, sourceID: sourceID,
+                    started: { timer.start(at: $0) },
+                    deliver: { try queue.offer($0) })
+                timer.cancel()
                 if Task.isCancelled { queue.cancel() } else { queue.finishInput() }
                 _ = try await processing!.value
                 try Task.checkCancellation()
             } onCancel: {
+                timer.cancel()
                 queue.cancel()
                 capture.stop()
             }
         } catch {
+            timer.cancel()
             failure = error
             queue.cancel()
             capture.stop()
@@ -187,6 +202,7 @@ actor CameraRunner: CameraRunning {
             $0.sourceID == sourceID ? $0 : nil
         }
         latestReport?.queue = queue.snapshot
+        latestReport?.durationLimitReached = timer.hasExpired
         latestReport?.endedAt = Date()
         latestReport?.endedMilliseconds = InferenceClock.nowMilliseconds()
         latestReport?.issue = failure.map { VideoInferenceFailure($0) }
@@ -214,6 +230,58 @@ actor CameraRunner: CameraRunning {
                     ?? InferenceClock.nowMilliseconds())
         }
         return CameraRunProgress(
-            capture: source, queue: snapshot, window: window, final: !isRunning)
+            capture: source, queue: snapshot, window: window, final: !isRunning,
+            durationLimitReached: durationTimer?.hasExpired
+                ?? report.durationLimitReached)
+    }
+}
+
+/// Stops one capture window independently of model inference and UI polling.
+nonisolated private final class CameraDurationTimer: @unchecked Sendable {
+    private let lock = NSLock()
+    private let seconds: Double?
+    private let stop: @Sendable () -> Void
+    private var task: Task<Void, Never>?
+    private var cancelled = false
+    private var expired = false
+
+    var hasExpired: Bool { lock.withLock { expired } }
+
+    /// Leaves unlimited runs unarmed and binds one timer to one capture source.
+    init(seconds: Double?, stop: @escaping @Sendable () -> Void) {
+        self.seconds = seconds
+        self.stop = stop
+    }
+
+    /// Anchors to the same monotonic capture start used by the FPS measurement window.
+    func start(at milliseconds: Double) {
+        lock.withLock {
+            guard !cancelled, task == nil, let seconds else { return }
+            let deadline = milliseconds + seconds * 1000
+            task = Task.detached { [weak self] in
+                do {
+                    try await InferenceClock.sleep(untilMilliseconds: deadline)
+                } catch { return }
+                self?.expire()
+            }
+        }
+    }
+
+    /// Cancels on every terminal path so an old deadline cannot stop a later run.
+    func cancel() {
+        lock.withLock {
+            cancelled = true
+            task?.cancel()
+            task = nil
+        }
+    }
+
+    /// Closes capture promptly, while the run drains inference and finalizes its MP4.
+    private func expire() {
+        lock.withLock {
+            guard !cancelled, !expired else { return }
+            expired = true
+            stop()
+        }
     }
 }

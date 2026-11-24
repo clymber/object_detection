@@ -44,6 +44,21 @@ Formal benchmark/parity status remains separate from these checks.
 
 ## Recording live camera detections
 
+In **Camera**, enable **Limit run duration** and set **Duration (seconds)**, for
+example **180**, to compare models over the same capture duration. The limit
+applies to every camera run, with recording enabled or disabled. Leave it off for
+manual stopping. The initial duration setting is 180 seconds; limits must be
+greater than zero and no longer than 86400 seconds (24 hours).
+
+The timer starts at the capture window's monotonic start, after camera permission
+and model loading. **Elapsed capture time** shows this window. At the limit the
+app stops capture, finishes active inference and finalizes any MP4, then displays
+**Time limit reached**. Finishing can take longer than the capture limit; that
+extra time is excluded from the capture window used for FPS. Diagnostic exports
+include the configured limit, measured capture duration and whether the limit
+was reached under `mobile_run.json`'s `capture` entry. Manual Stop, backgrounding
+and capture errors also cancel the timer before another run can start.
+
 In **Camera**, enable **Record annotated video** before tapping **Start**. The app
 records successful processed frames with boxes, class names and confidence scores
 into a silent H.264 `.mp4`. Recording works with either preview turned off.

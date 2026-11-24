@@ -51,6 +51,7 @@ nonisolated final class CameraPreviewHandle: @unchecked Sendable {
         /// Runs until explicit Stop, task cancellation, interruption or capture failure.
         func run(
             configuration: CameraConfiguration, sourceID: String,
+            started: @escaping @Sendable (Double) -> Void,
             deliver: @escaping @Sendable (PacedVideoFrame) throws -> Void
         ) async throws {
             try configuration.validate()
@@ -87,13 +88,14 @@ nonisolated final class CameraPreviewHandle: @unchecked Sendable {
                             let mapping = try CameraClockMapping(
                                 host: host, before: before,
                                 after: InferenceClock.nowMilliseconds())
+                            let startTime = InferenceClock.nowMilliseconds()
                             lock.withLock {
                                 report?.mapping = mapping
-                                report?.startedMilliseconds =
-                                    InferenceClock.nowMilliseconds()
+                                report?.startedMilliseconds = startTime
                                 report?.isRunning = true
                                 accepting = true
                             }
+                            started(startTime)
                             preview!.session.startRunning()
                             if !preview!.session.isRunning {
                                 throw CameraError.interrupted("Capture did not start")
@@ -429,6 +431,7 @@ nonisolated final class CameraPreviewHandle: @unchecked Sendable {
         /// Retains hardware-independent test builds without pretending to capture.
         func run(
             configuration: CameraConfiguration, sourceID: String,
+            started: @escaping @Sendable (Double) -> Void,
             deliver: @escaping @Sendable (PacedVideoFrame) throws -> Void
         ) async throws {
             throw CameraError.unavailable
