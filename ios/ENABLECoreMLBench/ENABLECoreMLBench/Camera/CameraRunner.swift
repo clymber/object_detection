@@ -12,6 +12,7 @@ nonisolated struct CameraRunReport: Sendable {
     var endedMilliseconds: Double?
     var status = "running"
     var capture: CameraCaptureReport?
+    var recording: CameraRecordingReport?
     var queue: PacedVideoQueueSnapshot?
     var issue: VideoInferenceFailure?
 
@@ -100,6 +101,7 @@ nonisolated protocol CameraRunning: Actor {
 actor CameraRunner: CameraRunning {
     private let engine: DetectorEngine
     private let capture: any CameraCapturing
+    private let recordingDirectory: URL
     private var queue: PacedVideoScheduler?
     private(set) var latestReport: CameraRunReport?
     private var isRunning = false
@@ -109,10 +111,13 @@ actor CameraRunner: CameraRunning {
     /// Keeps the same engine available to recorded-video and live-camera modes.
     init(
         engine: DetectorEngine = DetectorEngine(),
-        capture: any CameraCapturing = CameraCaptureSource()
+        capture: any CameraCapturing = CameraCaptureSource(),
+        recordingDirectory: URL = URL.cachesDirectory.appendingPathComponent(
+            "CameraRecordings")
     ) {
         self.engine = engine
         self.capture = capture
+        self.recordingDirectory = recordingDirectory
     }
 
     /// Runs the operating-system permission request before capture/model work begins.
@@ -128,7 +133,18 @@ actor CameraRunner: CameraRunning {
         latestReport = CameraRunReport(model: model, configuration: configuration)
         let sourceID = latestReport!.sourceID
         let capture = self.capture
-        let queue = PacedVideoScheduler(detector: VideoFrameDetector(detector: engine))
+        let recorder = configuration.recordAnnotatedVideo
+            ? CameraVideoRecorder(
+                framesPerSecond: configuration.framesPerSecond,
+                directory: recordingDirectory) : nil
+        let detector = VideoFrameDetector(detector: engine)
+        let queue = PacedVideoScheduler { frame in
+            let result = try await detector.process(frame)
+            if result.status == .completed, let recorder {
+                recorder.offer(try VideoFramePreview(frame: frame, result: result))
+            }
+            return result
+        }
         self.queue = queue
         defer {
             self.queue = nil
@@ -179,6 +195,7 @@ actor CameraRunner: CameraRunning {
             ? "completed"
             : (failure is CancellationError || Task.isCancelled
                 ? "cancelled" : "failed")
+        latestReport?.recording = await recorder?.finish()
         if let failure { throw failure }
     }
 

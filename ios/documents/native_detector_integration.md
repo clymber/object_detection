@@ -42,6 +42,37 @@ without another manifest or a duplicated timestamp list. Complete source account
 includes paced skips and differs from the fraction processed within playback.
 Formal benchmark/parity status remains separate from these checks.
 
+## Recording live camera detections
+
+In **Camera**, enable **Record annotated video** before tapping **Start**. The app
+records successful processed frames with boxes, class names and confidence scores
+into a silent H.264 `.mp4`. Recording works with either preview turned off.
+
+Tap **Stop** and wait for finalization, then use **Save or share MP4** in
+**Annotated video** to save to Files or share the movie. Save before starting
+another run or changing the model/mode; resetting the camera removes its previous
+temporary recording. The existing **Prepare export** action still produces the
+three diagnostic JSON/CSV files, with recording settings and counts in
+`mobile_run.json` under `capture`.
+
+Recording retains at most two processed images awaiting rendering/encoding and
+uses a bounded encoding pixel pool. Busy recording work skips recording frames
+without waiting in the detection pipeline; the final recording panel reports
+encoded and skipped recording counts separately from inference/capture drops.
+Successful results can be recorded even when too old to publish to the preview.
+Empty detections still produce video frames; failed inference does not.
+
+The movie preserves the original capture-time gaps between encoded frames rather
+than speeding up skipped intervals. It starts at the first encoded frame and ends
+one configured capture-frame interval after the last encoded frame. Its motion
+therefore follows processed-frame cadence, which can be below camera FPS.
+An empty run has no movie; a recording failure removes partial output and leaves
+the diagnostic results available. Backgrounding stops capture and finalizes the
+accepted recording frames; recording does not continue in the background.
+
+Recording adds rendering, encoding and I/O load. Compare recording-off/on runs on
+the physical iPhone before interpreting its impact on FPS or result age.
+
 ## Model integration
 
 The shared model layer is implemented under

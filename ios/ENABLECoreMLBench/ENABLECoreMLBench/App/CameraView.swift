@@ -40,6 +40,10 @@ struct CameraView: View {
                 Toggle(
                     "Show processed frames with boxes",
                     isOn: $configuration.detectionPreview)
+                Toggle(
+                    "Record annotated video",
+                    isOn: $configuration.recordAnnotatedVideo)
+                    .accessibilityIdentifier("recordAnnotatedCameraVideo")
                 TextField(
                     "Lighting, distance and basketball activity",
                     text: $configuration.sceneNotes,
@@ -182,6 +186,39 @@ struct CameraView: View {
                     value: percentiles(session.metrics?.publishedAge))
             }
             .monospacedDigit()
+            if session.configurationForRun?.recordAnnotatedVideo == true {
+                Section {
+                    if let recording = session.latestReport?.recording {
+                        LabeledContent(
+                            "Recorded frames", value: String(recording.encodedFrames))
+                        LabeledContent(
+                            "Skipped recording frames",
+                            value: String(recording.skippedFrames))
+                        if let url = recording.url {
+                            ShareLink(
+                                "Save or share MP4", item: url,
+                                preview: SharePreview("Annotated camera detection"))
+                            .accessibilityIdentifier("shareCameraRecording")
+                        } else {
+                            Text(recording.issue?.message
+                                 ?? "No processed frames were recorded.")
+                                .font(.footnote)
+                        }
+                    } else {
+                        Text(session.status == .stopping ? "Finishing MP4…"
+                             : session.isCapturing ? "Recording processed frames…"
+                             : "No processed frames were recorded.")
+                            .font(.footnote)
+                    }
+                } header: {
+                    Text("Annotated video")
+                } footer: {
+                    Text(
+                        "Records boxes, classes and confidence without audio. "
+                        + "Recording adds processing load. "
+                        + "Save the MP4 before starting another run.")
+                }
+            }
             Section("Camera export") {
                 Button("Prepare export", systemImage: "doc.badge.gearshape") {
                     session.exportResults()

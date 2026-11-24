@@ -37,6 +37,7 @@ nonisolated struct CameraConfiguration: Sendable, Equatable {
     var mirrored = false
     var livePreview = true
     var detectionPreview = false
+    var recordAnnotatedVideo = false
     var sceneNotes = ""
 
     /// Rejects unsupported diagnostic requests before opening the camera.

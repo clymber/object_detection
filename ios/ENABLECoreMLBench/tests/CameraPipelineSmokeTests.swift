@@ -19,6 +19,10 @@ struct CameraPipelineSmokeTests {
         paths["session"] = session.export.files!.directory.path
         let denied = try await testDenied(exporter: exporter)
         paths["denied"] = denied.directory.path
+        paths["recorded"] = try await testRecording(
+            exporter: exporter, directory: output).directory.path
+        paths["recording_failure"] = try await testRecording(
+            exporter: exporter, directory: output, failRecording: true).directory.path
         try await testBackgroundPermissionCancellation()
         for (name, report) in [
             "drops": try await testBoundedCapture(),
@@ -155,6 +159,61 @@ struct CameraPipelineSmokeTests {
         source.resolvePermission(true)
         try await wait { !session.isCapturing }
         precondition(source.runs == 0 && session.latestReport?.status == "cancelled")
+    }
+
+    /// Records with previews disabled, finalizes on Stop, exports evidence and clears files.
+    static func testRecording(
+        exporter: VideoRunExporter, directory: URL, failRecording: Bool = false
+    ) async throws -> VideoExportFiles {
+        let source = FakeCameraCapture()
+        let detector = CameraTestDetector()
+        let recordingDirectory = directory.appendingPathComponent(
+            failRecording ? "blocked_recording" : "recordings")
+        if failRecording { try Data([0]).write(to: recordingDirectory) }
+        let worker = CameraRunner(
+            engine: DetectorEngine(loader: { _ in detector }), capture: source,
+            recordingDirectory: recordingDirectory)
+        let session = CameraSession(worker: worker)
+        var config = CameraConfiguration()
+        config.livePreview = false
+        config.detectionPreview = false
+        config.recordAnnotatedVideo = true
+        session.start(configuration: config, model: .yoloxNano)
+        try await wait { source.running }
+        try source.emit()
+        try await wait { await worker.progress()?.counts.completedFrames == 1 }
+        try await Task.sleep(for: .milliseconds(150))
+        try source.emit()
+        try await wait { await worker.progress()?.counts.completedFrames == 2 }
+        session.stop()
+        try await wait { !session.isCapturing }
+        precondition(session.status == .stopped && session.previewFrame == nil)
+        let report = session.latestReport!
+        let recording = report.recording!
+        precondition(recording.status == (failRecording ? .failed : .completed),
+                     recording.issue?.message ?? "Recording was not finalized")
+        precondition(recording.encodedFrames == (failRecording ? 0 : 2))
+        if failRecording {
+            precondition(recording.url == nil && recording.issue != nil)
+            precondition(session.counts.completedFrames == 2)
+        } else {
+            precondition(FileManager.default.fileExists(atPath: recording.url!.path))
+        }
+        let files = try await exporter.export(.camera(report), sourceURL: nil)
+        let metadata = try JSONSerialization.jsonObject(with: Data(
+            contentsOf: files.directory.appendingPathComponent("mobile_run.json")))
+            as! [String: Any]
+        let capture = metadata["capture"] as! [String: Any]
+        precondition((capture["configuration"] as! [String: Any])[
+            "annotated_video_enabled"] as! Bool)
+        let exportedRecording = capture["recording"] as! [String: Any]
+        precondition(exportedRecording["encoded_frames"] as! Int
+                     == recording.encodedFrames)
+        session.reset()
+        if let url = recording.url {
+            precondition(!FileManager.default.fileExists(atPath: url.path))
+        }
+        return files
     }
 
     /// Stop rejects late UI publication, cancels pending input and retains active completion.

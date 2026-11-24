@@ -11,6 +11,7 @@ nonisolated enum CameraExportRecord {
             "rotation_degrees": c.orientation.rawValue, "mirrored": c.mirrored,
             "live_preview_enabled": c.livePreview,
             "detection_preview_enabled": c.detectionPreview,
+            "annotated_video_enabled": c.recordAnnotatedVideo,
             "scene_notes": c.sceneNotes.isEmpty ? NSNull() : c.sceneNotes,
             "scene_notes_unavailable_reason": c.sceneNotes.isEmpty
                 ? "Not supplied" : NSNull(),
@@ -52,6 +53,21 @@ nonisolated enum CameraExportRecord {
             "delivered_callbacks": s?.delivered ?? 0, "drop_events": s?.dropEvents ?? 0,
             "actual_delivered_fps": VideoExportRecord.nullable(fps),
             "observed_callbacks": s?.events.count ?? 0,
+            "recording": r.recording.map { recording in
+                [
+                    "status": recording.status.rawValue,
+                    "file_name": VideoExportRecord.nullable(
+                        recording.url?.lastPathComponent),
+                    "encoded_frames": recording.encodedFrames,
+                    "skipped_frames": recording.skippedFrames,
+                    "first_source_pts": VideoExportRecord.time(recording.firstSourceTime),
+                    "last_source_pts": VideoExportRecord.time(recording.lastSourceTime),
+                    "issue": VideoExportRecord.failure(recording.issue),
+                    "frame_selection": "Successful processed frames, including late results",
+                    "timing": "Original capture gaps; final frame held for one capture interval",
+                    "audio": false,
+                ] as [String: Any]
+            } as Any? ?? NSNull(),
         ]
     }
 

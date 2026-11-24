@@ -27,7 +27,8 @@ if [[ $# -eq 0 ]]; then
     PacedVideoMetrics PacedVideoRunner
     PacedVideoSession
     VideoFrameDetection VideoFrameResult VideoFrameTiming
-    VideoPreview VideoPreviewRendering VideoRunExport VideoRunCoverage VideoAccuracy CameraPipeline
+    VideoPreview VideoPreviewRendering VideoRunExport VideoRunCoverage VideoAccuracy
+    CameraPipeline CameraRecording
     OfflineVideoCoverage OfflineVideoMetrics OfflineVideoRunner OfflineVideoSession
   )
 fi

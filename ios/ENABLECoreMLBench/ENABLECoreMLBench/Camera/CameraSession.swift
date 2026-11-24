@@ -124,7 +124,9 @@ final class CameraSession {
     func stop() {
         if isCapturing, status != .stopping {
             status = .stopping
-            message = "Stopping capture and finishing active inference…"
+            message = configurationForRun?.recordAnnotatedVideo == true
+                ? "Stopping capture, finishing inference and finalizing MP4…"
+                : "Stopping capture and finishing active inference…"
             poll?.cancel()
             task?.cancel()
             activation?.resume()
@@ -239,6 +241,9 @@ final class CameraSession {
         poll?.cancel()
         poll = nil
         guard generation == request else {
+            if let url = report?.recording?.url {
+                try? FileManager.default.removeItem(at: url)
+            }
             status = .ready
             return
         }
@@ -254,6 +259,9 @@ final class CameraSession {
     /// Releases previous images and export baselines before a different run can begin.
     private func resetResults(changeGeneration: Bool = true) {
         if changeGeneration { generation = UUID() }
+        if let url = latestReport?.recording?.url {
+            try? FileManager.default.removeItem(at: url)
+        }
         export.reset()
         latestReport = nil
         counts = .init()
