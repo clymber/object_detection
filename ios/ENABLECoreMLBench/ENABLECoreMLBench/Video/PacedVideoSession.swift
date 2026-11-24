@@ -27,6 +27,7 @@ final class PacedVideoSession {
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var generation: UInt64 = 0
     @ObservationIgnored private var activeRequest: UInt64?
+    @ObservationIgnored var onFinished: ((VideoRunExport) -> Void)?
 
     var isBusy: Bool {
         status == .preparing || status == .running || status == .stopping
@@ -216,6 +217,7 @@ final class PacedVideoSession {
             status = error is CancellationError ? .cancelled : .error
             message = error?.localizedDescription ?? "The paced worker did not finish."
         }
+        if let report { onFinished?(.paced(report)) }
     }
 
     /// Clears values before a new run or input, preserving the chosen preview setting.

@@ -53,10 +53,16 @@ nonisolated struct OfflineVideoRunMetrics: Sendable {
 
     /// Includes inter-request gaps, failed attempts and inter-frame decode delays.
     var endToEndFramesPerSecond: Double? {
-        guard let firstReadyMilliseconds, let lastDoneMilliseconds else { return nil }
+        guard let duration = endToEndDurationMilliseconds else { return nil }
         return Self.rate(
-            frameLatency.sampleCount,
-            over: lastDoneMilliseconds - firstReadyMilliseconds)
+            frameLatency.sampleCount, over: duration)
+    }
+
+    /// Exposes the exact FPS denominator, excluding loading and report generation.
+    var endToEndDurationMilliseconds: Double? {
+        guard let firstReadyMilliseconds, let lastDoneMilliseconds,
+            lastDoneMilliseconds > firstReadyMilliseconds else { return nil }
+        return lastDoneMilliseconds - firstReadyMilliseconds
     }
 
     /// Counts decoded inputs over the full worker run, including setup and cleanup.

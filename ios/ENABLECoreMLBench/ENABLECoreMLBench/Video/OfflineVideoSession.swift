@@ -35,6 +35,7 @@ final class OfflineVideoSession {
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var generation: UInt64 = 0
     @ObservationIgnored private var activeRequest: UInt64?
+    @ObservationIgnored var onFinished: ((VideoRunExport) -> Void)?
 
     var isBusy: Bool {
         status == .preparing || status == .running || status == .stopping
@@ -203,6 +204,7 @@ final class OfflineVideoSession {
                     ?? "The video worker did not produce a final report."
             }
         }
+        if let report { onFinished?(.offline(report)) }
     }
 
     /// Resets progress without discarding the current input.

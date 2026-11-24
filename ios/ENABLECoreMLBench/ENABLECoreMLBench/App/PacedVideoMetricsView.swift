@@ -3,6 +3,7 @@ import SwiftUI
 /// Separates paced input, completion, receipt and drawing scopes in the video UI.
 struct PacedVideoMetricsView: View {
     let session: PacedVideoSession
+    let accuracy: VideoAccuracyReport?
 
     var body: some View {
         Group {
@@ -24,8 +25,8 @@ struct PacedVideoMetricsView: View {
                 LabeledContent("Unfinished work",
                                value: String(session.counts.unfinishedFrames))
             } header: { Text("Paced video run") } footer: {
-                Text("One pass at source cadence, with no warm-up removed. Counts and rates "
-                    + "update during the run. This is a diagnostic run.")
+                Text("One pass at source cadence. Annotated benchmarks warm up separately. "
+                    + "Counts and rates update during the run.")
             }
             Section {
                 LabeledContent("Skipped frames",
@@ -47,12 +48,13 @@ struct PacedVideoMetricsView: View {
                 if session.decodeErrorEvents > 0 {
                     LabeledContent("Lost-frame count", value: "Unknown")
                 }
-                LabeledContent("Frame coverage", value: "Unverified")
+                LabeledContent("Source coverage", value: accuracy == nil
+                    ? "Unverified" : "Matched to annotations")
             } header: { Text("Paced outcomes") } footer: {
                 Text("Skipped frames never entered inference. Late or superseded results "
                     + "completed inference without fresh delivery. Published empty results "
                     + "count as fresh. Decode errors may hide an unknown number of frames; "
-                    + "frozen-frame coverage has not been verified.")
+                    + "annotated runs verify source indices against the imported labels.")
             }
             Section {
                 LabeledContent("Input FPS", value: number(

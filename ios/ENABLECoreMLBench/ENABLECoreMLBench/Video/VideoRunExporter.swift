@@ -18,7 +18,9 @@ actor VideoRunExporter {
     }
 
     /// Publishes a unique directory only after every file has been written and hashed.
-    func export(_ run: VideoRunExport, sourceURL: URL?) throws -> VideoExportFiles {
+    func export(
+        _ run: VideoRunExport, sourceURL: URL?, accuracy: VideoAccuracyExport? = nil
+    ) throws -> VideoExportFiles {
         guard run.status != "running", run.endedAt != nil else {
             throw CocoaError(.fileWriteUnknown, userInfo: [
                 NSLocalizedDescriptionKey: "Wait for the video worker to finish."])
@@ -58,10 +60,25 @@ actor VideoRunExporter {
                 coverageStatus = coverage.status; reasons = coverage.reasons
             }
             var validity = metadata["validity"] as! [String: Any]
+            if let accuracy {
+                guard accuracy.runID == run.id else {
+                    throw VideoBenchmarkError("Accuracy report belongs to another video run.")
+                }
+                if accuracy.report != nil {
+                    let input = metadata["input"] as! [String: Any]
+                    guard input["sha256"] as? String
+                        == accuracy.annotations.annotations.video.sha256 else {
+                        throw VideoBenchmarkError("Video bytes changed after F1 scoring.")
+                    }
+                }
+                metadata["accuracy"] = try accuracy.json()
+            }
             validity["coverage_status"] = coverageStatus
             validity["reasons"] = reasons + [
                 "Model/video parity and camera ground-truth evaluation are not established by this diagnostic run",
-                "Diagnostic run without benchmark warm-up or repetitions",
+                accuracy?.warmupFrames == 30
+                    ? "Thirty untimed warm-up predictions; no timed repetitions"
+                    : "Diagnostic run without benchmark warm-up or repetitions",
                 "Sustained-run conditions have not been verified"]
             metadata["validity"] = validity
             metadata["model_provenance"] = try modelReference(run.model)

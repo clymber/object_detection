@@ -67,7 +67,7 @@ struct CameraPipelineSmokeTests {
         let detector = CameraTestDetector()
         let worker = CameraRunner(
             engine: DetectorEngine(loader: { _ in detector }), capture: source)
-        let export = VideoExportSession(write: { run, url in
+        let export = VideoExportSession(write: { run, url, _ in
             try await exporter.export(run, sourceURL: url)
         })
         let session = CameraSession(worker: worker, export: export)
@@ -121,7 +121,8 @@ struct CameraPipelineSmokeTests {
         let session = CameraSession(
             worker: worker,
             export: VideoExportSession(
-                write: { run, url in try await exporter.export(run, sourceURL: url) }))
+                write: { run, url, accuracy in
+                    try await exporter.export(run, sourceURL: url, accuracy: accuracy) }))
         session.start(configuration: .init(), model: .rfdetrSmall)
         try await wait { !session.isCapturing }
         precondition(

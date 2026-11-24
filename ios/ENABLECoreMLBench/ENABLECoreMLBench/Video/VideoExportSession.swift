@@ -14,7 +14,9 @@ nonisolated enum VideoExportVerificationStatus: String, Sendable {
 @MainActor
 @Observable
 final class VideoExportSession {
-    typealias Writer = @Sendable (VideoRunExport, URL?) async throws -> VideoExportFiles
+    typealias Writer = @Sendable (
+        VideoRunExport, URL?, VideoAccuracyExport?
+    ) async throws -> VideoExportFiles
     typealias Reader = @Sendable (URL, [String: String]) async throws -> VideoExportVerification
     private let write: Writer
     private let read: Reader
@@ -30,7 +32,7 @@ final class VideoExportSession {
     /// Accepts isolated disk workers for lifecycle and stale-result checks.
     init(read: Reader? = nil, write: Writer? = nil) {
         let exporter = VideoRunExporter()
-        self.write = write ?? { try await exporter.export($0, sourceURL: $1) }
+        self.write = write ?? { try await exporter.export($0, sourceURL: $1, accuracy: $2) }
         self.read = read ?? { directory, expected in
             let worker = Task.detached {
                 let accessed = directory.startAccessingSecurityScopedResource()
@@ -44,7 +46,9 @@ final class VideoExportSession {
     }
 
     /// Freezes a finished report while disk work runs outside the UI actor.
-    func start(_ run: VideoRunExport, sourceURL: URL? = nil) {
+    func start(
+        _ run: VideoRunExport, sourceURL: URL? = nil, accuracy: VideoAccuracyExport? = nil
+    ) {
         guard !isBusy else { return }
         reset()
         let request = generation
@@ -53,7 +57,7 @@ final class VideoExportSession {
         message = "Preparing export files…"
         task = Task { [weak self] in
             do {
-                let files = try await write(run, sourceURL)
+                let files = try await write(run, sourceURL, accuracy)
                 guard !Task.isCancelled, let self, self.generation == request else { return }
                 self.files = files
                 self.message = "Three files ready to save or share."

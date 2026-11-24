@@ -4,17 +4,21 @@ import CoreMedia
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+#endif
 
 /// Selects frozen inputs, personal photos or videos without mixing their results.
 struct ContentView: View {
     /// Freezes file routing before presentation, including after the picker dismisses.
     private enum FileImportPurpose: Equatable {
-        case photo, video, savedVideoResults
+        case photo, video, videoAnnotations, savedVideoResults
 
         var contentTypes: [UTType] {
             switch self {
             case .photo: [.image]
             case .video: [.movie]
+            case .videoAnnotations: [.json]
             case .savedVideoResults: [.folder]
             }
         }
@@ -68,6 +72,13 @@ struct ContentView: View {
                 } else if inputSource.isVideo {
                     videoSection
                     videoDetectionSection
+                    VideoAccuracyView(
+                        session: videoSession.accuracy,
+                        disabled: isBusy || media.video == nil,
+                        chooseAnnotations: {
+                            fileImportPurpose = .videoAnnotations
+                            showingFiles = true
+                        }, removeAnnotations: { videoSession.removeAnnotations() })
                     if videoSession.mode == .offline {
                         VideoMetricsView(
                             metrics: videoSession.offline.metrics,
@@ -78,7 +89,8 @@ struct ContentView: View {
                             previewFrames: videoSession.offline.previewStatistics.drawnFrames,
                             previewFPS: videoSession.offline.previewStatistics.framesPerSecond)
                     } else {
-                        PacedVideoMetricsView(session: videoSession.paced)
+                        PacedVideoMetricsView(session: videoSession.paced,
+                            accuracy: videoSession.accuracy.result?.report)
                     }
                 } else {
                     Section {
@@ -120,6 +132,7 @@ struct ContentView: View {
         }
         .onAppear {
             cameraSession.setActivity(active: scenePhase == .active, background: scenePhase == .background)
+            updateVideoIdleTimer()
         }
         .task { loadSelectedImage() }
         .fileImporter(
@@ -159,6 +172,7 @@ struct ContentView: View {
         .onChange(of: videoSession.isPreviewEnabled) { _, enabled in
             if enabled { player?.pause() }
         }
+        .onChange(of: videoSession.isBusy) { _, _ in updateVideoIdleTimer() }
         .onChange(of: photoSelection) { _, item in
             guard let item else { return }
             photoSelection = nil
@@ -181,6 +195,9 @@ struct ContentView: View {
             if inputSource.isVideo, let url { player = AVPlayer(url: url) }
         }
         .onDisappear {
+            #if os(iOS)
+            UIApplication.shared.isIdleTimerDisabled = false
+            #endif
             session.stop()
             batch.stop()
             videoSession.suspendDetection()
@@ -203,7 +220,16 @@ struct ContentView: View {
             } else if !inputSource.isVideo && session.image == nil && !isBusy {
                 loadSelectedImage()
             }
+            updateVideoIdleTimer()
         }
+    }
+
+    /// Keeps long foreground video runs awake without enabling background processing.
+    private func updateVideoIdleTimer() {
+        #if os(iOS)
+        UIApplication.shared.isIdleTimerDisabled = scenePhase == .active
+            && (videoSession.isDetecting || videoSession.isPreparingBenchmark)
+        #endif
     }
 
     private var inputSection: some View {
@@ -401,8 +427,11 @@ struct ContentView: View {
                 .accessibilityIdentifier("videoDetectionStatus")
             Text(videoSession.message).font(.footnote).foregroundStyle(.secondary)
                 .accessibilityIdentifier("videoDetectionMessage")
-            if videoSession.isDetecting {
-                ProgressView { Text(videoSession.progressText) }
+            if videoSession.isDetecting || videoSession.isPreparingBenchmark {
+                ProgressView {
+                    Text(videoSession.isPreparingBenchmark
+                        ? "Preparing benchmark…" : videoSession.progressText)
+                }
                     .accessibilityIdentifier("videoDetectionProgress")
             } else if videoSession.hasReport {
                 Text(videoSession.progressText)
@@ -562,6 +591,14 @@ struct ContentView: View {
 
     /// Routes the captured purpose without resetting a video run for saved-file checks.
     private func handleFileImport(_ result: Result<URL, Error>, purpose: FileImportPurpose) {
+        if purpose == .videoAnnotations {
+            switch result {
+            case .success(let url): videoSession.importAnnotations(url)
+            case .failure(let error):
+                if (error as NSError).code != NSUserCancelledError { media.report(error) }
+            }
+            return
+        }
         if purpose == .savedVideoResults {
             let export = inputSource == .camera ? cameraSession.export : videoSession.export
             switch result {

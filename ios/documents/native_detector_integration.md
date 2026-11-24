@@ -1,5 +1,42 @@
 # Native detector integration
 
+## Annotated video F1 and FPS
+
+1. Choose **Video > Choose from Files** and import the clean `basketball_test.mp4`.
+2. Tap **Import annotations JSON** and select `basketball_test_annotations.json`.
+   The app validates the annotations and checks the exact video SHA-256. The boxed
+   preview and transcoded copies will not match. A generation manifest is not needed.
+3. Choose a detector and **Offline** or **Paced**, leave preview off, then tap **Start**.
+   Annotated runs perform 30 untimed predictions on the first frame, then reopen
+   the video at frame zero. All original frame indices remain available for scoring.
+4. Read **Video accuracy**, then **Prepare export > Save or share results**.
+
+Save each run before changing model or mode. The screen stays awake during video
+processing; leaving the app still stops the run.
+
+Scoring runs off the UI thread after detection timing ends. Confidence is at least
+0.25, IoU at least 0.5, with up to 100 detections per frame and score-ordered,
+one-to-one matching within each category. Negative frames contribute false positives.
+
+Offline F1 covers every annotated frame; failed inference counts as empty predictions.
+Paced F1 covers successful frames completed within the playback window. Skipped,
+failed and post-window frames are excluded from paced F1 and reported separately;
+read the score together with frame coverage. Matching uses source frame indices,
+not delivery order. Interrupted, mismatched or incomplete source passes have no F1.
+
+The summary shows precision, recall, TP/FP/FN, coverage and detection FPS. Offline
+FPS uses the existing first-ready to last-done processing interval, including gaps
+and inter-frame decoding. Paced FPS uses completions within the source window.
+Loading, warm-up, accuracy scoring and export are outside these FPS intervals.
+The underlying diagnostic timing panels retain their existing scopes.
+
+The existing three-file export includes `accuracy` in `mobile_run.json`, with
+annotation/video hashes, scoring scope, thresholds, counts, metrics and warm-up
+count, or a reason when F1 is unavailable. `frames.jsonl` retains the raw predictions.
+Annotations stay selected across model/mode changes and clear when the video changes.
+
+## Model integration
+
 The shared model layer is implemented under
 `ENABLECoreMLBench/ENABLECoreMLBench/Detection/`. SwiftUI session wiring and
 still-image overlays are the next plan tasks. Model loading, preprocessing and

@@ -29,7 +29,7 @@ struct VideoMetricsView: View {
                 Text("Video run")
             } footer: {
                 Text(
-                    "Diagnostic run: every frame is included, with no warm-up removed. "
+                    "Every frame is included. Annotated benchmarks warm up separately. "
                         + "Run time includes setup, model loading, decoding "
                         + "and cleanup."
                 )

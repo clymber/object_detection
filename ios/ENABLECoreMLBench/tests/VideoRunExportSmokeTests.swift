@@ -216,7 +216,7 @@ struct VideoRunExportSmokeTests {
         try FileManager.default.copyItem(at: files.directory, to: saved)
         let verified = try VideoExportVerifier.verify(saved, expected: files.fingerprints)
         precondition(verified.records == 4 && verified.fingerprints.count == 3)
-        let session = VideoExportSession(write: { _, _ in files })
+        let session = VideoExportSession(write: { _, _, _ in files })
         session.start(.offline(try offlineReport()), sourceURL: folder)
         while session.isBusy { await Task.yield() }
         session.verifySaved(saved)
@@ -274,7 +274,7 @@ struct VideoRunExportSmokeTests {
     @MainActor
     static func verifyExportSession(run: VideoRunExport, files: VideoExportFiles, source: URL) async throws {
         let gate = ExportTestGate()
-        let session = VideoExportSession(write: { _, _ in try await gate.wait() })
+        let session = VideoExportSession(write: { _, _, _ in try await gate.wait() })
         session.start(run, sourceURL: source)
         while !(await gate.isWaiting) { await Task.yield() }
         session.reset()
@@ -298,7 +298,7 @@ struct VideoRunExportSmokeTests {
     static func verifyVerificationLifecycle(run: VideoRunExport, files: VideoExportFiles) async throws {
         let gate = VerificationTestGate()
         let session = VideoExportSession(
-            read: { _, _ in try await gate.wait() }, write: { _, _ in files })
+            read: { _, _ in try await gate.wait() }, write: { _, _, _ in files })
         let coordinator = VideoSession(export: session)
         let report = VideoExportVerification(
             runID: "held-read", records: 4, fingerprints: files.fingerprints)
