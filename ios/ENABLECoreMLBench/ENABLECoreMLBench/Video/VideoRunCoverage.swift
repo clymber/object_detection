@@ -2,44 +2,70 @@ import CoreMedia
 import CryptoKit
 import Foundation
 
-/// Binds an ordered source sequence to the exact video bytes in a bundled manifest.
+/// Binds source timestamps to matching video bytes and a declared input reference.
 nonisolated struct VideoCoverageReference: Sendable {
   let sourceID: String
   let pts: [Int64]
   let numerator: Int64
   let denominator: Int32
+  let basis: String
 
   /// Rejects absent, changed or malformed references instead of trusting frame counts.
   init?(input: [String: Any]) {
     guard let sourceID = input["source_id"] as? String,
-      let actual = input["sha256"] as? String,
-      let manifest = input["manifest"] as? [String: Any],
-      let entry = manifest["entry"] as? [String: Any],
-      entry["id"] as? String == sourceID, entry["sha256"] as? String == actual,
-      let reference = entry["frame_reference"] as? [String: Any],
-      let base = reference["time_base"] as? String,
-      let pts = reference["pts"] as? [Int64], !pts.isEmpty,
-      let video = entry["video"] as? [String: Any],
-      video["frame_count"] as? Int == pts.count,
-      let expectedDigest = video["pts_sha256"] as? String
-    else { return nil }
+      let actual = input["sha256"] as? String else { return nil }
+    let base: String
+    let pts: [Int64]
+    let expectedDigest: String?
+    let basis: String
+    if let reference = input["annotation_reference"] as? [String: Any] {
+      guard reference["schema_version"] as? Int == 1,
+        reference["video_sha256"] as? String == actual,
+        let annotationHash = reference["annotation_sha256"] as? String,
+        annotationHash.count == 64,
+        annotationHash.allSatisfy({ "0123456789abcdef".contains($0) }),
+        let count = reference["frame_count"] as? Int, count > 0,
+        let timeBase = reference["time_base"] as? String else { return nil }
+      pts = (0..<count).map { Int64($0) }
+      base = timeBase
+      expectedDigest = nil
+      basis = "annotation_reference"
+    } else {
+      guard input["annotation_reference"] == nil,
+        let manifest = input["manifest"] as? [String: Any],
+        let entry = manifest["entry"] as? [String: Any],
+        entry["id"] as? String == sourceID, entry["sha256"] as? String == actual,
+        let reference = entry["frame_reference"] as? [String: Any],
+        let timeBase = reference["time_base"] as? String,
+        let timestamps = reference["pts"] as? [Int64], !timestamps.isEmpty,
+        let video = entry["video"] as? [String: Any],
+        video["frame_count"] as? Int == timestamps.count,
+        let digest = video["pts_sha256"] as? String else { return nil }
+      pts = timestamps
+      base = timeBase
+      expectedDigest = digest
+      basis = "frozen_manifest"
+    }
     let parts = base.split(separator: "/")
     guard parts.count == 2, let numerator = Int64(parts[0]), numerator > 0,
       let denominator = Int32(parts[1]), denominator > 0,
       zip(pts, pts.dropFirst()).allSatisfy({ $0 < $1 }),
       pts.allSatisfy({ !$0.multipliedReportingOverflow(by: numerator).overflow })
     else { return nil }
-    // Match stage_test_videos.py's existing ordered, compact digest convention.
-    let canonical =
-      "{\"time_base\":\"\(base)\",\"pts\":["
-      + pts.map(String.init).joined(separator: ",") + "]}"
-    let digest = SHA256.hash(data: Data(canonical.utf8))
-      .map { String(format: "%02x", $0) }.joined()
-    guard digest == expectedDigest else { return nil }
+    if let expectedDigest {
+      // Match stage_test_videos.py's existing ordered, compact digest convention.
+      let canonical =
+        "{\"time_base\":\"\(base)\",\"pts\":["
+        + pts.map(String.init).joined(separator: ",") + "]}"
+      let digest = SHA256.hash(data: Data(canonical.utf8))
+        .map { String(format: "%02x", $0) }.joined()
+      guard digest == expectedDigest else { return nil }
+    }
     self.sourceID = sourceID
     self.pts = pts
     self.numerator = numerator
     self.denominator = denominator
+    self.basis = basis
   }
 
   /// Compares exact rational media instants across equivalent decoder time bases.
@@ -71,6 +97,7 @@ nonisolated struct VideoRunCoverage: Sendable {
   let decodeLossEvents: Int
   let accountingBalanced: Bool
   let reasons: [String]
+  let basis: String
   var status: String { reasons.isEmpty ? "complete" : "incomplete" }
 
   /// Uses frozen references when available and retains a separate input balance.
@@ -176,6 +203,7 @@ nonisolated struct VideoRunCoverage: Sendable {
     let usable = reference.flatMap {
       $0.sourceID == run.sourceID && !explicitTrack ? $0 : nil
     }
+    basis = usable?.basis ?? "unverified_source"
     var required: Set<String>?
     if let usable, let loops, loops > 0, loops <= 10_000,
       firstLoop >= 0, firstLoop <= Int.max - loops
@@ -237,7 +265,7 @@ nonisolated struct VideoRunCoverage: Sendable {
   /// Exports source completeness separately from numerical success and benchmark parity.
   var json: [String: Any] {
     [
-      "status": status, "basis": expected == nil ? "unverified_source" : "frozen_manifest",
+      "status": status, "basis": expected == nil ? "unverified_source" : basis,
       "input_frames": inputFrames, "completed": completed, "failed": failed,
       "skipped": skipped, "unfinished": unfinished, "observed_outcomes": observed,
       "expected_frames": VideoExportRecord.nullable(expected),

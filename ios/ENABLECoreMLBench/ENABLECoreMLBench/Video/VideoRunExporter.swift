@@ -34,7 +34,8 @@ actor VideoRunExporter {
         try manager.createDirectory(at: staging, withIntermediateDirectories: true)
         do {
             let count = try writeRecords(run, runID: runID, to: staging)
-            var metadata = mobileRun(run, runID: runID, recordCount: count)
+            var metadata = mobileRun(
+                run, runID: runID, recordCount: count, accuracy: accuracy)
             let coverageStatus: String
             let reasons: [String]
             if case .camera(let r) = run {
@@ -53,7 +54,20 @@ actor VideoRunExporter {
                 reasons = coverage["reasons"] as! [String]
             } else {
                 guard let sourceURL else { throw CameraError.configuration("Video export needs its source URL.") }
-                let input = try inputReference(run, url: sourceURL)
+                var input = try inputReference(run, url: sourceURL)
+                if let accuracy,
+                    input["sha256"] as? String == accuracy.annotations.annotations.video.sha256,
+                    let fps = Int32(exactly: accuracy.annotations.annotations.video.fps), fps > 0 {
+                    // The generator's constant-rate frame index is also its PTS numerator.
+                    input["annotation_reference"] = [
+                        "schema_version": 1,
+                        "annotation_file": accuracy.annotations.fileName,
+                        "annotation_sha256": accuracy.annotations.sha256,
+                        "video_sha256": accuracy.annotations.annotations.video.sha256,
+                        "frame_count": accuracy.annotations.annotations.video.frame_count,
+                        "time_base": "1/\(fps)",
+                    ]
+                }
                 metadata["input"] = input
                 let coverage = VideoRunCoverage(run: run, reference: VideoCoverageReference(input: input))
                 metadata["coverage"] = coverage.json
@@ -75,7 +89,7 @@ actor VideoRunExporter {
             }
             validity["coverage_status"] = coverageStatus
             validity["reasons"] = reasons + [
-                "Model/video parity and camera ground-truth evaluation are not established by this diagnostic run",
+                "Model/export parity has not been established by this run",
                 accuracy?.warmupFrames == 30
                     ? "Thirty untimed warm-up predictions; no timed repetitions"
                     : "Diagnostic run without benchmark warm-up or repetitions",
@@ -130,9 +144,19 @@ actor VideoRunExporter {
 
     /// Uses explicit unavailable annotations instead of guessing uncollected conditions.
     private func mobileRun(
-        _ run: VideoRunExport, runID: String, recordCount: Int
+        _ run: VideoRunExport, runID: String, recordCount: Int,
+        accuracy: VideoAccuracyExport?
     ) -> [String: Any] {
         let model = run.model
+        let f1UnavailableReason: String?
+        if accuracy?.report != nil {
+            f1UnavailableReason = nil
+        } else if let reason = accuracy?.unavailableReason {
+            f1UnavailableReason = reason
+        } else {
+            f1UnavailableReason = accuracy == nil
+                ? "No video ground truth evaluation" : "Accuracy scoring did not complete"
+        }
         var value: [String: Any] = [
             "schema_version": 1, "scope": run.mode == "camera" ? "camera_diagnostic" : "video_diagnostic", "run_id": runID,
             "execution_id": run.id.uuidString, "protocol_id": "enable_ios_detection",
@@ -152,7 +176,7 @@ actor VideoRunExporter {
                 "preview_enabled": run.previewEnabled, "max_in_flight": 1,
                 "max_pending": run.mode != "offline" ? 1 : 0,
                 "max_result_age_ms": run.mode != "offline" ? 200 : NSNull(),
-                "warmup_frames": 0, "preloaded_frames": false,
+                "warmup_frames": accuracy?.warmupFrames ?? 0, "preloaded_frames": false,
                 "repetition": NSNull(), "repetition_unavailable_reason": "Ad hoc diagnostic run",
             ],
             "timing": [
@@ -170,12 +194,13 @@ actor VideoRunExporter {
             "thermal_observations": ["value": NSNull(), "unavailable_reason": "Not collected"],
             "validity": [
                 "benchmark_status": "not_validated", "coverage_status": "unverified",
-                "parity_status": "pending", "f1": NSNull(),
+                "parity_status": "pending",
+                "f1": VideoExportRecord.nullable(accuracy?.report?.f1),
                 "reasons": ["Frozen input coverage has not been reconciled",
                             "Video parity has not been verified",
                             "Diagnostic run without benchmark warm-up or repetitions",
                             "Sustained-run conditions have not been verified"],
-                "f1_unavailable_reason": "No video ground truth evaluation",
+                "f1_unavailable_reason": VideoExportRecord.nullable(f1UnavailableReason),
             ],
         ]
         switch run {

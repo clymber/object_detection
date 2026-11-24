@@ -11,9 +11,33 @@ import math
 
 def source_reference(run):
     """
-    Require matching video bytes and the original ordered-PTS fingerprint.
+    Read matching annotation-derived or catalog source timestamps.
     """
     source = run["input"]
+    if "annotation_reference" in source:
+        reference = source["annotation_reference"]
+        accuracy = run.get("accuracy") or {}
+        if not isinstance(reference, dict) or not isinstance(accuracy, dict):
+            return None
+        count = reference.get("frame_count")
+        annotation_hash = reference.get("annotation_sha256")
+        if (reference.get("schema_version") != 1
+                or not source.get("sha256")
+                or source["sha256"] != reference.get("video_sha256")
+                or source["sha256"] != accuracy.get("video_sha256")
+                or not isinstance(annotation_hash, str) or len(annotation_hash) != 64
+                or any(value not in "0123456789abcdef" for value in annotation_hash)
+                or annotation_hash != accuracy.get("annotation_sha256")
+                or reference.get("annotation_file") != accuracy.get("annotation_file")
+                or type(count) is not int or count <= 0
+                or not isinstance(reference.get("time_base"), str)):
+            return None
+        try:
+            time_base = Fraction(reference["time_base"])
+        except (ValueError, ZeroDivisionError):
+            return None
+        return ([index * time_base for index in range(count)]
+                if time_base > 0 else None)
     manifest = source.get("manifest") or {}
     entry = manifest.get("entry") or {}
     sequence = entry.get("frame_reference") or {}

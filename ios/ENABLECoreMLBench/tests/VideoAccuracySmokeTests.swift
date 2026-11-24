@@ -71,6 +71,18 @@ struct VideoAccuracySmokeTests {
         precondition(accuracy["annotation_sha256"] as! String == imported.sha256)
         precondition(accuracy["warmup_frames"] as! Int == 30)
         precondition((accuracy["metrics"] as! [String: Any])["f1"] as! Double == metrics.f1)
+        let settings = saved["settings"] as! [String: Any]
+        let validity = saved["validity"] as! [String: Any]
+        let coverage = saved["coverage"] as! [String: Any]
+        precondition(settings["warmup_frames"] as! Int == 30)
+        precondition(validity["f1"] as! Double == metrics.f1)
+        precondition(validity["f1_unavailable_reason"] is NSNull)
+        precondition(validity["benchmark_status"] as! String == "not_validated")
+        precondition(validity["coverage_status"] as! String == "complete")
+        precondition(coverage["basis"] as! String == "annotation_reference")
+        precondition(coverage["expected_frames"] as! Int == 4)
+        try await testCoverageMetadata(exporter: exporter, video: video, imported: imported,
+                                       referenceInput: saved["input"] as! [String: Any])
         let verified = try VideoExportVerifier.verify(files.directory)
         precondition(verified.records == 4)
         do {
@@ -101,6 +113,53 @@ struct VideoAccuracySmokeTests {
         }
         print("Video accuracy: parsing, matching, failures, paced coverage/window, hashes,")
         print("export round trip, warm-up/replay and input/model lifecycle checks passed.")
+    }
+
+    /// Keeps missing/timestamp-invalid source coverage distinct from paced inference coverage.
+    static func testCoverageMetadata(
+        exporter: VideoRunExporter, video: URL, imported: ImportedVideoAnnotations,
+        referenceInput: [String: Any]
+    ) async throws {
+        let reference = VideoCoverageReference(input: referenceInput)!
+        var partial = OfflineVideoRunReport(sourceID: sourceID, model: .rfdetrSmall,
+                                           loopIndex: 0, indices: nil)
+        for index in 0..<2 { partial.append(OfflineFrameOutcome(result: try result(index))) }
+        partial.recordDecodedFrames(2)
+        partial.recordEndOfSource()
+        partial.finish(status: .completed)
+        let incomplete = VideoRunCoverage(run: .offline(partial), reference: reference)
+        precondition(incomplete.status == "incomplete" && incomplete.missing.count == 2)
+        var changedInput = referenceInput
+        var changedReference = changedInput["annotation_reference"] as! [String: Any]
+        changedReference["video_sha256"] = "changed"
+        changedInput["annotation_reference"] = changedReference
+        precondition(VideoCoverageReference(input: changedInput) == nil)
+
+        let pacedRun = try pacedReport()
+        let pacedScore = try VideoAccuracyEvaluator.evaluate(
+            .paced(pacedRun), annotations: imported.annotations)
+        let pacedFiles = try await exporter.export(.paced(pacedRun), sourceURL: video,
+            accuracy: VideoAccuracyExport(runID: pacedRun.id, annotations: imported,
+                report: pacedScore, unavailableReason: nil, warmupFrames: 30))
+        let pacedJSON = try exportMetadata(pacedFiles)
+        precondition((pacedJSON["coverage"] as! [String: Any])["status"] as! String == "complete")
+        precondition(pacedScore.frameCoverage == 0.5)
+
+        let invalidRun = try offlineReport(wrongPTS: true)
+        let invalidFiles = try await exporter.export(.offline(invalidRun), sourceURL: video,
+            accuracy: VideoAccuracyExport(runID: invalidRun.id, annotations: imported,
+                report: nil, unavailableReason: "Frame timestamps differ.", warmupFrames: 30))
+        let invalidJSON = try exportMetadata(invalidFiles)
+        let invalidValidity = invalidJSON["validity"] as! [String: Any]
+        precondition(invalidValidity["f1"] is NSNull)
+        precondition(invalidValidity["f1_unavailable_reason"] as! String == "Frame timestamps differ.")
+        precondition(invalidValidity["coverage_status"] as! String == "incomplete")
+    }
+
+    /// Reads the actual persisted metadata rather than the in-memory export arguments.
+    static func exportMetadata(_ files: VideoExportFiles) throws -> [String: Any] {
+        try JSONSerialization.jsonObject(with: Data(contentsOf:
+            files.directory.appendingPathComponent("mobile_run.json"))) as! [String: Any]
     }
 
     /// Builds a small ground-truth file with three positive frames and one background.
@@ -285,6 +344,9 @@ struct VideoAccuracySmokeTests {
             session.export.files!.directory.appendingPathComponent("mobile_run.json")))
             as! [String: Any]
         precondition((unscored["accuracy"] as! [String: Any])["status"] as! String == "unavailable")
+        precondition((unscored["settings"] as! [String: Any])["warmup_frames"] as! Int == 30)
+        precondition((unscored["validity"] as! [String: Any])["f1"] is NSNull)
+        precondition((unscored["coverage"] as! [String: Any])["status"] as! String == "complete")
         await detector.delayNextCall()
         session.start(model: .rfdetrNano)
         for _ in 0..<1000 {

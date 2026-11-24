@@ -35,6 +35,13 @@ annotation/video hashes, scoring scope, thresholds, counts, metrics and warm-up
 count, or a reason when F1 is unavailable. `frames.jsonl` retains the raw predictions.
 Annotations stay selected across model/mode changes and clear when the video changes.
 
+For annotated exports, `settings.warmup_frames` and `validity.f1` derive from the
+same run evidence as `accuracy`; unavailable scores retain an explicit reason.
+A compact `input.annotation_reference` lets source coverage use the imported labels
+without another manifest or a duplicated timestamp list. Complete source accounting
+includes paced skips and differs from the fraction processed within playback.
+Formal benchmark/parity status remains separate from these checks.
+
 ## Model integration
 
 The shared model layer is implemented under

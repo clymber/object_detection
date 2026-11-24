@@ -138,3 +138,82 @@ def test_false_coverage_claim_is_rejected():
     run["input"]["sha256"] = "changed"
     with pytest.raises(ValueError, match="False complete"):
         validate_recalculated(run, frames)
+
+
+def annotated_fixture():
+    """
+    Bind constant-rate source PTS to imported annotations without a bundled catalog.
+    """
+    run, frames = fixture()
+    run["input"]["manifest"] = None
+    run["input"]["annotation_reference"] = {
+        "schema_version": 1, "annotation_file": "annotations.json",
+        "annotation_sha256": "a" * 64, "video_sha256": "video-hash",
+        "frame_count": 3, "time_base": "1/30",
+    }
+    run["accuracy"] = {
+        "annotation_file": "annotations.json", "annotation_sha256": "a" * 64,
+        "video_sha256": "video-hash",
+    }
+    for index, row in enumerate(frames):
+        row["pts"]["value"] = index * 1000
+    return run, frames
+
+
+def test_imported_annotations_verify_source_without_a_catalog():
+    """
+    Verify equivalent rational timestamps using the compact annotation reference.
+    """
+    run, frames = annotated_fixture()
+    coverage = reconcile_coverage(run, frames)
+    assert coverage["status"] == "complete"
+    assert coverage["expected_frames"] == 3
+    run["coverage"] = coverage
+    run["metrics"] = recalculate_metrics(run, frames)
+    validate_recalculated(run, frames)
+
+
+@pytest.mark.parametrize("mutation", [
+    "video_hash", "annotation_hash", "missing_accuracy", "time_base", "count",
+    "pts", "missing_frame",
+])
+def test_bad_annotation_reference_cannot_claim_complete_coverage(mutation):
+    """
+    Reject changed references, source drift and a balanced but truncated decoded pass.
+    """
+    run, frames = annotated_fixture()
+    reference = run["input"]["annotation_reference"]
+    if mutation == "video_hash":
+        run["input"]["sha256"] = "changed"
+    elif mutation == "annotation_hash":
+        reference["annotation_sha256"] = "b" * 64
+    elif mutation == "missing_accuracy":
+        run.pop("accuracy")
+    elif mutation == "time_base":
+        reference["time_base"] = "0/30"
+    elif mutation == "count":
+        reference["frame_count"] = 4
+    elif mutation == "pts":
+        frames[1]["pts"]["value"] += 1
+    else:
+        frames = frames[:2]
+        run["counts"].update(decoded=2, completed=2)
+    assert reconcile_coverage(run, frames)["status"] == "incomplete"
+
+
+def test_paced_source_coverage_does_not_require_inference_on_skipped_frames():
+    """
+    Count every source outcome while leaving processed-frame coverage separate.
+    """
+    run, frames = annotated_fixture()
+    run["mode"] = "paced"
+    frames[1]["status"] = "skipped_superseded"
+    run["counts"] = {
+        "input": 3, "completed": 2, "failed": 0, "cancelled": 0,
+        "skipped_superseded": 1, "skipped_stale": 0, "unfinished": 0,
+        "active": 0, "pending": 0,
+    }
+    run["source"] = {"decoded_frames": 3, "delivered_frames": 3}
+    coverage = reconcile_coverage(run, frames)
+    assert coverage["status"] == "complete"
+    assert coverage["completed"] == 2 and coverage["skipped"] == 1
