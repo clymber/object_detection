@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+workspace_root="$(cd -- "${script_dir}/../.." && pwd)"
+
+if [[ ! -f "${script_dir}/.env" ]]; then
+    printf 'Missing CVAT settings. Create them with:\n  cp %q %q\n' \
+        "${script_dir}/.env.example" "${script_dir}/.env" >&2
+    exit 1
+fi
+
+if [[ ! -f "${workspace_root}/thirdparty/cvat/docker-compose.yml" ]]; then
+    printf 'Missing CVAT submodule. From the repository root, run:\n' >&2
+    printf '  git submodule update --init -- thirdparty/cvat\n' >&2
+    exit 1
+fi
+
+# Forward Compose commands, exit codes, and signals directly to Docker.
+exec docker compose --env-file "${script_dir}/.env" \
+    -f "${workspace_root}/thirdparty/cvat/docker-compose.yml" \
+    -f "${script_dir}/compose.local.yml" "$@"
