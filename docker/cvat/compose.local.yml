@@ -1,0 +1,6 @@
+services:
+  traefik:
+    # Replace upstream port mappings, including the unused dashboard port.
+    # Requires Docker Compose 2.24.4 or newer.
+    ports: !override
+      - "127.0.0.1:${CVAT_PORT:-8080}:8080"
